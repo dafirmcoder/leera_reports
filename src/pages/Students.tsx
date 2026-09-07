@@ -65,9 +65,14 @@ export default function Students() {
 
   const remove = async (s: Student) => {
     if (!confirm(`Delete ${s.full_name}? Their marks will also be removed.`)) return
-    await api.deleteStudent(s.id)
-    if (editingId === s.id) { setEditingId(null); setForm(empty) }
-    reload()
+    setError('')
+    try {
+      await api.deleteStudent(s.id)
+      if (editingId === s.id) { setEditingId(null); setForm(empty) }
+      reload()
+    } catch (err: any) {
+      setError(err.message)
+    }
   }
 
   return (

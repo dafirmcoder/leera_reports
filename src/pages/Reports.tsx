@@ -17,7 +17,7 @@ export default function Reports() {
 
   useEffect(() => {
     if (!selectedClassId) return
-    api.listStudents(selectedClassId).then(setStudents).catch(() => {})
+    api.listStudents(selectedClassId).then(setStudents).catch((e) => setError(e.message))
   }, [selectedClassId])
 
   const cls = classes.find((c) => c.id === selectedClassId)

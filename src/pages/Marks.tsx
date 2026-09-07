@@ -72,8 +72,12 @@ export default function Marks() {
 
   const remove = async (t: UnitTest) => {
     if (!confirm(`Delete "${t.subject_name} – ${t.title}"? All its scores will be removed.`)) return
-    await api.deleteUnitTest(t.id)
-    reload()
+    try {
+      await api.deleteUnitTest(t.id)
+      reload()
+    } catch (err: any) {
+      setError(err.message)
+    }
   }
 
   return (

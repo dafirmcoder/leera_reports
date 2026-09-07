@@ -1,11 +1,11 @@
-// Supabase Edge Function: invite a teacher and pre-assign their role.
+// Supabase Edge Function: create a teacher account and pre-assign their role.
 //
 // Deploy with:  supabase functions deploy invite-user
 // Requires SUPABASE_SERVICE_ROLE_KEY + SUPABASE_URL secrets (set automatically
 // by `supabase secrets set` or via the dashboard).
 //
-// Only a Head of School may call it. The invited user gets a profile row with
-// the chosen role immediately (they still need to accept the email invitation).
+// Only a Head of School may call it. Accounts are confirmed immediately so
+// teachers can sign in with their email and the default PIN.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
@@ -31,6 +31,9 @@ Deno.serve(async (req: Request) => {
     const { email, full_name, role, class_id } = body
 
     if (!email || !full_name) throw new Error('email and full_name are required')
+    if (!['director', 'curriculum_coordinator', 'homeroom_teacher', 'subject_teacher'].includes(role)) {
+      throw new Error('Invalid teacher role')
+    }
 
     // Service-role client (bypasses RLS).
     const admin = createClient(url, serviceKey, { auth: { autoRefreshToken: false, persistSession: false } })
@@ -46,10 +49,13 @@ Deno.serve(async (req: Request) => {
       throw new Error('Only the Head of School can invite teachers')
     }
 
-    // Create the auth user (invitation email).
-    const { data: invited, error: inviteErr } = await admin.auth.admin.inviteUserByEmail(email, {
-      data: { full_name },
-      redirectTo: url
+    // Direct account creation avoids the email-confirmation invitation flow.
+    // Teachers should change this initial PIN after their first login.
+    const { data: invited, error: inviteErr } = await admin.auth.admin.createUser({
+      email,
+      password: '00123456',
+      email_confirm: true,
+      user_metadata: { full_name }
     })
     if (inviteErr) throw inviteErr
 

@@ -234,6 +234,12 @@ function triggerDownload(blob: Blob, filename: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 5000)
 }
 
+/** Download one student's report as a PDF. */
+export async function downloadStudentPdf(ctx: PdfContext): Promise<void> {
+  const doc = await generateStudentPdf(ctx)
+  triggerDownload(doc.output('blob'), reportFileName(ctx))
+}
+
 export function canSaveToFolder(): boolean {
   return typeof window !== 'undefined' && 'showDirectoryPicker' in window
 }

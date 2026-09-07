@@ -48,15 +48,24 @@ export default function SettingsPage() {
   const addSubject = async () => {
     const name = newSubject.trim()
     if (!name) return
-    await api.addSubject(name)
-    setNewSubject('')
-    refresh()
+    setError('')
+    try {
+      await api.addSubject(name)
+      setNewSubject('')
+      refresh()
+    } catch (err: any) {
+      setError(err.message)
+    }
   }
 
   const removeSubject = async (id: string, name: string) => {
     if (!confirm(`Delete subject "${name}"? Its unit tests and scores will be removed.`)) return
-    await api.deleteSubject(id)
-    refresh()
+    try {
+      await api.deleteSubject(id)
+      refresh()
+    } catch (err: any) {
+      setError(err.message)
+    }
   }
 
   const changePassword = async (e: FormEvent) => {

@@ -63,7 +63,7 @@ export default function People() {
 
       {canInvite && (
         <form onSubmit={submitInvite} className="card stack">
-          <h3>Invite a teacher (create account)</h3>
+          <h3>Add teacher account</h3>
           <div className="grid4">
             <label className="field"><span>Email *</span>
               <input type="email" required value={invite.email} onChange={(e) => setInvite({ ...invite, email: e.target.value })} placeholder="teacher@school.ac.tz" />
@@ -84,10 +84,10 @@ export default function People() {
             </label>
           </div>
           <div className="row">
-            <button className="btn btn-primary" disabled={busy}>{busy ? 'Sending…' : 'Send invitation'}</button>
+            <button className="btn btn-primary" disabled={busy}>{busy ? 'Creating…' : 'Create teacher account'}</button>
           </div>
           <p className="muted note">
-            The invitee receives an email to set their password. Their role is applied immediately.
+            Default PIN: <strong>00123456</strong>. Give the teacher their email and PIN, then ask them to change it after signing in.
           </p>
         </form>
       )}

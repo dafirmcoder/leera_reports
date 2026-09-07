@@ -4,12 +4,10 @@ import { DEMO_PERSONAS } from '../lib/auth'
 import { isDemo } from '../lib/api'
 
 export default function Login() {
-  const { signIn, signUp } = useAuth()
-  const [mode, setMode] = useState<'signin' | 'signup'>('signin')
+  const { signIn } = useAuth()
   const [apkReady, setApkReady] = useState(false)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [fullName, setFullName] = useState('')
   const [error, setError] = useState('')
   const [info, setInfo] = useState('')
   const [busy, setBusy] = useState(false)
@@ -19,14 +17,8 @@ export default function Login() {
     setError('')
     setInfo('')
     setBusy(true)
-    if (mode === 'signin') {
-      const res = await signIn(email, password)
-      if (res.error) setError(res.error)
-    } else {
-      const res = await signUp(email, password, fullName)
-      if (res.error) setError(res.error)
-      else if (res.needsConfirmation) setInfo('Account created — check your email to confirm, then sign in.')
-    }
+    const res = await signIn(email, password)
+    if (res.error) setError(res.error)
     setBusy(false)
   }
 
@@ -74,40 +66,19 @@ export default function Login() {
           </>
         ) : (
           <>
-            <div className="seg">
-              <button
-                className={mode === 'signin' ? 'seg-btn active' : 'seg-btn'}
-                onClick={() => { setMode('signin'); setError(''); setInfo('') }}
-              >
-                Sign in
-              </button>
-              <button
-                className={mode === 'signup' ? 'seg-btn active' : 'seg-btn'}
-                onClick={() => { setMode('signup'); setError(''); setInfo('') }}
-              >
-                Create account
-              </button>
-            </div>
-
             <form onSubmit={submit} className="stack">
-              {mode === 'signup' && (
-                <label className="field">
-                  <span>Full name</span>
-                  <input required value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Jane Teacher" autoComplete="name" />
-                </label>
-              )}
               <label className="field">
                 <span>Email</span>
                 <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="teacher@school.ac.tz" autoComplete="email" />
               </label>
               <label className="field">
                 <span>Password</span>
-                <input type="password" required minLength={6} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" autoComplete={mode === 'signin' ? 'current-password' : 'new-password'} />
+                <input type="password" required minLength={6} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Enter your PIN" autoComplete="current-password" />
               </label>
               {error && <div className="notice notice-error">{error}</div>}
               {info && <div className="notice notice-ok">{info}</div>}
               <button className="btn btn-primary btn-block" disabled={busy}>
-                {busy ? 'Please wait…' : mode === 'signin' ? 'Sign in' : 'Create account'}
+                {busy ? 'Please wait…' : 'Sign in'}
               </button>
             </form>
           </>

@@ -70,7 +70,9 @@ export const supabaseApi: Api = {
   },
 
   async addSubject(name: string): Promise<Subject> {
-    const { data, error } = await db().from('subjects').insert({ name, sort_order: 0 }).select().single()
+    const schoolId = (await this.getProfile())?.school_id
+    if (!schoolId) throw new Error('Your account is not assigned to a school')
+    const { data, error } = await db().from('subjects').insert({ name, school_id: schoolId, sort_order: 0 }).select().single()
     if (error) throw new Error(error.message)
     return { id: data.id, name, sort_order: 0 }
   },
