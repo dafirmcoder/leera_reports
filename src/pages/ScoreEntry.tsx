@@ -2,22 +2,37 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { api } from '../lib/api'
 import { fmtDate } from '../lib/report'
+import { useAuth } from '../context/AuthContext'
 import type { ScoreRow, UnitTest } from '../lib/types'
 
 export default function ScoreEntry() {
   const { classId, testId } = useParams<{ classId: string; testId: string }>()
+  const { profile } = useAuth()
   const [test, setTest] = useState<UnitTest | null>(null)
   const [rows, setRows] = useState<ScoreRow[]>([])
   const [error, setError] = useState('')
+  const [canEdit, setCanEdit] = useState(false)
   const timers = useRef<Record<string, number>>({})
 
   useEffect(() => {
     if (!testId) return
     api.listScoresForTest(testId).then(setRows).catch((e) => setError(e.message))
     if (classId) {
-      api.listUnitTests(classId).then((ts) => setTest(ts.find((t) => t.id === testId) ?? null)).catch(() => {})
+      api.listUnitTests(classId).then(async (ts) => {
+        const selected = ts.find((t) => t.id === testId) ?? null
+        setTest(selected)
+        if (!selected || !profile) return
+        if (profile.role === 'homeroom_teacher' && profile.class_id === classId) {
+          setCanEdit(true)
+          return
+        }
+        if (profile.role === 'subject_teacher' || profile.role === 'head_of_school') {
+          const assignments = await api.listAssignments(classId)
+          setCanEdit(assignments.some((a) => a.teacher_id === profile.id && a.subject_id === selected.subject_id))
+        }
+      }).catch(() => {})
     }
-  }, [testId, classId])
+  }, [testId, classId, profile])
 
   const maxMark = test?.max_mark ?? 100
 
@@ -26,6 +41,7 @@ export default function ScoreEntry() {
     const score = raw === '' ? null : Math.max(0, Math.min(Number(raw) || 0, maxMark))
     setRows((prev) => prev.map((r) => (r.student_id === studentId ? { ...r, score } : r)))
     if (timers.current[studentId]) window.clearTimeout(timers.current[studentId])
+    if (!canEdit) return
     timers.current[studentId] = window.setTimeout(() => {
       api.saveScore(testId!, studentId, score).catch((e) => setError(e.message))
     }, 400)
@@ -58,8 +74,9 @@ export default function ScoreEntry() {
                 <td>{r.student_name}</td>
                 <td className="mono">{r.student_no}</td>
                 <td className="num">
-                  <input
+                      <input
                     type="number" min={0} max={maxMark} step="any" className="score-input"
+                        disabled={!canEdit}
                     value={r.score === null ? '' : String(r.score)}
                     onChange={(e) => setScore(r.student_id, e.target.value)}
                     inputMode="decimal"
@@ -75,7 +92,7 @@ export default function ScoreEntry() {
             )}
           </tbody>
         </table>
-        <p className="muted">Scores save automatically as you type.</p>
+        <p className="muted">{canEdit ? 'Scores save automatically as you type.' : 'Read-only score sheet. You can edit scores only for an assigned class subject.'}</p>
       </div>
     </div>
   )

@@ -19,7 +19,7 @@ export default function Marks() {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
-  const canAdd = can(profile?.role, 'addMarks')
+  const roleCanAdd = can(profile?.role, 'addMarks')
   const className = classes.find((c) => c.id === selectedClassId)?.name ?? ''
 
   const reload = () => {
@@ -32,9 +32,17 @@ export default function Marks() {
 
   // Subject teachers can only create tests for their assigned subjects.
   const mySubjects =
-    profile?.role === 'subject_teacher'
+    profile?.role === 'subject_teacher' || profile?.role === 'head_of_school'
       ? subjects.filter((s) => assignments.some((a) => a.subject_id === s.id))
       : subjects
+  const canAdd = roleCanAdd && (profile?.role === 'homeroom_teacher'
+    ? profile.class_id === selectedClassId
+    : mySubjects.length > 0)
+
+  const canEditTest = (test: UnitTest) => profile?.role === 'homeroom_teacher'
+    ? profile.class_id === test.class_id
+    : (profile?.role === 'subject_teacher' || profile?.role === 'head_of_school')
+      && assignments.some((a) => a.teacher_id === profile.id && a.subject_id === test.subject_id)
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
@@ -122,7 +130,7 @@ export default function Marks() {
             </div>
             <div className="list-actions">
               <Link to={`/marks/${t.class_id}/${t.id}`} className="btn btn-small">Enter scores</Link>{' '}
-              {canAdd && <button className="btn btn-small btn-danger" onClick={() => remove(t)}>Delete</button>}
+              {canEditTest(t) && <button className="btn btn-small btn-danger" onClick={() => remove(t)}>Delete</button>}
             </div>
           </div>
         ))}
