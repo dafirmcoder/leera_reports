@@ -14,6 +14,7 @@ export default function People() {
   const [invite, setInvite] = useState({ email: '', full_name: '', role: 'subject_teacher' as Role, class_id: '' })
   const [error, setError] = useState('')
   const [info, setInfo] = useState('')
+  const [busy, setBusy] = useState(false)
 
   const canManage = can(profile?.role, 'manageUsers')
   const canInvite = can(profile?.role, 'createAccounts')
@@ -37,6 +38,7 @@ export default function People() {
     e.preventDefault()
     setError('')
     setInfo('')
+    setBusy(true)
     try {
       await api.inviteUser({
         email: invite.email.trim(),
@@ -49,6 +51,8 @@ export default function People() {
       reload()
     } catch (err: any) {
       setError(err.message)
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -80,7 +84,7 @@ export default function People() {
             </label>
           </div>
           <div className="row">
-            <button className="btn btn-primary">Send invitation</button>
+            <button className="btn btn-primary" disabled={busy}>{busy ? 'Sending…' : 'Send invitation'}</button>
           </div>
           <p className="muted note">
             The invitee receives an email to set their password. Their role is applied immediately.

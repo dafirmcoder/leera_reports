@@ -12,6 +12,8 @@ export default function Classes() {
   const [newClass, setNewClass] = useState('')
   const [assignments, setAssignments] = useState<Record<string, Assignment[]>>({})
   const [form, setForm] = useState({ class_id: '', subject_id: '', teacher_id: '' })
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
 
   const isHos = can(profile?.role, 'manageClasses')
   const canAssign = can(profile?.role, 'assignTeachers')
@@ -31,34 +33,62 @@ export default function Classes() {
   const createClass = async () => {
     const name = newClass.trim()
     if (!name) return
-    await api.createClass(name)
-    setNewClass('')
-    refresh()
+    setError('')
+    setBusy(true)
+    try {
+      await api.createClass(name)
+      setNewClass('')
+      refresh()
+    } catch (e: any) {
+      setError(e.message)
+    } finally {
+      setBusy(false)
+    }
   }
 
   const removeClass = async (c: ClassInfo) => {
     if (!confirm(`Delete class "${c.name}"? Its students, tests and scores will be removed.`)) return
-    await api.deleteClass(c.id)
-    refresh()
+    try {
+      await api.deleteClass(c.id)
+      refresh()
+    } catch (e: any) {
+      setError(e.message)
+    }
   }
 
   const setHomeroom = async (classId: string, teacherId: string) => {
-    await api.setHomeroomTeacher(classId, teacherId || null)
-    refresh()
+    try {
+      await api.setHomeroomTeacher(classId, teacherId || null)
+      refresh()
+    } catch (e: any) {
+      setError(e.message)
+    }
   }
 
   const addAssignment = async () => {
     if (!form.class_id || !form.subject_id || !form.teacher_id) return
-    await api.assignTeacher(form.class_id, form.subject_id, form.teacher_id)
-    setForm({ ...form, subject_id: '', teacher_id: '' })
-    const a = await api.listAssignments(form.class_id)
-    setAssignments((prev) => ({ ...prev, [form.class_id]: a }))
+    setError('')
+    setBusy(true)
+    try {
+      await api.assignTeacher(form.class_id, form.subject_id, form.teacher_id)
+      setForm({ ...form, subject_id: '', teacher_id: '' })
+      const a = await api.listAssignments(form.class_id)
+      setAssignments((prev) => ({ ...prev, [form.class_id]: a }))
+    } catch (e: any) {
+      setError(e.message)
+    } finally {
+      setBusy(false)
+    }
   }
 
   const removeAssignment = async (classId: string, id: string) => {
-    await api.removeAssignment(id)
-    const a = await api.listAssignments(classId)
-    setAssignments((prev) => ({ ...prev, [classId]: a }))
+    try {
+      await api.removeAssignment(id)
+      const a = await api.listAssignments(classId)
+      setAssignments((prev) => ({ ...prev, [classId]: a }))
+    } catch (e: any) {
+      setError(e.message)
+    }
   }
 
   const defaultClass = profile?.class_id ?? classes[0]?.id ?? ''
@@ -69,6 +99,7 @@ export default function Classes() {
       <p className="muted">
         {isHos ? 'Create classes, set homeroom teachers and assign subject teachers.' : 'Your class — assign subject teachers.'}
       </p>
+      {error && <div className="notice notice-error">{error}</div>}
 
       {isHos && (
         <div className="card row">
@@ -79,7 +110,7 @@ export default function Classes() {
             onChange={(e) => setNewClass(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); createClass() } }}
           />
-          <button className="btn btn-primary" onClick={createClass}>Add class</button>
+          <button className="btn btn-primary" disabled={busy} onClick={createClass}>{busy ? 'Adding…' : 'Add class'}</button>
         </div>
       )}
 
@@ -148,8 +179,8 @@ export default function Classes() {
                     {teachers.map((t) => <option key={t.id} value={t.id}>{t.full_name}</option>)}
                   </select>
                 </label>
-                <button className="btn" disabled={!form.subject_id || !form.teacher_id} onClick={addAssignment}>
-                  Assign
+                <button className="btn" disabled={busy || !form.subject_id || !form.teacher_id} onClick={addAssignment}>
+                  {busy ? 'Assigning…' : 'Assign'}
                 </button>
               </div>
             </>
