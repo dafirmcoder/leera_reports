@@ -84,7 +84,14 @@ npm run dev        # http://localhost:5173  (demo mode with role picker)
 
 1. Push this folder to GitHub.
 2. Vercel → **Add New → Project** → import the repo.
-3. Add env vars `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY`
+3. Add these Vercel environment variables for the Production environment:
+  `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` (the legacy
+  `VITE_SUPABASE_ANON_KEY` is also supported). Vercel's Supabase integration
+  names `SUPABASE_URL` and `SUPABASE_ANON_KEY` are also accepted.
+
+  Do not expose `SUPABASE_SERVICE_ROLE_KEY` or any `service_role` secret in a
+  `VITE_` variable. Those keys bypass RLS and belong only in Supabase Edge
+  Function secrets.
    (Settings → Environment Variables).
 4. **Deploy** — done.
 
