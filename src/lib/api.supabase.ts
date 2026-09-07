@@ -100,7 +100,9 @@ export const supabaseApi: Api = {
   },
 
   async createClass(name: string): Promise<void> {
-    const { error } = await db().from('classes').insert({ name })
+    const schoolId = (await this.getProfile())?.school_id
+    if (!schoolId) throw new Error('Your account is not assigned to a school')
+    const { error } = await db().from('classes').insert({ name, school_id: schoolId })
     if (error) throw new Error(error.message)
   },
 
