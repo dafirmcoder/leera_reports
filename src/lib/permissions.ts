@@ -54,7 +54,7 @@ export function navTabs(role: Role | undefined): Tab[] {
   if (can(role, 'manageUsers')) {
     tabs.push({ to: '/people', label: 'People', icon: '🧑‍🏫' })
   }
-  if (can(role, 'editSchool')) {
+  if (role) {
     tabs.push({ to: '/settings', label: 'Settings', icon: '⚙️' })
   }
   return tabs

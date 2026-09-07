@@ -7,11 +7,17 @@ import type { School } from '../lib/types'
 
 export default function SettingsPage() {
   const { school, subjects, refresh } = useSchool()
-  const { profile } = useAuth()
+  const { profile, updatePassword } = useAuth()
   const [draft, setDraft] = useState<School | null>(null)
   const [newSubject, setNewSubject] = useState('')
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState('')
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [passwordMessage, setPasswordMessage] = useState('')
+  const [passwordError, setPasswordError] = useState('')
+  const [passwordBusy, setPasswordBusy] = useState(false)
 
   const canEdit = can(profile?.role, 'editSchool')
   const canSubjects = can(profile?.role, 'manageSubjects')
@@ -51,6 +57,30 @@ export default function SettingsPage() {
     if (!confirm(`Delete subject "${name}"? Its unit tests and scores will be removed.`)) return
     await api.deleteSubject(id)
     refresh()
+  }
+
+  const changePassword = async (e: FormEvent) => {
+    e.preventDefault()
+    setPasswordError('')
+    setPasswordMessage('')
+    if (newPassword.length < 6) {
+      setPasswordError('New password must be at least 6 characters.')
+      return
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordError('New passwords do not match.')
+      return
+    }
+    setPasswordBusy(true)
+    const result = await updatePassword(currentPassword, newPassword)
+    if (result.error) setPasswordError(result.error)
+    else {
+      setCurrentPassword('')
+      setNewPassword('')
+      setConfirmPassword('')
+      setPasswordMessage('Password changed successfully.')
+    }
+    setPasswordBusy(false)
   }
 
   return (
@@ -119,6 +149,25 @@ export default function SettingsPage() {
           </div>
         </div>
       )}
+
+      <form onSubmit={changePassword} className="card stack">
+        <h3>Change password</h3>
+        <p className="muted">Update the password for your signed-in account.</p>
+        <label className="field"><span>Current password</span>
+          <input type="password" required value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} autoComplete="current-password" />
+        </label>
+        <div className="grid3">
+          <label className="field"><span>New password</span>
+            <input type="password" required minLength={6} value={newPassword} onChange={(e) => setNewPassword(e.target.value)} autoComplete="new-password" />
+          </label>
+          <label className="field"><span>Confirm new password</span>
+            <input type="password" required minLength={6} value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} autoComplete="new-password" />
+          </label>
+        </div>
+        {passwordError && <div className="notice notice-error">{passwordError}</div>}
+        {passwordMessage && <div className="notice notice-ok">{passwordMessage}</div>}
+        <button className="btn btn-primary" disabled={passwordBusy}>{passwordBusy ? 'Changing…' : 'Change password'}</button>
+      </form>
     </div>
   )
 }

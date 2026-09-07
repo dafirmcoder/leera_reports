@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import {
   getInitialUser, signIn as apiSignIn, signUp as apiSignUp, signOut as apiSignOut,
+  updatePassword as apiUpdatePassword,
   onAuthChange, emitDemoAuthChange, type AuthUser
 } from '../lib/auth'
 import { api } from '../lib/api'
@@ -13,6 +14,7 @@ interface AuthState {
   refreshProfile: () => Promise<void>
   signIn: (email: string, password: string) => Promise<{ error?: string }>
   signUp: (email: string, password: string, fullName: string) => Promise<{ error?: string; needsConfirmation?: boolean }>
+  updatePassword: (currentPassword: string, password: string) => Promise<{ error?: string }>
   signOut: () => Promise<void>
 }
 
@@ -80,9 +82,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setProfile(null)
   }
 
+  const updatePassword = async (currentPassword: string, password: string) => apiUpdatePassword(currentPassword, password)
+
   return (
     <AuthContext.Provider
-      value={{ user, profile, loading, refreshProfile: loadProfile, signIn, signUp, signOut }}
+      value={{ user, profile, loading, refreshProfile: loadProfile, signIn, signUp, updatePassword, signOut }}
     >
       {children}
     </AuthContext.Provider>

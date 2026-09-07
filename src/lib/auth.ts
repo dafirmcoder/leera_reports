@@ -56,6 +56,17 @@ export async function signOut(): Promise<void> {
   }
 }
 
+export async function updatePassword(currentPassword: string, password: string): Promise<{ error?: string }> {
+  if (!isSupabaseConfigured) return { error: 'Password changes are unavailable in demo mode.' }
+  const { data: sessionData } = await supabase!.auth.getSession()
+  const email = sessionData.session?.user.email
+  if (!email) return { error: 'Your session has expired. Please sign in again.' }
+  const { error: reauthError } = await supabase!.auth.signInWithPassword({ email, password: currentPassword })
+  if (reauthError) return { error: 'Current password is incorrect.' }
+  const { error } = await supabase!.auth.updateUser({ password })
+  return error ? { error: error.message } : {}
+}
+
 export function onAuthChange(cb: (user: AuthUser | null) => void): () => void {
   if (isSupabaseConfigured) {
     const { data } = supabase!.auth.onAuthStateChange((_event, session) => {
