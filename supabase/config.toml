@@ -1,0 +1,5 @@
+# Minimal config for local/CLI use of Supabase Edge Functions.
+project_id = "leera-end-of-unit-reports"
+
+[functions.invite-user]
+verify_jwt = true
