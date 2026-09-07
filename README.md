@@ -102,9 +102,39 @@ npm run dev        # http://localhost:5173  (demo mode with role picker)
 
 ---
 
+## 5. Android app (APK download)
+
+An installable `.apk` is a thin wrapper that opens the deployed site in a
+full-screen, app-like window (no browser address bar) and is delivered from the
+site itself: a **Download APK for Android** button appears automatically on the
+login screen whenever `public/leera-reports.apk` is present.
+
+**Build it (one command, any machine with Java 17 + internet):**
+
+```bash
+npx pwabuilder@latest https://YOUR-DEPLOYED-URL.vercel.app -l debug -d android
+```
+
+(It auto-discovers the PWA manifest at `https://YOUR-DEPLOYED-URL.vercel.app/manifest.webmanifest`.)
+This downloads the Android SDK and produces
+`android/app/build/outputs/apk/debug/app-debug.apk`.
+Rename and drop it into `public/` so it ships with the next deploy:
+
+```bash
+cp android/app/build/outputs/apk/debug/app-debug.apk public/leera-reports.apk
+```
+
+For a production-signed APK (recommended once the URL is final), see
+`docs/android-apk.md`.
+
+> Note: the APK is a convenience wrapper around the PWA. It needs internet, and
+> it inherits the PWA's look and behaviour (login, roles, reports, bulk PDFs).
+
+---
+
 ## Project structure
 
-```
+```text
 src/
   lib/
     supabase.ts        # Supabase client (null in demo mode)
@@ -114,16 +144,19 @@ src/
     api.demo.ts        # localStorage backend, seeded multi-class data
     permissions.ts     # role -> capability map + nav tabs
     report.ts          # report-building logic (mirrors the Excel VBA)
+    pdf.ts             # per-student PDF + ZIP + save-to-folder bulk export
     types.ts           # shared types
   context/AuthContext.tsx    # user + profile (role)
   context/SchoolContext.tsx  # school, classes, subjects, selected class
   components/AppShell.tsx, ClassPicker.tsx, ReportSheet.tsx
   pages/  Login, PendingApproval, Students, Marks, ScoreEntry,
-          Reports, ReportView, PrintAll, Settings, People, Classes
+          Reports, ReportView, Settings, People, Classes
 supabase/
   schema.sql            # tables + RLS + bootstrap trigger (run once)
   seed_subjects.sql     # optional subject list
   functions/invite-user # "create account" edge function (service role)
+docs/
+  android-apk.md        # APK build + signing runbook
 ```
 
 ## Data model

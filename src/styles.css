@@ -273,6 +273,14 @@ h3 { font-size: 15px; margin-top: 8px; }
 .persona-label { font-weight: 700; color: var(--text); }
 .persona-hint { font-size: 12px; color: var(--muted); }
 
+/* ---------- android apk download card ---------- */
+.apk-card {
+  margin-top: 20px; padding: 16px; border: 1px dashed var(--line);
+  border-radius: 12px; background: var(--bg); display: grid; gap: 10px;
+}
+.apk-card .btn { text-decoration: none; }
+.apk-note { font-size: 12px; }
+
 /* ---------- class picker + role select ---------- */
 .classpicker { margin-left: auto; }
 .classpicker select { min-width: 220px; }

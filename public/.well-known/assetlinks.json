@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "ac.tz.leeraschool.reports",
+      "sha256_cert_fingerprints": [
+        "35:1C:77:24:3B:31:82:8E:4C:61:AC:E7:72:B5:67:D7:EE:19:8E:E5:6B:08:0E:C6:3F:D9:DA:83:23:6D:CA:9E"
+      ]
+    }
+  }
+]

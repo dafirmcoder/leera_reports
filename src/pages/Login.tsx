@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { DEMO_PERSONAS } from '../lib/auth'
 import { isDemo } from '../lib/api'
@@ -6,6 +6,7 @@ import { isDemo } from '../lib/api'
 export default function Login() {
   const { signIn, signUp } = useAuth()
   const [mode, setMode] = useState<'signin' | 'signup'>('signin')
+  const [apkReady, setApkReady] = useState(false)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [fullName, setFullName] = useState('')
@@ -36,6 +37,13 @@ export default function Login() {
     if (res.error) setError(res.error)
     setBusy(false)
   }
+
+  useEffect(() => {
+    // Show the Android-app download button only if the APK is actually present.
+    fetch(`${import.meta.env.BASE_URL}leera-reports.apk`, { method: 'HEAD' })
+      .then((r) => setApkReady(r.ok))
+      .catch(() => setApkReady(false))
+  }, [])
 
   return (
     <div className="login-wrap">
@@ -103,6 +111,17 @@ export default function Login() {
               </button>
             </form>
           </>
+        )}
+
+        {apkReady && (
+          <div className="apk-card">
+            <strong>📱 Android app</strong>
+            <span>Download the APK to install Leera Reports on an Android phone.</span>
+            <a className="btn btn-primary btn-block" href={`${import.meta.env.BASE_URL}leera-reports.apk`} download>
+              ⬇ Download APK for Android
+            </a>
+            <span className="muted apk-note">You may be asked to allow “install from unknown sources”.</span>
+          </div>
         )}
       </div>
     </div>

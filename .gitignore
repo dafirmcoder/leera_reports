@@ -5,3 +5,9 @@ dist
 *.local
 *.tsbuildinfo
 .DS_Store
+
+# Android signing key — NEVER commit this. Keep a private backup.
+keys/
+
+# Supabase CLI local state.
+supabase/.temp/
