@@ -15,8 +15,8 @@ export default function Classes() {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
-  const isHos = can(profile?.role, 'manageClasses')
-  const canAssign = can(profile?.role, 'assignTeachers')
+  const isHos = can(profile?.role, 'manageClasses', profile?.additional_roles)
+  const canAssign = can(profile?.role, 'assignTeachers', profile?.additional_roles)
 
   const teachers = people.filter((p) => p.role === 'subject_teacher' || p.role === 'homeroom_teacher')
 

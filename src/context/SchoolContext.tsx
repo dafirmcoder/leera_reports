@@ -36,7 +36,7 @@ export function SchoolProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     refresh()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile?.id, profile?.role])
+  }, [profile?.id, profile?.role, profile?.additional_roles?.join(',')])
 
   return (
     <SchoolContext.Provider value={{ school, classes, subjects, selectedClassId, setSelectedClassId, refresh }}>

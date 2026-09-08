@@ -58,7 +58,7 @@ Deno.serve(async (req: Request) => {
       })
     }
 
-    const { email, full_name, role, class_id } = body
+    const { email, full_name, role, class_id, additional_roles } = body
     if (!email || !full_name) throw new Error('email and full_name are required')
     if (!['director', 'curriculum_coordinator', 'homeroom_teacher', 'subject_teacher'].includes(role)) {
       throw new Error('Invalid teacher role')
@@ -82,6 +82,7 @@ Deno.serve(async (req: Request) => {
         email,
         full_name,
         role: role || 'pending',
+        additional_roles: Array.isArray(additional_roles) ? additional_roles : [],
         school_id: callerProfile.school_id,
         class_id: class_id || null
       },

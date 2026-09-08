@@ -35,6 +35,7 @@ function toProfile(r: any): Profile {
     email: r.email ?? '',
     full_name: r.full_name ?? '',
     role: r.role,
+    additional_roles: r.additional_roles ?? [],
     school_id: r.school_id,
     class_id: r.class_id
   }
@@ -131,11 +132,11 @@ export const supabaseApi: Api = {
     return (data ?? []).map(toProfile)
   },
 
-  async setRole(userId: string, role: Role, classId: string | null): Promise<void> {
+  async setRole(userId: string, role: Role, classId: string | null, additionalRoles: Role[] = []): Promise<void> {
     const schoolId = (await this.getProfile())?.school_id
     const { error } = await db()
       .from('profiles')
-      .update({ role, class_id: classId ?? null, school_id: schoolId })
+      .update({ role, additional_roles: additionalRoles, class_id: classId ?? null, school_id: schoolId })
       .eq('id', userId)
     if (error) throw new Error(error.message)
   },

@@ -19,7 +19,7 @@ export default function Marks() {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
-  const roleCanAdd = can(profile?.role, 'addMarks')
+  const roleCanAdd = can(profile?.role, 'addMarks', profile?.additional_roles)
   const className = classes.find((c) => c.id === selectedClassId)?.name ?? ''
 
   const reload = () => {

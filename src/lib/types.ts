@@ -13,6 +13,7 @@ export interface Profile {
   email: string
   full_name: string
   role: Role
+  additional_roles: Role[]
   school_id: string | null
   class_id: string | null
 }
@@ -131,8 +132,8 @@ export interface Api {
 
   // people (HOS / curriculum coordinator)
   listProfiles(): Promise<Profile[]>
-  setRole(userId: string, role: Role, classId: string | null): Promise<void>
-  inviteUser(input: { email: string; full_name: string; role: Role; class_id: string | null }): Promise<void>
+  setRole(userId: string, role: Role, classId: string | null, additionalRoles?: Role[]): Promise<void>
+  inviteUser(input: { email: string; full_name: string; role: Role; class_id: string | null; additional_roles?: Role[] }): Promise<void>
   deleteTeacher(userId: string): Promise<void>
 
   // subject-teacher assignments

@@ -12,24 +12,25 @@ export type Capability =
   | 'addMarks'           // homeroom + subject teachers
   | 'viewAllClasses'     // sees the whole school (director/HOS/coordinator)
 
-export function can(role: Role | undefined, cap: Capability): boolean {
+export function can(role: Role | undefined, cap: Capability, additionalRoles: Role[] = []): boolean {
+  const roles = new Set<Role>(role ? [role, ...additionalRoles] : [])
   switch (cap) {
     case 'manageUsers':
-      return role === 'head_of_school' || role === 'curriculum_coordinator'
+      return roles.has('head_of_school') || roles.has('curriculum_coordinator')
     case 'createAccounts':
     case 'editSchool':
     case 'manageClasses':
-      return role === 'head_of_school'
+      return roles.has('head_of_school')
     case 'manageSubjects':
-      return role === 'head_of_school' || role === 'curriculum_coordinator'
+      return roles.has('head_of_school') || roles.has('curriculum_coordinator')
     case 'assignTeachers':
-      return role === 'head_of_school' || role === 'homeroom_teacher'
+      return roles.has('head_of_school') || roles.has('homeroom_teacher')
     case 'addStudents':
-      return role === 'homeroom_teacher'
+      return roles.has('homeroom_teacher')
     case 'addMarks':
-      return role === 'homeroom_teacher' || role === 'subject_teacher'
+      return roles.has('homeroom_teacher') || roles.has('subject_teacher')
     case 'viewAllClasses':
-      return role === 'director' || role === 'head_of_school' || role === 'curriculum_coordinator'
+      return roles.has('director') || roles.has('head_of_school') || roles.has('curriculum_coordinator')
     default:
       return false
   }
@@ -41,17 +42,17 @@ export interface Tab {
   icon: string
 }
 
-export function navTabs(role: Role | undefined): Tab[] {
+export function navTabs(role: Role | undefined, additionalRoles: Role[] = []): Tab[] {
   if (!role || role === 'pending') return []
   const tabs: Tab[] = [
     { to: '/students', label: 'Students', icon: '👥' },
     { to: '/marks', label: 'Marks', icon: '📝' },
     { to: '/reports', label: 'Reports', icon: '📄' }
   ]
-  if (can(role, 'manageClasses') || role === 'homeroom_teacher') {
+  if (can(role, 'manageClasses', additionalRoles) || can(role, 'assignTeachers', additionalRoles)) {
     tabs.push({ to: '/classes', label: 'Classes', icon: '🏫' })
   }
-  if (can(role, 'manageUsers')) {
+  if (can(role, 'manageUsers', additionalRoles)) {
     tabs.push({ to: '/people', label: 'People', icon: '🧑‍🏫' })
   }
   if (role) {

@@ -22,7 +22,7 @@ export default function AppShell() {
           <div className="topbar-right">
             <span className="user-chip">
               {profile?.full_name || user?.email}
-              {profile && <em className="role-tag">{ROLE_LABEL[profile.role]}</em>}
+              {profile && <em className="role-tag">{[profile.role, ...profile.additional_roles].map((r) => ROLE_LABEL[r]).join(' + ')}</em>}
             </span>
             <button className="btn btn-ghost" onClick={handleSignOut}>
               Sign out
@@ -36,7 +36,7 @@ export default function AppShell() {
       </main>
 
       <nav className="bottomnav">
-        {navTabs(profile?.role).map((t) => (
+        {navTabs(profile?.role, profile?.additional_roles).map((t) => (
           <NavLink
             key={t.to}
             to={t.to}

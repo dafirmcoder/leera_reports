@@ -19,8 +19,8 @@ export default function SettingsPage() {
   const [passwordError, setPasswordError] = useState('')
   const [passwordBusy, setPasswordBusy] = useState(false)
 
-  const canEdit = can(profile?.role, 'editSchool')
-  const canSubjects = can(profile?.role, 'manageSubjects')
+  const canEdit = can(profile?.role, 'editSchool', profile?.additional_roles)
+  const canSubjects = can(profile?.role, 'manageSubjects', profile?.additional_roles)
 
   useEffect(() => {
     if (school) setDraft(school)

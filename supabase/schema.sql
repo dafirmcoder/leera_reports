@@ -37,6 +37,7 @@ create table if not exists public.profiles (
   full_name  text not null default '',
   role       text not null default 'pending'
              check (role in ('pending','director','head_of_school','curriculum_coordinator','homeroom_teacher','subject_teacher')),
+  additional_roles text[] not null default '{}',
   school_id  uuid references public.schools (id) on delete set null,
   class_id   uuid,                                  -- homeroom teacher's class
   created_at timestamptz not null default now()
@@ -125,6 +126,12 @@ create index if not exists cst_teacher_idx       on public.class_subject_teacher
 create or replace function public.my_role()
 returns text language sql stable security definer set search_path = public as $$
   select role from public.profiles where id = auth.uid();
+$$;
+
+create or replace function public.has_role(required_role text)
+returns boolean language sql stable security definer set search_path = public as $$
+  select required_role = role or required_role = any(coalesce(additional_roles, '{}'))
+  from public.profiles where id = auth.uid();
 $$;
 
 create or replace function public.my_school()

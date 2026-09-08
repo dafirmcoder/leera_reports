@@ -18,7 +18,7 @@ export default function Students() {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
-  const canAdd = can(profile?.role, 'addStudents')
+  const canAdd = can(profile?.role, 'addStudents', profile?.additional_roles)
   const className = classes.find((c) => c.id === selectedClassId)?.name ?? ''
 
   const reload = () => {

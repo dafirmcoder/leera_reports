@@ -16,8 +16,8 @@ export default function People() {
   const [info, setInfo] = useState('')
   const [busy, setBusy] = useState(false)
 
-  const canManage = can(profile?.role, 'manageUsers')
-  const canInvite = can(profile?.role, 'createAccounts')
+  const canManage = can(profile?.role, 'manageUsers', profile?.additional_roles)
+  const canInvite = can(profile?.role, 'createAccounts', profile?.additional_roles)
 
   const reload = () => {
     api.listProfiles().then(setPeople).catch((e) => setError(e.message))
@@ -27,7 +27,17 @@ export default function People() {
 
   const changeRole = async (p: Profile, role: Role, classId: string | null) => {
     try {
-      await api.setRole(p.id, role, classId)
+      await api.setRole(p.id, role, classId, p.additional_roles)
+      reload()
+    } catch (e: any) {
+      setError(e.message)
+    }
+  }
+
+  const toggleCoordinator = async (p: Profile, enabled: boolean) => {
+    const additionalRoles = enabled ? ['curriculum_coordinator' as Role] : []
+    try {
+      await api.setRole(p.id, p.role, p.class_id, additionalRoles)
       reload()
     } catch (e: any) {
       setError(e.message)
@@ -150,6 +160,9 @@ export default function People() {
                     )}
                   </td>
                   {canInvite && <td className="right">
+                    {canManage && p.role === 'homeroom_teacher' && !isSelf && (
+                      <label className="check"><input type="checkbox" checked={p.additional_roles.includes('curriculum_coordinator')} onChange={(e) => toggleCoordinator(p, e.target.checked)} /> Coordinator</label>
+                    )}
                     {(p.role === 'homeroom_teacher' || p.role === 'subject_teacher') && !isSelf && (
                       <button className="btn btn-small btn-danger" disabled={busy} onClick={() => deleteTeacher(p)}>
                         Delete teacher

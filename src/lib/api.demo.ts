@@ -34,7 +34,8 @@ function currentEmail(): string {
 
 function currentProfile(db: DemoDB): Profile {
   const email = currentEmail()
-  return db.profiles.find((p) => p.email === email) ?? db.profiles[0]
+  const profile = db.profiles.find((p) => p.email === email) ?? db.profiles[0]
+  return { ...profile, additional_roles: profile.additional_roles ?? [] }
 }
 
 function seed(): DemoDB {
@@ -59,11 +60,11 @@ function seed(): DemoDB {
   ].map((name, i) => ({ id: `subj_${i}`, name, sort_order: i + 1 }))
 
   const profiles: Profile[] = [
-    { id: 'p_director', email: DEMO_PERSONAS[0].email, full_name: 'Dr. A. Director', role: 'director', school_id: school.id, class_id: null },
-    { id: 'p_hos', email: DEMO_PERSONAS[1].email, full_name: 'Mr. H. Head', role: 'head_of_school', school_id: school.id, class_id: null },
-    { id: 'p_cc', email: DEMO_PERSONAS[2].email, full_name: 'Ms. C. Curriculum', role: 'curriculum_coordinator', school_id: school.id, class_id: null },
-    { id: 'p_homeroom', email: DEMO_PERSONAS[3].email, full_name: 'Ms. Amina Mwinyi', role: 'homeroom_teacher', school_id: school.id, class_id: c8.id },
-    { id: 'p_teacher', email: DEMO_PERSONAS[4].email, full_name: 'Mr. J. Subject', role: 'subject_teacher', school_id: school.id, class_id: null }
+    { id: 'p_director', email: DEMO_PERSONAS[0].email, full_name: 'Dr. A. Director', role: 'director', additional_roles: [], school_id: school.id, class_id: null },
+    { id: 'p_hos', email: DEMO_PERSONAS[1].email, full_name: 'Mr. H. Head', role: 'head_of_school', additional_roles: [], school_id: school.id, class_id: null },
+    { id: 'p_cc', email: DEMO_PERSONAS[2].email, full_name: 'Ms. C. Curriculum', role: 'curriculum_coordinator', additional_roles: [], school_id: school.id, class_id: null },
+    { id: 'p_homeroom', email: DEMO_PERSONAS[3].email, full_name: 'Ms. Amina Mwinyi', role: 'homeroom_teacher', additional_roles: [], school_id: school.id, class_id: c8.id },
+    { id: 'p_teacher', email: DEMO_PERSONAS[4].email, full_name: 'Mr. J. Subject', role: 'subject_teacher', additional_roles: [], school_id: school.id, class_id: null }
   ]
 
   const students: Student[] = []
@@ -211,14 +212,15 @@ export const demoApi: Api = {
   },
 
   async listProfiles() {
-    return [...load().profiles]
+    return load().profiles.map((p) => ({ ...p, additional_roles: p.additional_roles ?? [] }))
   },
 
-  async setRole(userId: string, role: Role, classId: string | null) {
+  async setRole(userId: string, role: Role, classId: string | null, additionalRoles: Role[] = []) {
     const db = load()
     const p = db.profiles.find((x) => x.id === userId)
     if (p) {
       p.role = role
+      p.additional_roles = additionalRoles
       p.class_id = classId ?? null
       p.school_id = db.school.id
     }
@@ -232,6 +234,7 @@ export const demoApi: Api = {
       email: input.email,
       full_name: input.full_name,
       role: input.role,
+      additional_roles: input.additional_roles ?? [],
       school_id: db.school.id,
       class_id: input.class_id ?? null
     })
