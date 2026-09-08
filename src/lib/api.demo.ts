@@ -2,6 +2,7 @@ import type {
   Api, Assignment, ClassInfo, Profile, Role, School, ScoreRow,
   Student, StudentReportRow, Subject, UnitTest
 } from './types'
+import type { AttendanceRow } from './types'
 import { DEMO_PERSONAS } from './auth'
 
 // localStorage-backed implementation (demo mode) with seeded multi-class data
@@ -16,6 +17,7 @@ interface DemoDB {
   unitTests: UnitTest[]
   scores: ScoreRow[]
   assignments: Assignment[]
+  attendance: AttendanceRow[]
 }
 
 const KEY = 'leera_demo_db_v2'
@@ -101,7 +103,7 @@ function seed(): DemoDB {
     { id: uid(), class_id: c9.id, class_name: c9.name, subject_id: subjId('Science'), subject_name: 'Science', teacher_id: 'p_teacher', teacher_name: 'Mr. J. Subject' }
   ]
 
-  return { school, profiles, classes: [c8, c9], subjects, students, unitTests, scores, assignments }
+  return { school, profiles, classes: [c8, c9], subjects, students, unitTests, scores, assignments, attendance: [] }
 }
 
 function load(): DemoDB {
@@ -249,6 +251,37 @@ export const demoApi: Api = {
       ? { ...c, homeroom_teacher_id: null, homeroom_teacher_name: '' }
       : c)
     save(db)
+  },
+
+  async listAttendance(classId: string, date: string) {
+    const db = load()
+    return db.attendance.filter((a) => a.class_id === classId && a.attendance_date === date)
+  },
+
+  async saveAttendance(rows) {
+    const db = load()
+    for (const row of rows) {
+      if (row.status === 'A' && !row.reason.trim()) throw new Error('An absence reason is required')
+      db.attendance = db.attendance.filter((a) => !(a.class_id === row.class_id && a.student_id === row.student_id && a.attendance_date === row.attendance_date))
+      const student = db.students.find((s) => s.id === row.student_id)
+      db.attendance.push({ ...row, id: uid(), student_name: student?.full_name ?? '', student_no: student?.student_no ?? '' })
+    }
+    save(db)
+  },
+
+  async listAttendanceSummary(date: string) {
+    const db = load()
+    return db.classes.map((c) => {
+      const rows = db.attendance.filter((a) => a.class_id === c.id && a.attendance_date === date)
+      return {
+        class_id: c.id, class_name: c.name, date,
+        present: rows.filter((r) => r.status === 'P').length,
+        absent: rows.filter((r) => r.status === 'A').length,
+        excused: rows.filter((r) => r.status === 'E').length,
+        total: rows.length,
+        absences: rows.filter((r) => r.status === 'A').map((r) => ({ student_name: r.student_name, student_no: r.student_no, reason: r.reason }))
+      }
+    })
   },
 
   async listAssignments(classId: string) {

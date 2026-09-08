@@ -11,6 +11,7 @@ export type Capability =
   | 'addStudents'        // homeroom teacher only
   | 'addMarks'           // homeroom + subject teachers
   | 'viewAllClasses'     // sees the whole school (director/HOS/coordinator)
+  | 'markAttendance'     // homeroom teacher for own class
 
 export function can(role: Role | undefined, cap: Capability, additionalRoles: Role[] = []): boolean {
   const roles = new Set<Role>(role ? [role, ...additionalRoles] : [])
@@ -31,6 +32,8 @@ export function can(role: Role | undefined, cap: Capability, additionalRoles: Ro
       return roles.has('homeroom_teacher') || roles.has('subject_teacher')
     case 'viewAllClasses':
       return roles.has('director') || roles.has('head_of_school') || roles.has('curriculum_coordinator')
+    case 'markAttendance':
+      return roles.has('homeroom_teacher')
     default:
       return false
   }
@@ -54,6 +57,9 @@ export function navTabs(role: Role | undefined, additionalRoles: Role[] = []): T
   }
   if (can(role, 'manageUsers', additionalRoles)) {
     tabs.push({ to: '/people', label: 'People', icon: '🧑‍🏫' })
+  }
+  if (can(role, 'markAttendance', additionalRoles) || can(role, 'viewAllClasses', additionalRoles)) {
+    tabs.push({ to: '/attendance', label: 'Attendance', icon: '📅' })
   }
   if (role) {
     tabs.push({ to: '/settings', label: 'Settings', icon: '⚙️' })

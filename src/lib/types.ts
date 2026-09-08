@@ -52,6 +52,30 @@ export interface Student {
   gender: string
 }
 
+export type AttendanceStatus = 'P' | 'A' | 'E'
+
+export interface AttendanceRow {
+  id?: string
+  class_id: string
+  student_id: string
+  student_name: string
+  student_no: string
+  attendance_date: string
+  status: AttendanceStatus
+  reason: string
+}
+
+export interface AttendanceSummary {
+  class_id: string
+  class_name: string
+  date: string
+  present: number
+  absent: number
+  excused: number
+  total: number
+  absences: Array<{ student_name: string; student_no: string; reason: string }>
+}
+
 export interface UnitTest {
   id: string
   class_id: string
@@ -147,6 +171,11 @@ export interface Api {
   addStudent(classId: string, s: Omit<Student, 'id' | 'class_id'>): Promise<Student>
   updateStudent(s: Student): Promise<void>
   deleteStudent(id: string): Promise<void>
+
+  // attendance
+  listAttendance(classId: string, date: string): Promise<AttendanceRow[]>
+  saveAttendance(rows: Array<Pick<AttendanceRow, 'class_id' | 'student_id' | 'attendance_date' | 'status' | 'reason'>>): Promise<void>
+  listAttendanceSummary(date: string): Promise<AttendanceSummary[]>
 
   // unit tests
   listUnitTests(classId: string): Promise<UnitTest[]>

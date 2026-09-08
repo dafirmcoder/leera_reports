@@ -3,6 +3,7 @@ import type {
   Api, Assignment, ClassInfo, Profile, Role, School, ScoreRow,
   Student, StudentReportRow, Subject, UnitTest
 } from './types'
+import type { AttendanceRow, AttendanceSummary } from './types'
 
 function db() {
   if (!supabase) throw new Error('Supabase is not configured')
@@ -239,6 +240,51 @@ export const supabaseApi: Api = {
     if (error) throw new Error(error.message)
     const { error: e2 } = await db().from('students').delete().eq('id', id)
     if (e2) throw new Error(e2.message)
+  },
+
+  async listAttendance(classId: string, date: string): Promise<AttendanceRow[]> {
+    const { data, error } = await db()
+      .from('attendance')
+      .select('id, class_id, student_id, attendance_date, status, reason, students(full_name, student_no)')
+      .eq('class_id', classId)
+      .eq('attendance_date', date)
+      .order('student_no', { foreignTable: 'students', ascending: true })
+    if (error) throw new Error(error.message)
+    return (data ?? []).map((r: any) => ({
+      id: r.id, class_id: r.class_id, student_id: r.student_id,
+      student_name: r.students?.full_name ?? '', student_no: r.students?.student_no ?? '',
+      attendance_date: r.attendance_date, status: r.status, reason: r.reason ?? ''
+    }))
+  },
+
+  async saveAttendance(rows): Promise<void> {
+    if (rows.length === 0) return
+    const { error } = await db().from('attendance').upsert(rows, { onConflict: 'class_id,student_id,attendance_date' })
+    if (error) throw new Error(error.message)
+  },
+
+  async listAttendanceSummary(date: string): Promise<AttendanceSummary[]> {
+    const { data, error } = await db()
+      .from('attendance')
+      .select('class_id, attendance_date, status, reason, students(full_name, student_no), classes(name)')
+      .eq('attendance_date', date)
+    if (error) throw new Error(error.message)
+    const grouped = new Map<string, AttendanceSummary>()
+    for (const r of (data ?? []) as any[]) {
+      const summary: AttendanceSummary = grouped.get(r.class_id) ?? {
+        class_id: r.class_id, class_name: r.classes?.name ?? '', date,
+        present: 0, absent: 0, excused: 0, total: 0, absences: []
+      }
+      summary.total += 1
+      if (r.status === 'P') summary.present += 1
+      if (r.status === 'A') {
+        summary.absent += 1
+        summary.absences.push({ student_name: r.students?.full_name ?? '', student_no: r.students?.student_no ?? '', reason: r.reason ?? '' })
+      }
+      if (r.status === 'E') summary.excused += 1
+      grouped.set(r.class_id, summary)
+    }
+    return [...grouped.values()].sort((a, b) => a.class_name.localeCompare(b.class_name))
   },
 
   async listUnitTests(classId: string): Promise<UnitTest[]> {

@@ -11,6 +11,7 @@ import ReportView from './pages/ReportView'
 import SettingsPage from './pages/Settings'
 import People from './pages/People'
 import Classes from './pages/Classes'
+import Attendance from './pages/Attendance'
 
 export default function App() {
   const { user, profile, loading } = useAuth()
@@ -53,6 +54,7 @@ export default function App() {
         <Route path="/classes" element={<Classes />} />
         <Route path="/people" element={<People />} />
         <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/attendance" element={<Attendance />} />
         <Route path="*" element={<Navigate to="/students" replace />} />
       </Route>
     </Routes>
