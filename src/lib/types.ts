@@ -133,6 +133,7 @@ export interface Api {
   listProfiles(): Promise<Profile[]>
   setRole(userId: string, role: Role, classId: string | null): Promise<void>
   inviteUser(input: { email: string; full_name: string; role: Role; class_id: string | null }): Promise<void>
+  deleteTeacher(userId: string): Promise<void>
 
   // subject-teacher assignments
   listAssignments(classId: string): Promise<Assignment[]>

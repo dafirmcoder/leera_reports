@@ -1,4 +1,4 @@
--- Optional/idempotent seed for the school's subject list.
+-- Seed the school's requested subject list without duplicating existing subjects.
 insert into public.subjects (school_id, name, sort_order)
 select s.id, requested.name, requested.sort_order
 from public.schools s
@@ -20,7 +20,8 @@ cross join (values
   ('Chinese', 15)
 ) as requested(name, sort_order)
 where not exists (
-  select 1 from public.subjects existing
+  select 1
+  from public.subjects existing
   where existing.school_id = s.id
     and lower(existing.name) = lower(requested.name)
 );

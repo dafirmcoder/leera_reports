@@ -157,6 +157,23 @@ export const supabaseApi: Api = {
     if (!res.ok) throw new Error(json.error ?? 'Invite failed — is the invite-user edge function deployed?')
   },
 
+  async deleteTeacher(userId: string): Promise<void> {
+    const { data: { session } } = await supabase!.auth.getSession()
+    const token = session?.access_token
+    if (!token) throw new Error('Not signed in')
+    const url = import.meta.env.VITE_SUPABASE_URL as string
+    const res = await fetch(`${url}/functions/v1/invite-user`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify({ action: 'delete_teacher', user_id: userId })
+    })
+    const json = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(json.error ?? 'Teacher deletion failed')
+  },
+
   async listAssignments(classId: string): Promise<Assignment[]> {
     const { data, error } = await db()
       .from('class_subject_teachers')

@@ -238,6 +238,16 @@ export const demoApi: Api = {
     save(db)
   },
 
+  async deleteTeacher(userId: string) {
+    const db = load()
+    db.profiles = db.profiles.filter((p) => p.id !== userId)
+    db.assignments = db.assignments.filter((a) => a.teacher_id !== userId)
+    db.classes = db.classes.map((c) => c.homeroom_teacher_id === userId
+      ? { ...c, homeroom_teacher_id: null, homeroom_teacher_name: '' }
+      : c)
+    save(db)
+  },
+
   async listAssignments(classId: string) {
     const db = load()
     const me = currentProfile(db)

@@ -34,6 +34,22 @@ export default function People() {
     }
   }
 
+  const deleteTeacher = async (p: Profile) => {
+    if (!confirm(`Delete teacher account for ${p.full_name || p.email}? Their assignments will be removed, but classes, students, tests and scores will remain.`)) return
+    setError('')
+    setInfo('')
+    setBusy(true)
+    try {
+      await api.deleteTeacher(p.id)
+      setInfo(`Teacher account deleted: ${p.email}`)
+      reload()
+    } catch (err: any) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const submitInvite = async (e: FormEvent) => {
     e.preventDefault()
     setError('')
@@ -98,7 +114,7 @@ export default function People() {
       <div className="card">
         <table className="table">
           <thead>
-            <tr><th>Name</th><th>Email</th><th>Role</th><th>Class</th></tr>
+            <tr><th>Name</th><th>Email</th><th>Role</th><th>Class</th>{canInvite && <th className="right">Actions</th>}</tr>
           </thead>
           <tbody>
             {people.map((p) => {
@@ -133,6 +149,13 @@ export default function People() {
                       classes.find((c) => c.id === p.class_id)?.name ?? '—'
                     )}
                   </td>
+                  {canInvite && <td className="right">
+                    {(p.role === 'homeroom_teacher' || p.role === 'subject_teacher') && !isSelf && (
+                      <button className="btn btn-small btn-danger" disabled={busy} onClick={() => deleteTeacher(p)}>
+                        Delete teacher
+                      </button>
+                    )}
+                  </td>}
                 </tr>
               )
             })}

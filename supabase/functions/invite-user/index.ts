@@ -28,12 +28,6 @@ Deno.serve(async (req: Request) => {
     if (!token) throw new Error('Missing auth token')
 
     const body = await req.json()
-    const { email, full_name, role, class_id } = body
-
-    if (!email || !full_name) throw new Error('email and full_name are required')
-    if (!['director', 'curriculum_coordinator', 'homeroom_teacher', 'subject_teacher'].includes(role)) {
-      throw new Error('Invalid teacher role')
-    }
 
     // Service-role client (bypasses RLS).
     const admin = createClient(url, serviceKey, { auth: { autoRefreshToken: false, persistSession: false } })
@@ -47,6 +41,27 @@ Deno.serve(async (req: Request) => {
 
     if (callerProfile?.role !== 'head_of_school' || !callerProfile.school_id) {
       throw new Error('Only the Head of School can invite teachers')
+    }
+
+    if (body.action === 'delete_teacher') {
+      if (!body.user_id || body.user_id === caller.user.id) throw new Error('Invalid teacher account')
+      const { data: target, error: targetErr } = await admin
+        .from('profiles').select('role, school_id, email').eq('id', body.user_id).single()
+      if (targetErr || !target) throw new Error('Teacher account not found')
+      if (!['homeroom_teacher', 'subject_teacher'].includes(target.role) || target.school_id !== callerProfile.school_id) {
+        throw new Error('Only teachers in your school can be deleted')
+      }
+      const { error: deleteErr } = await admin.auth.admin.deleteUser(body.user_id)
+      if (deleteErr) throw deleteErr
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { ...cors, 'Content-Type': 'application/json' }
+      })
+    }
+
+    const { email, full_name, role, class_id } = body
+    if (!email || !full_name) throw new Error('email and full_name are required')
+    if (!['director', 'curriculum_coordinator', 'homeroom_teacher', 'subject_teacher'].includes(role)) {
+      throw new Error('Invalid teacher role')
     }
 
     // Direct account creation avoids the email-confirmation invitation flow.
