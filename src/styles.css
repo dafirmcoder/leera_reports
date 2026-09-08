@@ -192,15 +192,15 @@ h3 { font-size: 15px; margin-top: 8px; }
 .report-header { position: relative; display: flex; align-items: center; justify-content: center; min-height: 26mm; }
 .logo { position: absolute; }
 .logo-left { left: 0; top: 0; height: 24mm; }
-.logo-right { right: 2; top: 1; height: 7mm; }
+.logo-right { right: 0; top: 0; height: 7mm; }
 .report-title-block { text-align: center; }
 .report-title-block h1 {
-  font-size: 22px;
+  font-size: 20px;
   color: #ffffff;
   background: var(--red);
   text-transform: uppercase;
   display: inline-block;
-  padding: 7px 18px;
+  padding: 5px 16px;
   border-radius: 4px;
   margin: 0;
   letter-spacing: 0.04em;
