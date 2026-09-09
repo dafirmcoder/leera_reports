@@ -48,25 +48,14 @@ drop policy if exists profiles_select on public.profiles;
 create policy profiles_select on public.profiles for select
 using (
   id = auth.uid()
-  or school_id = public.my_school()
-  or (
-    role = 'pending'
-    and school_id is null
-    and public.my_role() in ('head_of_school', 'curriculum_coordinator')
-  )
+  or public.my_role() = 'head_of_school'
 );
 
 drop policy if exists profiles_update on public.profiles;
 create policy profiles_update on public.profiles for update using (
   id = auth.uid()
-  or (
-    public.my_role() in ('head_of_school', 'curriculum_coordinator')
-    and (school_id = public.my_school() or (role = 'pending' and school_id is null))
-  )
+  or public.my_role() = 'head_of_school'
 ) with check (
   id = auth.uid()
-  or (
-    public.my_role() in ('head_of_school', 'curriculum_coordinator')
-    and school_id = public.my_school()
-  )
+  or public.my_role() = 'head_of_school'
 );

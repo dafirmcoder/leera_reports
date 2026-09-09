@@ -97,7 +97,11 @@ export default function Classes() {
     <div className="page">
       <h2>Classes</h2>
       <p className="muted">
-        {isHos ? 'Create classes, set homeroom teachers and assign subject teachers.' : 'Your class — assign subject teachers.'}
+        {isHos
+          ? 'Create classes, set homeroom teachers and assign subject teachers.'
+          : can(profile?.role, 'viewAllClasses', profile?.additional_roles)
+            ? 'Assign subject teachers across the school.'
+            : 'Your class — assign subject teachers.'}
       </p>
       {error && <div className="notice notice-error">{error}</div>}
 

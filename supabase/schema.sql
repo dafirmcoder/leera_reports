@@ -229,27 +229,15 @@ drop policy if exists profiles_select on public.profiles;
 create policy profiles_select on public.profiles for select
   using (
     id = auth.uid()
-    or school_id = public.my_school()
-    -- Support pending profiles created before the school-assignment fix.
-    or (
-      role = 'pending'
-      and school_id is null
-      and public.my_role() in ('head_of_school', 'curriculum_coordinator')
-    )
+    or public.my_role() = 'head_of_school'
   );
 drop policy if exists profiles_update on public.profiles;
 create policy profiles_update on public.profiles for update using (
-  id = auth.uid()                                            -- self (name)
-  or (
-    public.my_role() in ('head_of_school','curriculum_coordinator')
-    and (school_id = public.my_school() or (role = 'pending' and school_id is null))
-  )
+  id = auth.uid()
+  or public.my_role() = 'head_of_school'
 ) with check (
   id = auth.uid()
-  or (
-    public.my_role() in ('head_of_school','curriculum_coordinator')
-    and school_id = public.my_school()
-  )
+  or public.my_role() = 'head_of_school'
 );
 
 -- ---- classes ----
@@ -450,10 +438,12 @@ create policy cst_select on public.class_subject_teachers for select using (
 drop policy if exists cst_insert on public.class_subject_teachers;
 create policy cst_insert on public.class_subject_teachers for insert with check (
   public.my_role() = 'head_of_school'
+  or public.my_role() = 'curriculum_coordinator'
   or (public.my_role() = 'homeroom_teacher' and class_id = public.my_class())
 );
 drop policy if exists cst_delete on public.class_subject_teachers;
 create policy cst_delete on public.class_subject_teachers for delete using (
   public.my_role() = 'head_of_school'
+  or public.my_role() = 'curriculum_coordinator'
   or (public.my_role() = 'homeroom_teacher' and class_id = public.my_class())
 );

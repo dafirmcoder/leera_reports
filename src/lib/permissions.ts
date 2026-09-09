@@ -7,7 +7,7 @@ export type Capability =
   | 'editSchool'         // school settings (HOS only)
   | 'manageSubjects'     // add/edit subjects (HOS + curriculum coordinator)
   | 'manageClasses'      // create classes / set homeroom teacher (HOS only)
-  | 'assignTeachers'     // assign subject teachers (HOS + homeroom teacher)
+  | 'assignTeachers'     // assign subject teachers (HOS + coordinators + homeroom teacher)
   | 'addStudents'        // homeroom teacher only
   | 'addMarks'           // homeroom + subject teachers
   | 'viewAllClasses'     // sees the whole school (director/HOS/coordinator)
@@ -25,7 +25,7 @@ export function can(role: Role | undefined, cap: Capability, additionalRoles: Ro
     case 'manageSubjects':
       return roles.has('head_of_school') || roles.has('curriculum_coordinator')
     case 'assignTeachers':
-      return roles.has('head_of_school') || roles.has('homeroom_teacher')
+      return roles.has('head_of_school') || roles.has('curriculum_coordinator') || roles.has('homeroom_teacher')
     case 'addStudents':
       return roles.has('homeroom_teacher')
     case 'addMarks':
