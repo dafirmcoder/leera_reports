@@ -182,13 +182,16 @@ begin
       v_school
     );
   else
+    -- Self-registered users belong to the existing school while pending so
+    -- school administrators can find and approve them.
+    select id into v_school from public.schools order by created_at limit 1;
     insert into public.profiles (id, email, full_name, role, school_id)
     values (
       new.id,
       new.email,
       coalesce(new.raw_user_meta_data->>'full_name', ''),
       'pending',
-      null
+      v_school
     );
   end if;
   return new;
@@ -224,13 +227,22 @@ create policy schools_update on public.schools for update
 -- ---- profiles ----
 drop policy if exists profiles_select on public.profiles;
 create policy profiles_select on public.profiles for select
-  using (id = auth.uid() or school_id = public.my_school());
+  using (
+    id = auth.uid()
+    or school_id = public.my_school()
+    -- Support pending profiles created before the school-assignment fix.
+    or (
+      role = 'pending'
+      and school_id is null
+      and public.my_role() in ('head_of_school', 'curriculum_coordinator')
+    )
+  );
 drop policy if exists profiles_update on public.profiles;
 create policy profiles_update on public.profiles for update using (
   id = auth.uid()                                            -- self (name)
   or (
     public.my_role() in ('head_of_school','curriculum_coordinator')
-    and school_id = public.my_school()                       -- manage others in school
+    and (school_id = public.my_school() or (role = 'pending' and school_id is null))
   )
 ) with check (
   id = auth.uid()
