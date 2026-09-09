@@ -176,6 +176,12 @@ export const supabaseApi: Api = {
     if (!res.ok) throw new Error(json.error ?? 'Teacher deletion failed')
   },
 
+  async nextAdmissionNo(): Promise<string> {
+    const { data, error } = await db().rpc('next_admission_no')
+    if (error) throw new Error(error.message)
+    return data ?? '1'
+  },
+
   async listAssignments(classId: string): Promise<Assignment[]> {
     const { data, error } = await db()
       .from('class_subject_teachers')

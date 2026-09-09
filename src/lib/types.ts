@@ -166,6 +166,7 @@ export interface Api {
   removeAssignment(id: string): Promise<void>
 
   // students
+  nextAdmissionNo(): Promise<string>
   listStudents(classId: string): Promise<Student[]>
   getStudent(id: string): Promise<Student | null>
   addStudent(classId: string, s: Omit<Student, 'id' | 'class_id'>): Promise<Student>

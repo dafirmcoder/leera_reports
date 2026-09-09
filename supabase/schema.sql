@@ -155,6 +155,19 @@ returns setof uuid language sql stable security definer set search_path = public
   where teacher_id = auth.uid() and class_id = p_class;
 $$;
 
+create or replace function public.next_admission_no()
+returns text
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select (coalesce(max(case when trim(s.admission_no) ~ '^[0-9]+$' then trim(s.admission_no)::bigint end), 0) + 1)::text
+  from public.students s
+  join public.classes c on c.id = s.class_id
+  where c.school_id = public.my_school();
+$$;
+
 -- ------------------------------------------------------------------
 -- Bootstrap: first user becomes Head of School and gets a school;
 -- later users start as 'pending'.

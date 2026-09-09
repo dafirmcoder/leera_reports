@@ -13,6 +13,7 @@ export default function Students() {
   const { selectedClassId, classes } = useSchool()
   const { profile } = useAuth()
   const [students, setStudents] = useState<Student[]>([])
+  const [nextAdmissionNo, setNextAdmissionNo] = useState('')
   const [form, setForm] = useState(empty)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [error, setError] = useState('')
@@ -28,6 +29,11 @@ export default function Students() {
 
   useEffect(reload, [selectedClassId])
 
+  useEffect(() => {
+    if (!canAdd || editingId) return
+    api.nextAdmissionNo().then(setNextAdmissionNo).catch(() => setNextAdmissionNo(''))
+  }, [canAdd, editingId, selectedClassId])
+
   const suggestedNo = useMemo(() => nextStudentNo(students.map((s) => s.student_no)), [students])
 
   const submit = async (e: FormEvent) => {
@@ -38,7 +44,7 @@ export default function Students() {
     try {
       const payload = {
         student_no: form.student_no.trim() || suggestedNo,
-        admission_no: form.admission_no.trim(),
+        admission_no: form.admission_no.trim() || (editingId ? '' : nextAdmissionNo),
         full_name: form.full_name.trim(),
         gender: form.gender
       }
@@ -89,11 +95,17 @@ export default function Students() {
         <form onSubmit={submit} className="card stack">
           <h3>{editingId ? 'Edit student' : 'Add student'}</h3>
           <div className="grid4">
-            <label className="field"><span>Student No.</span>
+            <label className="field"><span>Class S/N</span>
               <input value={form.student_no} placeholder={suggestedNo} onChange={(e) => setForm({ ...form, student_no: e.target.value })} />
+              {!editingId && <small className="muted">Starts again from 001 in each class.</small>}
             </label>
-            <label className="field"><span>Admission No.</span>
-              <input value={form.admission_no} onChange={(e) => setForm({ ...form, admission_no: e.target.value })} />
+            <label className="field"><span>Admission No. (school-wide)</span>
+              <input
+                value={form.admission_no}
+                placeholder={nextAdmissionNo}
+                onChange={(e) => setForm({ ...form, admission_no: e.target.value })}
+              />
+              {!editingId && nextAdmissionNo && <small className="muted">Next school-wide number: {nextAdmissionNo}</small>}
             </label>
             <label className="field"><span>Full name *</span>
               <input required value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} />
@@ -115,7 +127,7 @@ export default function Students() {
       <div className="card">
         <table className="table">
           <thead>
-            <tr><th>Student No.</th><th>Admission No.</th><th>Full name</th><th>Gender</th>{canAdd && <th className="right">Actions</th>}</tr>
+            <tr><th>Class S/N</th><th>Admission No.</th><th>Full name</th><th>Gender</th>{canAdd && <th className="right">Actions</th>}</tr>
           </thead>
           <tbody>
             {students.length === 0 && (

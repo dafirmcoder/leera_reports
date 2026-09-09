@@ -313,6 +313,16 @@ export const demoApi: Api = {
     save(db)
   },
 
+  async nextAdmissionNo() {
+    const db = load()
+    let max = 0
+    for (const student of db.students) {
+      const value = Number.parseInt(student.admission_no.trim(), 10)
+      if (Number.isFinite(value)) max = Math.max(max, value)
+    }
+    return String(max + 1)
+  },
+
   async listStudents(classId: string) {
     return load().students
       .filter((s) => s.class_id === classId)
