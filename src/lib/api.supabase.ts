@@ -92,14 +92,28 @@ export const supabaseApi: Api = {
   async listClasses(): Promise<ClassInfo[]> {
     const { data, error } = await db()
       .from('classes')
-      .select('id, name, homeroom_teacher_id, homeroom:profiles!classes_homeroom_teacher_id_fkey(full_name)')
+      .select('id, name, homeroom_teacher_id')
       .order('name', { ascending: true })
     if (error) throw new Error(error.message)
+
+    const teacherIds = (data ?? [])
+      .map((r: any) => r.homeroom_teacher_id)
+      .filter(Boolean)
+    const teacherNames = new Map<string, string>()
+    if (teacherIds.length > 0) {
+      const { data: profiles, error: profileError } = await db()
+        .from('profiles')
+        .select('id, full_name')
+        .in('id', teacherIds)
+      if (profileError) throw new Error(profileError.message)
+      for (const profile of profiles ?? []) teacherNames.set(profile.id, profile.full_name ?? '')
+    }
+
     return (data ?? []).map((r: any) => ({
       id: r.id,
       name: r.name,
       homeroom_teacher_id: r.homeroom_teacher_id,
-      homeroom_teacher_name: r.homeroom?.full_name ?? ''
+      homeroom_teacher_name: teacherNames.get(r.homeroom_teacher_id) ?? ''
     }))
   },
 
