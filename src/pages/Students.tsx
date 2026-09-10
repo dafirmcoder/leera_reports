@@ -19,7 +19,9 @@ export default function Students() {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
+  // Homeroom teachers manage only their own roster, not other assigned classes.
   const canAdd = can(profile?.role, 'addStudents', profile?.additional_roles)
+    && !!selectedClassId && selectedClassId === profile?.class_id
   const className = classes.find((c) => c.id === selectedClassId)?.name ?? ''
 
   const reload = () => {

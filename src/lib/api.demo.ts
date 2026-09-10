@@ -176,7 +176,7 @@ export const demoApi: Api = {
     const ids = new Set(
       db.assignments.filter((a) => a.teacher_id === me.id).map((a) => a.class_id)
     )
-    if (hasRole(me.role, 'homeroom_teacher', me.additional_roles) && me.class_id) ids.add(me.class_id)
+    if (me.class_id) ids.add(me.class_id)
     return db.classes.filter((c) => ids.has(c.id))
   },
 
@@ -288,7 +288,8 @@ export const demoApi: Api = {
     const db = load()
     const me = currentProfile(db)
     let list = db.assignments.filter((a) => a.class_id === classId)
-    if (hasRole(me.role, 'subject_teacher', me.additional_roles)) {
+    if (hasRole(me.role, 'subject_teacher', me.additional_roles)
+      || (hasRole(me.role, 'homeroom_teacher', me.additional_roles) && me.class_id !== classId)) {
       list = list.filter((a) => a.teacher_id === me.id)
     }
     return list
@@ -365,7 +366,9 @@ export const demoApi: Api = {
     const db = load()
     const me = currentProfile(db)
     let tests = db.unitTests.filter((t) => t.class_id === classId)
-    if (hasRole(me.role, 'subject_teacher', me.additional_roles)) {
+    const isOwnClass = me.class_id === classId
+    if (!isOwnClass && (hasRole(me.role, 'subject_teacher', me.additional_roles)
+      || hasRole(me.role, 'homeroom_teacher', me.additional_roles))) {
       const mine = new Set(db.assignments.filter((a) => a.teacher_id === me.id && a.class_id === classId).map((a) => a.subject_id))
       tests = tests.filter((t) => mine.has(t.subject_id))
     }

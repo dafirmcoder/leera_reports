@@ -16,7 +16,8 @@ export default function Classes() {
   const [busy, setBusy] = useState(false)
 
   const isHos = can(profile?.role, 'manageClasses', profile?.additional_roles)
-  const canAssign = can(profile?.role, 'assignTeachers', profile?.additional_roles)
+  // HOS can assign teachers in every class; a homeroom teacher only in their own.
+  const canAssign = (c: ClassInfo) => isHos || (profile?.role === 'homeroom_teacher' && c.id === profile?.class_id)
 
   const teachers = people.filter((p) =>
     p.role === 'subject_teacher'
@@ -153,7 +154,7 @@ export default function Classes() {
             </label>
           )}
 
-          {canAssign && (
+          {canAssign(c) && (
             <>
               <h3>Subject teachers</h3>
               <table className="table">

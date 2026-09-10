@@ -173,6 +173,37 @@ returns setof uuid language sql stable security definer set search_path = public
   where teacher_id = auth.uid() and class_id = p_class;
 $$;
 
+create or replace function public.can_edit_test(p_test uuid)
+returns boolean language sql stable security definer set search_path = public as $$
+  select exists (
+    select 1 from public.unit_tests t
+    where t.id = p_test
+      and public.my_role() in ('homeroom_teacher','subject_teacher')
+      and (t.class_id = public.my_class() or (
+        t.class_id in (select public.assigned_class_ids())
+        and t.subject_id in (select public.assigned_class_subjects(t.class_id))
+      ))
+  );
+$$;
+
+create or replace function public.can_see_test(p_test uuid)
+returns boolean language sql stable security definer set search_path = public as $$
+  select exists (
+    select 1 from public.unit_tests t
+    join public.classes c on c.id = t.class_id
+    where t.id = p_test and c.school_id = public.my_school()
+      and (
+        public.my_role() in ('director','head_of_school','curriculum_coordinator')
+        or (public.my_role() in ('homeroom_teacher','subject_teacher') and (
+          t.class_id = public.my_class() or (
+            t.class_id in (select public.assigned_class_ids())
+            and t.subject_id in (select public.assigned_class_subjects(t.class_id))
+          )
+        ))
+      )
+  );
+$$;
+
 create or replace function public.next_admission_no()
 returns text
 language sql
@@ -190,7 +221,6 @@ $$;
 -- Bootstrap: first user becomes Head of School and gets a school;
 -- later users start as 'pending'.
 -- ------------------------------------------------------------------
-
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
@@ -234,44 +264,6 @@ create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function public.handle_new_user();
 
--- ------------------------------------------------------------------
--- Row Level Security
--- ------------------------------------------------------------------
-
-alter table public.schools                enable row level security;
-alter table public.profiles               enable row level security;
-alter table public.classes                enable row level security;
-alter table public.subjects               enable row level security;
-alter table public.students               enable row level security;
-alter table public.unit_tests             enable row level security;
-alter table public.scores                 enable row level security;
-alter table public.class_subject_teachers enable row level security;
-
--- ---- schools ----
-drop policy if exists schools_select on public.schools;
-create policy schools_select on public.schools for select using (id = public.my_school());
-drop policy if exists schools_update on public.schools;
-create policy schools_update on public.schools for update
-  using (public.my_role() = 'head_of_school' and id = public.my_school())
-  with check (public.my_role() = 'head_of_school' and id = public.my_school());
-
--- ---- profiles ----
-drop policy if exists profiles_select on public.profiles;
-create policy profiles_select on public.profiles for select
-  using (
-    id = auth.uid()
-    or public.has_role('head_of_school')
-    or public.has_role('curriculum_coordinator')
-    or (
-      public.has_role('homeroom_teacher')
-      and school_id = public.my_school()
-      and (
-        role in ('subject_teacher', 'homeroom_teacher')
-        or 'subject_teacher' = any(coalesce(additional_roles, '{}'))
-        or 'homeroom_teacher' = any(coalesce(additional_roles, '{}'))
-      )
-    )
-  );
 drop policy if exists profiles_update on public.profiles;
 create policy profiles_update on public.profiles for update using (
   id = auth.uid()
@@ -289,8 +281,8 @@ create policy classes_select on public.classes for select using (
   school_id = public.my_school()
   and (
     public.my_role() in ('director','head_of_school','curriculum_coordinator')
-    or (public.my_role() = 'homeroom_teacher' and id = public.my_class())
-    or (public.my_role() = 'subject_teacher' and id in (select public.assigned_class_ids()))
+    or (public.my_role() in ('homeroom_teacher','subject_teacher')
+      and (id = public.my_class() or id in (select public.assigned_class_ids())))
   )
 );
 drop policy if exists classes_insert on public.classes;
@@ -324,8 +316,8 @@ create policy students_select on public.students for select using (
   class_id in (select c.id from public.classes c where c.school_id = public.my_school())
   and (
     public.my_role() in ('director','head_of_school','curriculum_coordinator')
-    or (public.my_role() = 'homeroom_teacher' and class_id = public.my_class())
-    or (public.my_role() = 'subject_teacher' and class_id in (select public.assigned_class_ids()))
+    or (public.my_role() in ('homeroom_teacher','subject_teacher')
+      and (class_id = public.my_class() or class_id in (select public.assigned_class_ids())))
   )
 );
 drop policy if exists students_insert on public.students;
@@ -345,128 +337,51 @@ create policy unit_tests_select on public.unit_tests for select using (
   class_id in (select c.id from public.classes c where c.school_id = public.my_school())
   and (
     public.my_role() in ('director','head_of_school','curriculum_coordinator')
-    or (public.my_role() = 'homeroom_teacher' and class_id = public.my_class())
-    or (
-      public.my_role() = 'subject_teacher'
-      and class_id in (select public.assigned_class_ids())
-      and subject_id in (select public.assigned_class_subjects(class_id))
-    )
+    or (public.my_role() in ('homeroom_teacher','subject_teacher') and (
+      class_id = public.my_class()
+      or (class_id in (select public.assigned_class_ids())
+        and subject_id in (select public.assigned_class_subjects(class_id)))
+    ))
   )
 );
 drop policy if exists unit_tests_insert on public.unit_tests;
 create policy unit_tests_insert on public.unit_tests for insert with check (
-  (public.my_role() = 'homeroom_teacher' and class_id = public.my_class())
-  or (
-    public.my_role() = 'subject_teacher'
-    and class_id in (select public.assigned_class_ids())
+  public.my_role() in ('homeroom_teacher','subject_teacher')
+  and (class_id = public.my_class() or (
+    class_id in (select public.assigned_class_ids())
     and subject_id in (select public.assigned_class_subjects(class_id))
-  )
+  ))
 );
 drop policy if exists unit_tests_update on public.unit_tests;
 create policy unit_tests_update on public.unit_tests for update
   using (
-    (public.my_role() = 'homeroom_teacher' and class_id = public.my_class())
-    or (
-      public.my_role() = 'subject_teacher'
-      and class_id in (select public.assigned_class_ids())
-      and subject_id in (select public.assigned_class_subjects(class_id))
-    )
+    public.my_role() in ('homeroom_teacher','subject_teacher')
+    and (class_id = public.my_class() or (class_id in (select public.assigned_class_ids())
+      and subject_id in (select public.assigned_class_subjects(class_id))))
   )
   with check (
-    (public.my_role() = 'homeroom_teacher' and class_id = public.my_class())
-    or (
-      public.my_role() = 'subject_teacher'
-      and class_id in (select public.assigned_class_ids())
-      and subject_id in (select public.assigned_class_subjects(class_id))
-    )
+    public.my_role() in ('homeroom_teacher','subject_teacher')
+    and (class_id = public.my_class() or (class_id in (select public.assigned_class_ids())
+      and subject_id in (select public.assigned_class_subjects(class_id))))
   );
 drop policy if exists unit_tests_delete on public.unit_tests;
 create policy unit_tests_delete on public.unit_tests for delete using (
-  (public.my_role() = 'homeroom_teacher' and class_id = public.my_class())
-  or (
-    public.my_role() = 'subject_teacher'
-    and class_id in (select public.assigned_class_ids())
-    and subject_id in (select public.assigned_class_subjects(class_id))
-  )
+  public.my_role() in ('homeroom_teacher','subject_teacher')
+  and (class_id = public.my_class() or (class_id in (select public.assigned_class_ids())
+    and subject_id in (select public.assigned_class_subjects(class_id))))
 );
 
 -- ---- scores ----
 drop policy if exists scores_select on public.scores;
-create policy scores_select on public.scores for select using (
-  exists (
-    select 1 from public.unit_tests t
-    join public.classes c on c.id = t.class_id
-    where t.id = unit_test_id and c.school_id = public.my_school()
-  )
-  and (
-    public.my_role() in ('director','head_of_school','curriculum_coordinator')
-    or (
-      public.my_role() = 'homeroom_teacher'
-      and exists (select 1 from public.unit_tests t where t.id = unit_test_id and t.class_id = public.my_class())
-    )
-    or (
-      public.my_role() = 'subject_teacher'
-      and exists (
-        select 1 from public.unit_tests t
-        where t.id = unit_test_id
-          and t.class_id in (select public.assigned_class_ids())
-          and t.subject_id in (select public.assigned_class_subjects(t.class_id))
-      )
-    )
-  )
-);
+create policy scores_select on public.scores for select using (public.can_see_test(unit_test_id));
 drop policy if exists scores_insert on public.scores;
-create policy scores_insert on public.scores for insert with check (
-  (
-    public.my_role() = 'homeroom_teacher'
-    and exists (select 1 from public.unit_tests t where t.id = unit_test_id and t.class_id = public.my_class())
-  )
-  or (
-    public.my_role() = 'subject_teacher'
-    and exists (
-      select 1 from public.unit_tests t
-      where t.id = unit_test_id
-        and t.class_id in (select public.assigned_class_ids())
-        and t.subject_id in (select public.assigned_class_subjects(t.class_id))
-    )
-  )
-);
+create policy scores_insert on public.scores for insert with check (public.can_edit_test(unit_test_id));
 drop policy if exists scores_update on public.scores;
 create policy scores_update on public.scores for update
-  using (
-    (public.my_role() = 'homeroom_teacher'
-      and exists (select 1 from public.unit_tests t where t.id = unit_test_id and t.class_id = public.my_class()))
-    or (public.my_role() = 'subject_teacher'
-      and exists (
-        select 1 from public.unit_tests t
-        where t.id = unit_test_id
-          and t.class_id in (select public.assigned_class_ids())
-          and t.subject_id in (select public.assigned_class_subjects(t.class_id))
-      ))
-  )
-  with check (
-    (public.my_role() = 'homeroom_teacher'
-      and exists (select 1 from public.unit_tests t where t.id = unit_test_id and t.class_id = public.my_class()))
-    or (public.my_role() = 'subject_teacher'
-      and exists (
-        select 1 from public.unit_tests t
-        where t.id = unit_test_id
-          and t.class_id in (select public.assigned_class_ids())
-          and t.subject_id in (select public.assigned_class_subjects(t.class_id))
-      ))
-  );
+  using (public.can_edit_test(unit_test_id))
+  with check (public.can_edit_test(unit_test_id));
 drop policy if exists scores_delete on public.scores;
-create policy scores_delete on public.scores for delete using (
-  (public.my_role() = 'homeroom_teacher'
-    and exists (select 1 from public.unit_tests t where t.id = unit_test_id and t.class_id = public.my_class()))
-  or (public.my_role() = 'subject_teacher'
-    and exists (
-      select 1 from public.unit_tests t
-      where t.id = unit_test_id
-        and t.class_id in (select public.assigned_class_ids())
-        and t.subject_id in (select public.assigned_class_subjects(t.class_id))
-    ))
-);
+create policy scores_delete on public.scores for delete using (public.can_edit_test(unit_test_id));
 
 -- ---- class_subject_teachers ----
 drop policy if exists cst_select on public.class_subject_teachers;

@@ -295,3 +295,4 @@ h3 { font-size: 15px; margin-top: 8px; }
 @media screen {
   .print-page { margin-bottom: 24px; }
   .print-page .report-sheet { margin: 0 auto 24px; }
+}

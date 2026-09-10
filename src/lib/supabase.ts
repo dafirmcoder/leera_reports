@@ -1,10 +1,10 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 
-const url = import.meta.env.VITE_SUPABASE_URL as string | undefined
-const anonKey = (
-  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string | undefined
-  ?? import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined
-)
+// Vite always defines import.meta.env; fall back to {} when running in plain
+// Node (e.g. tests) so this module can be imported outside the bundler.
+const env = (import.meta as unknown as { env?: Record<string, string> }).env ?? {}
+const url = env.VITE_SUPABASE_URL
+const anonKey = env.VITE_SUPABASE_ANON_KEY
 
 /** True when the app was built with Supabase credentials. */
 export const isSupabaseConfigured = Boolean(url && anonKey)
