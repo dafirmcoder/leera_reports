@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 import { api } from '../lib/api'
 import { fmtDate } from '../lib/report'
 import { useAuth } from '../context/AuthContext'
+import { hasRole } from '../lib/permissions'
 import type { ScoreRow, UnitTest } from '../lib/types'
 
 export default function ScoreEntry() {
@@ -22,13 +23,14 @@ export default function ScoreEntry() {
         const selected = ts.find((t) => t.id === testId) ?? null
         setTest(selected)
         if (!selected || !profile) return
-        if (profile.role === 'homeroom_teacher' && profile.class_id === classId) {
+        if (hasRole(profile.role, 'homeroom_teacher', profile.additional_roles) && profile.class_id === classId) {
           setCanEdit(true)
-          return
         }
-        if (profile.role === 'subject_teacher' || profile.role === 'head_of_school') {
+        if (hasRole(profile.role, 'subject_teacher', profile.additional_roles)
+          || profile.role === 'curriculum_coordinator'
+          || profile.role === 'head_of_school') {
           const assignments = await api.listAssignments(classId)
-          setCanEdit(assignments.some((a) => a.teacher_id === profile.id && a.subject_id === selected.subject_id))
+          setCanEdit((current) => current || assignments.some((a) => a.teacher_id === profile.id && a.subject_id === selected.subject_id))
         }
       }).catch(() => {})
     }

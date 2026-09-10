@@ -4,6 +4,7 @@ import type {
 } from './types'
 import type { AttendanceRow } from './types'
 import { DEMO_PERSONAS } from './auth'
+import { hasRole } from './permissions'
 
 // localStorage-backed implementation (demo mode) with seeded multi-class data
 // and one persona per role, so every role can be tested.
@@ -169,14 +170,13 @@ export const demoApi: Api = {
   async listClasses() {
     const db = load()
     const me = currentProfile(db)
-    if (me.role === 'director' || me.role === 'head_of_school' || me.role === 'curriculum_coordinator') {
+    if (hasRole(me.role, 'director', me.additional_roles) || hasRole(me.role, 'head_of_school', me.additional_roles) || hasRole(me.role, 'curriculum_coordinator', me.additional_roles)) {
       return [...db.classes]
     }
-    if (me.role === 'homeroom_teacher') {
-      return db.classes.filter((c) => c.id === me.class_id)
-    }
-    // subject teacher: assigned classes
-    const ids = new Set(db.assignments.filter((a) => a.teacher_id === me.id).map((a) => a.class_id))
+    const ids = new Set(
+      db.assignments.filter((a) => a.teacher_id === me.id).map((a) => a.class_id)
+    )
+    if (hasRole(me.role, 'homeroom_teacher', me.additional_roles) && me.class_id) ids.add(me.class_id)
     return db.classes.filter((c) => ids.has(c.id))
   },
 
@@ -288,7 +288,7 @@ export const demoApi: Api = {
     const db = load()
     const me = currentProfile(db)
     let list = db.assignments.filter((a) => a.class_id === classId)
-    if (me.role === 'subject_teacher') {
+    if (hasRole(me.role, 'subject_teacher', me.additional_roles)) {
       list = list.filter((a) => a.teacher_id === me.id)
     }
     return list
@@ -365,7 +365,7 @@ export const demoApi: Api = {
     const db = load()
     const me = currentProfile(db)
     let tests = db.unitTests.filter((t) => t.class_id === classId)
-    if (me.role === 'subject_teacher') {
+    if (hasRole(me.role, 'subject_teacher', me.additional_roles)) {
       const mine = new Set(db.assignments.filter((a) => a.teacher_id === me.id && a.class_id === classId).map((a) => a.subject_id))
       tests = tests.filter((t) => mine.has(t.subject_id))
     }

@@ -4,7 +4,7 @@ import { api } from '../lib/api'
 import { fmtDate } from '../lib/report'
 import { useSchool } from '../context/SchoolContext'
 import { useAuth } from '../context/AuthContext'
-import { can } from '../lib/permissions'
+import { can, hasRole } from '../lib/permissions'
 import ClassPicker from '../components/ClassPicker'
 import type { Assignment, UnitTest } from '../lib/types'
 
@@ -31,18 +31,25 @@ export default function Marks() {
   useEffect(reload, [selectedClassId])
 
   // Subject teachers can only create tests for their assigned subjects.
-  const mySubjects =
-    profile?.role === 'subject_teacher' || profile?.role === 'head_of_school'
-      ? subjects.filter((s) => assignments.some((a) => a.subject_id === s.id))
+  const isHomeroom = hasRole(profile?.role, 'homeroom_teacher', profile?.additional_roles)
+  const isSubjectTeacher = hasRole(profile?.role, 'subject_teacher', profile?.additional_roles)
+    || profile?.role === 'curriculum_coordinator'
+  const myAssignments = assignments.filter((a) => a.teacher_id === profile?.id)
+  const isOwnClass = isHomeroom && profile?.class_id === selectedClassId
+  const mySubjects = isOwnClass
+    ? subjects
+    : isSubjectTeacher
+      ? subjects.filter((s) => myAssignments.some((a) => a.subject_id === s.id))
       : subjects
-  const canAdd = roleCanAdd && (profile?.role === 'homeroom_teacher'
-    ? profile.class_id === selectedClassId
-    : mySubjects.length > 0)
+  const canAdd = roleCanAdd && (
+    isOwnClass
+    || (isSubjectTeacher && mySubjects.length > 0)
+  )
 
-  const canEditTest = (test: UnitTest) => profile?.role === 'homeroom_teacher'
-    ? profile.class_id === test.class_id
-    : (profile?.role === 'subject_teacher' || profile?.role === 'head_of_school')
-      && assignments.some((a) => a.teacher_id === profile.id && a.subject_id === test.subject_id)
+  const canEditTest = (test: UnitTest) => isHomeroom
+    ? profile?.class_id === test.class_id || myAssignments.some((a) => a.class_id === test.class_id && a.subject_id === test.subject_id)
+    : (isSubjectTeacher || profile?.role === 'head_of_school')
+      && myAssignments.some((a) => a.class_id === test.class_id && a.subject_id === test.subject_id)
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()

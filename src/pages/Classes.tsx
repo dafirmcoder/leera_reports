@@ -21,6 +21,7 @@ export default function Classes() {
   const teachers = people.filter((p) =>
     p.role === 'subject_teacher'
     || p.role === 'homeroom_teacher'
+    || p.role === 'curriculum_coordinator'
     || p.additional_roles.includes('subject_teacher')
     || p.additional_roles.includes('homeroom_teacher')
   )
