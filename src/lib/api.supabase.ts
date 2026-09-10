@@ -244,7 +244,12 @@ export const supabaseApi: Api = {
 
   async addStudent(classId: string, s): Promise<Student> {
     const { data, error } = await db().from('students').insert({ class_id: classId, ...s }).select().single()
-    if (error) throw new Error(error.message)
+    if (error) {
+      if (error.code === '23505' && error.message.includes('students_admission_no_unique_idx')) {
+        throw new Error('Admission number already exists. Enter a different number.')
+      }
+      throw new Error(error.message)
+    }
     return { id: data.id, class_id: classId, ...s }
   },
 
@@ -252,7 +257,12 @@ export const supabaseApi: Api = {
     const { error } = await db().from('students')
       .update({ student_no: s.student_no, admission_no: s.admission_no, full_name: s.full_name, gender: s.gender })
       .eq('id', s.id)
-    if (error) throw new Error(error.message)
+    if (error) {
+      if (error.code === '23505' && error.message.includes('students_admission_no_unique_idx')) {
+        throw new Error('Admission number already exists. Enter a different number.')
+      }
+      throw new Error(error.message)
+    }
   },
 
   async deleteStudent(id: string): Promise<void> {

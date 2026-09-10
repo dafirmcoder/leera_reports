@@ -30,7 +30,7 @@ export default function Students() {
   useEffect(reload, [selectedClassId])
 
   useEffect(() => {
-    if (!canAdd || editingId) return
+    if (!canAdd) return
     api.nextAdmissionNo().then(setNextAdmissionNo).catch(() => setNextAdmissionNo(''))
   }, [canAdd, editingId, selectedClassId])
 
@@ -47,6 +47,10 @@ export default function Students() {
         admission_no: form.admission_no.trim() || (editingId ? '' : nextAdmissionNo),
         full_name: form.full_name.trim(),
         gender: form.gender
+      }
+      if (!payload.admission_no) {
+        setError('A unique admission number is required.')
+        return
       }
       if (editingId) {
         await api.updateStudent({ id: editingId, class_id: selectedClassId, ...payload })
@@ -105,7 +109,7 @@ export default function Students() {
                 placeholder={nextAdmissionNo}
                 onChange={(e) => setForm({ ...form, admission_no: e.target.value })}
               />
-              {!editingId && nextAdmissionNo && <small className="muted">Next school-wide number: {nextAdmissionNo}</small>}
+              {nextAdmissionNo && <small className="muted">Next school-wide number: {nextAdmissionNo}</small>}
             </label>
             <label className="field"><span>Full name *</span>
               <input required value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} />

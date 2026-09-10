@@ -1,3 +1,19 @@
+  attendance_date <= current_date
+  and (
+  public.has_role('curriculum_coordinator')
+  or (public.has_role('homeroom_teacher') and class_id = public.my_class() and attendance_date = current_date)
+  )
+  attendance_date <= current_date
+  and (
+  public.has_role('curriculum_coordinator')
+  or (public.has_role('homeroom_teacher') and class_id = public.my_class() and attendance_date = current_date)
+  )
+);
+  attendance_date <= current_date
+  and (
+  public.has_role('curriculum_coordinator')
+  or (public.has_role('homeroom_teacher') and class_id = public.my_class() and attendance_date = current_date)
+  )
 -- ============================================================
 --  LEERA END-OF-UNIT REPORTS  —  Supabase schema  (v2)
 --  Multi-class, multi-teacher, roles.
@@ -75,6 +91,8 @@ create table if not exists public.students (
   created_at   timestamptz not null default now(),
   unique (class_id, student_no)
 );
+create unique index if not exists students_admission_no_unique_idx
+  on public.students (admission_no);
 
 create table if not exists public.unit_tests (
   id          uuid primary key default gen_random_uuid(),

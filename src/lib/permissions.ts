@@ -11,7 +11,8 @@ export type Capability =
   | 'addStudents'        // homeroom teacher only
   | 'addMarks'           // homeroom + subject teachers
   | 'viewAllClasses'     // sees the whole school (director/HOS/coordinator)
-  | 'markAttendance'     // homeroom teacher for own class
+  | 'markAttendance'     // homeroom teachers today; coordinators for school classes
+  | 'markPastAttendance' // coordinator backfills skipped attendance dates
 
 export function can(role: Role | undefined, cap: Capability, additionalRoles: Role[] = []): boolean {
   const roles = new Set<Role>(role ? [role, ...additionalRoles] : [])
@@ -33,7 +34,9 @@ export function can(role: Role | undefined, cap: Capability, additionalRoles: Ro
     case 'viewAllClasses':
       return roles.has('director') || roles.has('head_of_school') || roles.has('curriculum_coordinator')
     case 'markAttendance':
-      return roles.has('homeroom_teacher')
+      return roles.has('homeroom_teacher') || roles.has('curriculum_coordinator')
+    case 'markPastAttendance':
+      return roles.has('curriculum_coordinator')
     default:
       return false
   }

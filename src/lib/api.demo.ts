@@ -335,6 +335,9 @@ export const demoApi: Api = {
 
   async addStudent(classId: string, s) {
     const db = load()
+    if (db.students.some((student) => student.admission_no.trim() === s.admission_no.trim())) {
+      throw new Error('Admission number already exists. Enter a unique number.')
+    }
     const student: Student = { id: uid(), class_id: classId, ...s }
     db.students.push(student)
     save(db)
@@ -343,6 +346,9 @@ export const demoApi: Api = {
 
   async updateStudent(s: Student) {
     const db = load()
+    if (db.students.some((student) => student.id !== s.id && student.admission_no.trim() === s.admission_no.trim())) {
+      throw new Error('Admission number already exists. Enter a unique number.')
+    }
     const i = db.students.findIndex((x) => x.id === s.id)
     if (i >= 0) db.students[i] = { ...s }
     save(db)
