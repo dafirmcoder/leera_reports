@@ -262,6 +262,15 @@ create policy profiles_select on public.profiles for select
     id = auth.uid()
     or public.has_role('head_of_school')
     or public.has_role('curriculum_coordinator')
+    or (
+      public.has_role('homeroom_teacher')
+      and school_id = public.my_school()
+      and (
+        role in ('subject_teacher', 'homeroom_teacher')
+        or 'subject_teacher' = any(coalesce(additional_roles, '{}'))
+        or 'homeroom_teacher' = any(coalesce(additional_roles, '{}'))
+      )
+    )
   );
 drop policy if exists profiles_update on public.profiles;
 create policy profiles_update on public.profiles for update using (

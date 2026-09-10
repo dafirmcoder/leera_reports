@@ -18,7 +18,12 @@ export default function Classes() {
   const isHos = can(profile?.role, 'manageClasses', profile?.additional_roles)
   const canAssign = can(profile?.role, 'assignTeachers', profile?.additional_roles)
 
-  const teachers = people.filter((p) => p.role === 'subject_teacher' || p.role === 'homeroom_teacher')
+  const teachers = people.filter((p) =>
+    p.role === 'subject_teacher'
+    || p.role === 'homeroom_teacher'
+    || p.additional_roles.includes('subject_teacher')
+    || p.additional_roles.includes('homeroom_teacher')
+  )
 
   useEffect(() => {
     api.listProfiles().then(setPeople).catch(() => {})
