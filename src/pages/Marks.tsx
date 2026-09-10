@@ -44,7 +44,7 @@ export default function Marks() {
     : subjects
   const canAdd = roleCanAdd && (
     isOwnClass
-    || (isSubjectTeacher && mySubjects.length > 0)
+    || ((isHomeroom || isSubjectTeacher) && mySubjects.length > 0)
   )
 
   const canEditTest = (test: UnitTest) => (isHomeroom || profile?.role === 'subject_teacher')
