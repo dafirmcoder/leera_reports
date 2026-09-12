@@ -290,6 +290,28 @@ export const supabaseApi: Api = {
     if (rows.length === 0) return
     const { error } = await db().from('attendance').upsert(rows, { onConflict: 'class_id,student_id,attendance_date' })
     if (error) throw new Error(error.message)
+
+    // Trigger leadership notifications
+    try {
+      const classId = rows[0]?.class_id
+      if (classId) {
+        const [profile, classes] = await Promise.all([
+          this.getProfile(),
+          this.listClasses().catch(() => [])
+        ])
+        const cls = classes.find((c) => c.id === classId)
+        const className = cls?.name || 'Homeroom'
+        const teacherName = profile?.full_name || 'Teacher'
+        const present = rows.filter((r) => r.status === 'P').length
+        const absent = rows.filter((r) => r.status === 'A').length
+        const excused = rows.filter((r) => r.status === 'E').length
+
+        const { notifyLeadershipOnAttendance } = await import('./notifications')
+        notifyLeadershipOnAttendance(className, teacherName, present, absent, excused).catch(() => {})
+      }
+    } catch {
+      // Non-blocking notification dispatch
+    }
   },
 
   async listAttendanceSummary(date: string): Promise<AttendanceSummary[]> {

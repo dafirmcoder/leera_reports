@@ -3,6 +3,13 @@ import { api } from '../lib/api'
 import { useSchool } from '../context/SchoolContext'
 import { useAuth } from '../context/AuthContext'
 import { can } from '../lib/permissions'
+import {
+  getNotificationPermission,
+  registerDevicePushSubscription,
+  requestNotificationPermission,
+  showSystemNotification,
+  unregisterDevicePushSubscription
+} from '../lib/notifications'
 import type { School } from '../lib/types'
 
 export default function SettingsPage() {
@@ -18,6 +25,67 @@ export default function SettingsPage() {
   const [passwordMessage, setPasswordMessage] = useState('')
   const [passwordError, setPasswordError] = useState('')
   const [passwordBusy, setPasswordBusy] = useState(false)
+
+  // Notifications state
+  const [notifPermission, setNotifPermission] = useState<string>('default')
+  const [notifBusy, setNotifBusy] = useState(false)
+  const [notifMessage, setNotifMessage] = useState('')
+  const [notifError, setNotifError] = useState('')
+
+  useEffect(() => {
+    setNotifPermission(getNotificationPermission())
+  }, [])
+
+  const enableNotifications = async () => {
+    if (!profile) return
+    setNotifError('')
+    setNotifMessage('')
+    setNotifBusy(true)
+    try {
+      const perm = await requestNotificationPermission()
+      setNotifPermission(perm)
+      if (perm === 'granted') {
+        const ok = await registerDevicePushSubscription(profile.id)
+        if (ok) {
+          setNotifMessage('Push notifications enabled successfully for this device.')
+          showSystemNotification('✅ Notifications Activated', {
+            body: 'You will now receive attendance reminders and alerts on your phone.'
+          })
+        } else {
+          setNotifMessage('Notification permission granted.')
+        }
+      } else if (perm === 'denied') {
+        setNotifError('Notification permission was blocked. Please allow notifications in your browser/phone settings.')
+      }
+    } catch (e: any) {
+      setNotifError(e.message || 'Failed to enable notifications.')
+    } finally {
+      setNotifBusy(false)
+    }
+  }
+
+  const disableNotifications = async () => {
+    if (!profile) return
+    setNotifBusy(true)
+    try {
+      await unregisterDevicePushSubscription(profile.id)
+      setNotifMessage('Push notifications disabled on this device.')
+    } catch {
+      // Non-blocking
+    } finally {
+      setNotifBusy(false)
+    }
+  }
+
+  const sendTestNotification = async () => {
+    setNotifError('')
+    setNotifMessage('Test notification sent.')
+    showSystemNotification('🔔 Test Notification', {
+      body: 'Notifications are working perfectly on this phone/device!',
+      data: { url: '/dashboard' }
+    })
+  }
+
 
   const canEdit = can(profile?.role, 'editSchool', profile?.additional_roles)
   const canSubjects = can(profile?.role, 'manageSubjects', profile?.additional_roles)
@@ -159,6 +227,45 @@ export default function SettingsPage() {
         </div>
       )}
 
+      {/* Mobile Push Notifications & Attendance Reminders */}
+      <div className="card stack">
+        <h3>📱 Mobile Push Notifications &amp; Reminders</h3>
+        <p className="muted">
+          Enable native phone notifications for <strong>8:00 AM Mon–Fri morning attendance reminders</strong> (repetitive until marked) and <strong>instant attendance updates for leadership</strong>.
+        </p>
+
+        <div className="row" style={{ alignItems: 'center', gap: '12px' }}>
+          <span style={{ fontSize: '13px' }}>
+            Status on this device:{' '}
+            <strong style={{
+              color: notifPermission === 'granted' ? '#166534' : notifPermission === 'denied' ? '#991b1b' : '#854d0e'
+            }}>
+              {notifPermission === 'granted' ? '✅ Enabled' : notifPermission === 'denied' ? '🚫 Blocked in Browser Settings' : '⚠️ Not Enabled'}
+            </strong>
+          </span>
+        </div>
+
+        <div className="row" style={{ gap: '10px' }}>
+          {notifPermission !== 'granted' ? (
+            <button type="button" className="btn btn-primary" disabled={notifBusy} onClick={enableNotifications}>
+              {notifBusy ? 'Enabling…' : '🔔 Enable Notifications on this Phone/Device'}
+            </button>
+          ) : (
+            <>
+              <button type="button" className="btn btn-small" disabled={notifBusy} onClick={sendTestNotification}>
+                {notifBusy ? 'Sending…' : '🔔 Test Notification (Send to Phone)'}
+              </button>
+              <button type="button" className="btn btn-small btn-ghost" onClick={disableNotifications}>
+                Disable on this device
+              </button>
+            </>
+          )}
+        </div>
+
+        {notifMessage && <div className="notice notice-ok">{notifMessage}</div>}
+        {notifError && <div className="notice notice-error">{notifError}</div>}
+      </div>
+
       <form onSubmit={changePassword} className="card stack">
         <h3>Change password</h3>
         <p className="muted">Update the password for your signed-in account.</p>
@@ -180,3 +287,4 @@ export default function SettingsPage() {
     </div>
   )
 }
+

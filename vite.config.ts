@@ -43,6 +43,7 @@ export default defineConfig(({ mode }) => {
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
         navigateFallback: '/index.html',
+        importScripts: ['/sw-push.js'],
         runtimeCaching: [
           {
             // Supabase data + auth must always hit the network (never cached).
@@ -55,3 +56,4 @@ export default defineConfig(({ mode }) => {
     ]
   }
 })
+
