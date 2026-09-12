@@ -281,18 +281,34 @@ h3 { font-size: 15px; margin-top: 8px; }
 .apk-card .btn { text-decoration: none; }
 .apk-note { font-size: 12px; }
 
-/* ---------- class picker + role select ---------- */
-.classpicker { margin-left: auto; }
-.classpicker select { min-width: 220px; }
-.role-select { padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; font-size: 13px; }
+/* ---------- dashboard stat boxes & tables ---------- */
+.stat-box {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.stat-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.stat-value {
+  font-size: 26px;
+  font-weight: 800;
+  color: var(--text);
+  line-height: 1.2;
+}
+.stat-meta {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+}
 
-/* ---------- bulk print ---------- */
-.print-page { }
-@media print {
-  .print-page { page-break-after: always; }
-  .print-page:last-child { page-break-after: auto; }
+.table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
-@media screen {
-  .print-page { margin-bottom: 24px; }
-  .print-page .report-sheet { margin: 0 auto 24px; }
-}
+

@@ -23,15 +23,13 @@ export default function ScoreEntry() {
         const selected = ts.find((t) => t.id === testId) ?? null
         setTest(selected)
         if (!selected || !profile) return
-        if (hasRole(profile.role, 'homeroom_teacher', profile.additional_roles) && profile.class_id === classId) {
-          setCanEdit(true)
-        }
-        if (hasRole(profile.role, 'subject_teacher', profile.additional_roles)
-          || profile.role === 'curriculum_coordinator'
-          || profile.role === 'head_of_school') {
-          const assignments = await api.listAssignments(classId)
-          setCanEdit((current) => current || assignments.some((a) => a.teacher_id === profile.id && a.subject_id === selected.subject_id))
-        }
+        const isHomeroomOfClass = hasRole(profile.role, 'homeroom_teacher', profile.additional_roles) && profile.class_id === classId
+        const isLeadership = hasRole(profile.role, 'curriculum_coordinator', profile.additional_roles)
+          || hasRole(profile.role, 'head_of_school', profile.additional_roles)
+        const assignments = await api.listAssignments(classId).catch(() => [])
+        const isAssignedSubjectTeacher = assignments.some((a) => a.teacher_id === profile.id && a.subject_id === selected.subject_id)
+
+        setCanEdit(isHomeroomOfClass || isAssignedSubjectTeacher || isLeadership)
       }).catch(() => {})
     }
   }, [testId, classId, profile])

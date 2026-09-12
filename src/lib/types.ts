@@ -76,6 +76,104 @@ export interface AttendanceSummary {
   absences: Array<{ student_name: string; student_no: string; reason: string }>
 }
 
+export interface AttendanceAggregatedSummary {
+  periodType: 'daily' | 'weekly' | 'monthly'
+  periodLabel: string
+  startDate: string
+  endDate: string
+  totalRecords: number
+  present: number
+  presentPct: number
+  absent: number
+  absentPct: number
+  excused: number
+  excusedPct: number
+  classBreakdown: Array<{
+    class_id: string
+    class_name: string
+    homeroom_teacher_name?: string
+    present: number
+    presentPct: number
+    absent: number
+    absentPct: number
+    excused: number
+    excusedPct: number
+    total: number
+    daysMarked: number
+  }>
+  absences: Array<{
+    date: string
+    class_id: string
+    class_name: string
+    student_name: string
+    student_no: string
+    reason: string
+  }>
+}
+
+export interface ClassPopulationSummary {
+  class_id: string
+  class_name: string
+  homeroom_teacher_name: string
+  student_count: number
+  percentage_of_total: number
+  boys_count: number
+  girls_count: number
+  other_gender_count: number
+  boys_percentage: number
+  girls_percentage: number
+}
+
+export interface SchoolPopulationSummary {
+  total_students: number
+  total_classes: number
+  total_boys: number
+  total_girls: number
+  boys_percentage: number
+  girls_percentage: number
+  classes: ClassPopulationSummary[]
+}
+
+export interface UnitTestSummaryItem {
+  test_id: string
+  class_id: string
+  class_name: string
+  subject_id: string
+  subject_name: string
+  teacher_id?: string
+  teacher_name: string
+  title: string
+  test_date: string
+  max_mark: number
+  total_students: number
+  marks_entered_count: number
+  marks_entered_pct: number
+  has_marks_entered: boolean
+  average_score: number | null
+  average_pct: number | null
+  highest_score: number | null
+  lowest_score: number | null
+}
+
+export interface SubjectTestSummary {
+  subject_id: string
+  subject_name: string
+  tests_count: number
+  tests_with_marks_count: number
+  total_marks_entered: number
+  average_score_pct: number | null
+  teachers: string[]
+}
+
+export interface EndOfUnitTestOverview {
+  total_tests: number
+  total_tests_with_marks: number
+  overall_average_pct: number | null
+  tests_with_marks: UnitTestSummaryItem[]
+  all_tests: UnitTestSummaryItem[]
+  subject_summaries: SubjectTestSummary[]
+}
+
 export interface UnitTest {
   id: string
   class_id: string
@@ -129,13 +227,10 @@ export interface ReportData {
 }
 
 // ---------------------------------------------------------------------------
-// Data-access layer. Both the Supabase and the demo (localStorage)
-// implementations satisfy this interface, so the UI is backend-agnostic.
+// Data-access layer interface.
 // ---------------------------------------------------------------------------
 
 export interface Api {
-  mode: 'supabase' | 'demo'
-
   getProfile(): Promise<Profile | null>
 
   // school
@@ -173,15 +268,20 @@ export interface Api {
   updateStudent(s: Student): Promise<void>
   deleteStudent(id: string): Promise<void>
 
+  // population summary (for Directors & leadership)
+  getPopulationSummary(): Promise<SchoolPopulationSummary>
+
   // attendance
   listAttendance(classId: string, date: string): Promise<AttendanceRow[]>
   saveAttendance(rows: Array<Pick<AttendanceRow, 'class_id' | 'student_id' | 'attendance_date' | 'status' | 'reason'>>): Promise<void>
   listAttendanceSummary(date: string): Promise<AttendanceSummary[]>
+  getAttendancePeriodSummary(period: 'daily' | 'weekly' | 'monthly', date: string): Promise<AttendanceAggregatedSummary>
 
   // unit tests
   listUnitTests(classId: string): Promise<UnitTest[]>
   createUnitTest(classId: string, input: { subject_id: string; title: string; test_date: string; max_mark: number }): Promise<string>
   deleteUnitTest(id: string): Promise<void>
+  getUnitTestOverview(): Promise<EndOfUnitTestOverview>
 
   // scores
   listScoresForTest(testId: string): Promise<ScoreRow[]>

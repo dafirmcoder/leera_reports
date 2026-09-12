@@ -9,10 +9,11 @@ export type Capability =
   | 'manageClasses'      // create classes / set homeroom teacher (HOS only)
   | 'assignTeachers'     // assign subject teachers (HOS + coordinators + homeroom teacher)
   | 'addStudents'        // homeroom teacher only
-  | 'addMarks'           // homeroom + subject teachers
+  | 'addMarks'           // homeroom + subject teachers + coordinators
   | 'viewAllClasses'     // sees the whole school (director/HOS/coordinator)
   | 'markAttendance'     // homeroom teachers today; coordinators for school classes
   | 'markPastAttendance' // coordinator backfills skipped attendance dates
+  | 'viewDirectorDashboard' // executive summaries (director, HOS, coordinator)
 
 export function hasRole(role: Role | undefined, requiredRole: Role, additionalRoles: Role[] = []): boolean {
   return role === requiredRole || additionalRoles.includes(requiredRole)
@@ -34,13 +35,15 @@ export function can(role: Role | undefined, cap: Capability, additionalRoles: Ro
     case 'addStudents':
       return roles.has('homeroom_teacher')
     case 'addMarks':
-      return roles.has('homeroom_teacher') || roles.has('subject_teacher') || roles.has('curriculum_coordinator')
+      return roles.has('homeroom_teacher') || roles.has('subject_teacher') || roles.has('curriculum_coordinator') || roles.has('head_of_school')
     case 'viewAllClasses':
       return roles.has('director') || roles.has('head_of_school') || roles.has('curriculum_coordinator')
     case 'markAttendance':
       return roles.has('homeroom_teacher') || roles.has('curriculum_coordinator')
     case 'markPastAttendance':
       return roles.has('curriculum_coordinator')
+    case 'viewDirectorDashboard':
+      return roles.has('director') || roles.has('head_of_school') || roles.has('curriculum_coordinator')
     default:
       return false
   }
@@ -54,11 +57,18 @@ export interface Tab {
 
 export function navTabs(role: Role | undefined, additionalRoles: Role[] = []): Tab[] {
   if (!role || role === 'pending') return []
-  const tabs: Tab[] = [
+  const tabs: Tab[] = []
+
+  if (can(role, 'viewDirectorDashboard', additionalRoles)) {
+    tabs.push({ to: '/dashboard', label: 'Dashboard', icon: '📊' })
+  }
+
+  tabs.push(
     { to: '/students', label: 'Students', icon: '👥' },
     { to: '/marks', label: 'Marks', icon: '📝' },
     { to: '/reports', label: 'Reports', icon: '📄' }
-  ]
+  )
+
   if (can(role, 'manageClasses', additionalRoles) || can(role, 'assignTeachers', additionalRoles)) {
     tabs.push({ to: '/classes', label: 'Classes', icon: '🏫' })
   }
@@ -73,6 +83,7 @@ export function navTabs(role: Role | undefined, additionalRoles: Role[] = []): T
   }
   return tabs
 }
+
 
 export const ROLE_LABEL: Record<Role, string> = {
   pending: 'Pending (no access)',

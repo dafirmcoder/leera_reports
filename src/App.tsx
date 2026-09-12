@@ -1,8 +1,10 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { useAuth } from './context/AuthContext'
+import { can } from './lib/permissions'
 import AppShell from './components/AppShell'
 import Login from './pages/Login'
 import PendingApproval from './pages/PendingApproval'
+import Dashboard from './pages/Dashboard'
 import Students from './pages/Students'
 import Marks from './pages/Marks'
 import ScoreEntry from './pages/ScoreEntry'
@@ -42,10 +44,16 @@ export default function App() {
     )
   }
 
+  const isDirector = profile.role === 'director'
+  const defaultPath = isDirector ? '/dashboard' : '/students'
+
   return (
     <Routes>
       <Route element={<AppShell />}>
-        <Route path="/" element={<Navigate to="/students" replace />} />
+        <Route path="/" element={<Navigate to={defaultPath} replace />} />
+        {can(profile.role, 'viewDirectorDashboard', profile.additional_roles) && (
+          <Route path="/dashboard" element={<Dashboard />} />
+        )}
         <Route path="/students" element={<Students />} />
         <Route path="/marks" element={<Marks />} />
         <Route path="/marks/:classId/:testId" element={<ScoreEntry />} />
@@ -55,8 +63,9 @@ export default function App() {
         <Route path="/people" element={<People />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/attendance" element={<Attendance />} />
-        <Route path="*" element={<Navigate to="/students" replace />} />
+        <Route path="*" element={<Navigate to={defaultPath} replace />} />
       </Route>
     </Routes>
   )
 }
+

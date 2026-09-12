@@ -30,26 +30,24 @@ export default function Marks() {
 
   useEffect(reload, [selectedClassId])
 
-  // In their own (homeroom) class a teacher can pick any subject; in other
-  // classes they act as a subject teacher and can only pick their subjects.
+  const isLeadership = hasRole(profile?.role, 'head_of_school', profile?.additional_roles)
+    || hasRole(profile?.role, 'curriculum_coordinator', profile?.additional_roles)
   const isHomeroom = hasRole(profile?.role, 'homeroom_teacher', profile?.additional_roles)
-  const isSubjectTeacher = hasRole(profile?.role, 'subject_teacher', profile?.additional_roles)
-    || profile?.role === 'curriculum_coordinator'
+  const isOwnClass = isHomeroom && !!profile?.class_id && profile.class_id === selectedClassId
   const myAssignments = assignments.filter((a) => a.teacher_id === profile?.id)
-  const isOwnClass = !!profile?.class_id && profile.class_id === selectedClassId
-  const restrictSubjects = profile?.role === 'subject_teacher'
-    || (profile?.role === 'homeroom_teacher' && !isOwnClass)
-  const mySubjects = restrictSubjects
-    ? subjects.filter((s) => myAssignments.some((a) => a.subject_id === s.id))
-    : subjects
+  const mySubjects = isOwnClass || isLeadership
+    ? subjects
+    : subjects.filter((s) => myAssignments.some((a) => a.subject_id === s.id))
   const canAdd = roleCanAdd && (
-    isOwnClass
-    || ((isHomeroom || isSubjectTeacher) && mySubjects.length > 0)
+    isLeadership
+    || isOwnClass
+    || mySubjects.length > 0
   )
 
-  const canEditTest = (test: UnitTest) => (isHomeroom || profile?.role === 'subject_teacher')
-    && (profile?.class_id === test.class_id
-      || myAssignments.some((a) => a.class_id === test.class_id && a.subject_id === test.subject_id))
+  const canEditTest = (test: UnitTest) => isLeadership
+    || (isOwnClass && test.class_id === profile?.class_id)
+    || myAssignments.some((a) => a.class_id === test.class_id && a.subject_id === test.subject_id)
+
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()

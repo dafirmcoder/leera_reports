@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from '
 import {
   getInitialUser, signIn as apiSignIn, signUp as apiSignUp, signOut as apiSignOut,
   updatePassword as apiUpdatePassword,
-  onAuthChange, emitDemoAuthChange, type AuthUser
+  onAuthChange, type AuthUser
 } from '../lib/auth'
 import { api } from '../lib/api'
 import type { Profile } from '../lib/types'
@@ -60,7 +60,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signIn = async (email: string, password: string) => {
     const res = await apiSignIn(email, password)
     if (!res.error) {
-      if (api.mode === 'demo') emitDemoAuthChange()
       await loadProfile()
     }
     return res
@@ -68,8 +67,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signUp = async (email: string, password: string, fullName: string) => {
     const res = await apiSignUp(email, password, fullName)
-    if (!res.error && api.mode === 'demo') {
-      emitDemoAuthChange()
+    if (!res.error) {
       await loadProfile()
     }
     return res
@@ -77,7 +75,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = async () => {
     await apiSignOut()
-    if (api.mode === 'demo') emitDemoAuthChange()
     setUser(null)
     setProfile(null)
   }
@@ -98,3 +95,4 @@ export function useAuth(): AuthState {
   if (!ctx) throw new Error('useAuth must be used within AuthProvider')
   return ctx
 }
+

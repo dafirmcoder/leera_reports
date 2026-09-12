@@ -1,9 +1,10 @@
 import { supabase } from './supabase'
 import type {
-  Api, Assignment, ClassInfo, Profile, Role, School, ScoreRow,
-  Student, StudentReportRow, Subject, UnitTest
+  Api, Assignment, AttendanceAggregatedSummary, AttendanceRow, AttendanceSummary,
+  ClassInfo, ClassPopulationSummary, EndOfUnitTestOverview, Profile, Role, School,
+  SchoolPopulationSummary, ScoreRow, Student, StudentReportRow, Subject,
+  SubjectTestSummary, UnitTest, UnitTestSummaryItem
 } from './types'
-import type { AttendanceRow, AttendanceSummary } from './types'
 
 function db() {
   if (!supabase) throw new Error('Supabase is not configured')
@@ -11,7 +12,7 @@ function db() {
 }
 
 async function uid(): Promise<string> {
-  const { data } = await supabase!.auth.getUser()
+  const { data } = await supabase.auth.getUser()
   if (!data.user) throw new Error('Not signed in')
   return data.user.id
 }
@@ -43,8 +44,6 @@ function toProfile(r: any): Profile {
 }
 
 export const supabaseApi: Api = {
-  mode: 'supabase',
-
   async getProfile(): Promise<Profile | null> {
     const id = await uid()
     const { data } = await db().from('profiles').select('*').eq('id', id).maybeSingle()
@@ -389,6 +388,292 @@ export const supabaseApi: Api = {
     }))
   },
 
+  async getPopulationSummary(): Promise<SchoolPopulationSummary> {
+    const [classes, { data: studentsData, error }] = await Promise.all([
+      this.listClasses(),
+      db().from('students').select('id, class_id, full_name, student_no, admission_no, gender')
+    ])
+    if (error) throw new Error(error.message)
+
+    const students = studentsData ?? []
+    const total_students = students.length
+    const total_classes = classes.length
+
+    const isBoy = (g: string) => g?.trim().toUpperCase() === 'M' || g?.trim().toLowerCase().startsWith('m')
+    const isGirl = (g: string) => g?.trim().toUpperCase() === 'F' || g?.trim().toLowerCase().startsWith('f')
+
+    const total_boys = students.filter((s: any) => isBoy(s.gender)).length
+    const total_girls = students.filter((s: any) => isGirl(s.gender)).length
+    const boys_percentage = total_students > 0 ? Number(((total_boys / total_students) * 100).toFixed(1)) : 0
+    const girls_percentage = total_students > 0 ? Number(((total_girls / total_students) * 100).toFixed(1)) : 0
+
+    const classSummaries: ClassPopulationSummary[] = classes.map((c) => {
+      const classStudents = students.filter((s: any) => s.class_id === c.id)
+      const count = classStudents.length
+      const boys = classStudents.filter((s: any) => isBoy(s.gender)).length
+      const girls = classStudents.filter((s: any) => isGirl(s.gender)).length
+      const other = count - (boys + girls)
+
+      return {
+        class_id: c.id,
+        class_name: c.name,
+        homeroom_teacher_name: c.homeroom_teacher_name || 'Unassigned',
+        student_count: count,
+        percentage_of_total: total_students > 0 ? Number(((count / total_students) * 100).toFixed(1)) : 0,
+        boys_count: boys,
+        girls_count: girls,
+        other_gender_count: other,
+        boys_percentage: count > 0 ? Number(((boys / count) * 100).toFixed(1)) : 0,
+        girls_percentage: count > 0 ? Number(((girls / count) * 100).toFixed(1)) : 0
+      }
+    })
+
+    return {
+      total_students,
+      total_classes,
+      total_boys,
+      total_girls,
+      boys_percentage,
+      girls_percentage,
+      classes: classSummaries
+    }
+  },
+
+  async getAttendancePeriodSummary(period: 'daily' | 'weekly' | 'monthly', date: string): Promise<AttendanceAggregatedSummary> {
+    let startDate = date
+    let endDate = date
+    let periodLabel = date
+
+    if (period === 'daily') {
+      startDate = date
+      endDate = date
+      const d = new Date(date + 'T00:00:00')
+      periodLabel = isNaN(d.getTime()) ? date : d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
+    } else if (period === 'weekly') {
+      const d = new Date(date + 'T00:00:00')
+      const day = d.getDay() // 0 = Sun, 1 = Mon ...
+      const diffToMon = day === 0 ? -6 : 1 - day
+      const mon = new Date(d)
+      mon.setDate(d.getDate() + diffToMon)
+      const sun = new Date(mon)
+      sun.setDate(mon.getDate() + 6)
+      startDate = mon.toISOString().slice(0, 10)
+      endDate = sun.toISOString().slice(0, 10)
+      periodLabel = `${mon.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} – ${sun.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`
+    } else if (period === 'monthly') {
+      const parts = date.split('-')
+      const year = Number(parts[0]) || new Date().getFullYear()
+      const month = Number(parts[1]) || (new Date().getMonth() + 1)
+      const firstDay = new Date(year, month - 1, 1)
+      const lastDay = new Date(year, month, 0)
+      startDate = `${year}-${String(month).padStart(2, '0')}-01`
+      endDate = `${year}-${String(month).padStart(2, '0')}-${String(lastDay.getDate()).padStart(2, '0')}`
+      periodLabel = firstDay.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })
+    }
+
+    const [classes, { data, error }] = await Promise.all([
+      this.listClasses(),
+      db()
+        .from('attendance')
+        .select('id, class_id, attendance_date, status, reason, students(full_name, student_no), classes(name)')
+        .gte('attendance_date', startDate)
+        .lte('attendance_date', endDate)
+    ])
+    if (error) throw new Error(error.message)
+
+    const rows = (data ?? []) as any[]
+    const totalRecords = rows.length
+    const present = rows.filter((r) => r.status === 'P').length
+    const absent = rows.filter((r) => r.status === 'A').length
+    const excused = rows.filter((r) => r.status === 'E').length
+
+    const presentPct = totalRecords > 0 ? Number(((present / totalRecords) * 100).toFixed(1)) : 0
+    const absentPct = totalRecords > 0 ? Number(((absent / totalRecords) * 100).toFixed(1)) : 0
+    const excusedPct = totalRecords > 0 ? Number(((excused / totalRecords) * 100).toFixed(1)) : 0
+
+    const absences = rows
+      .filter((r) => r.status === 'A')
+      .map((r) => ({
+        date: r.attendance_date,
+        class_id: r.class_id,
+        class_name: r.classes?.name ?? '',
+        student_name: r.students?.full_name ?? '—',
+        student_no: r.students?.student_no ?? '',
+        reason: r.reason ?? ''
+      }))
+      .sort((a, b) => b.date.localeCompare(a.date) || a.class_name.localeCompare(b.class_name) || a.student_name.localeCompare(b.student_name))
+
+    const classBreakdown = classes.map((c) => {
+      const cRows = rows.filter((r) => r.class_id === c.id)
+      const cTotal = cRows.length
+      const cPres = cRows.filter((r) => r.status === 'P').length
+      const cAbs = cRows.filter((r) => r.status === 'A').length
+      const cExc = cRows.filter((r) => r.status === 'E').length
+      const days = new Set(cRows.map((r) => r.attendance_date)).size
+
+      return {
+        class_id: c.id,
+        class_name: c.name,
+        homeroom_teacher_name: c.homeroom_teacher_name || 'Unassigned',
+        present: cPres,
+        presentPct: cTotal > 0 ? Number(((cPres / cTotal) * 100).toFixed(1)) : 0,
+        absent: cAbs,
+        absentPct: cTotal > 0 ? Number(((cAbs / cTotal) * 100).toFixed(1)) : 0,
+        excused: cExc,
+        excusedPct: cTotal > 0 ? Number(((cExc / cTotal) * 100).toFixed(1)) : 0,
+        total: cTotal,
+        daysMarked: days
+      }
+    })
+
+    return {
+      periodType: period,
+      periodLabel,
+      startDate,
+      endDate,
+      totalRecords,
+      present,
+      presentPct,
+      absent,
+      absentPct,
+      excused,
+      excusedPct,
+      classBreakdown,
+      absences
+    }
+  },
+
+  async getUnitTestOverview(): Promise<EndOfUnitTestOverview> {
+    const [
+      classes,
+      subjects,
+      { data: assignmentsData, error: aErr },
+      { data: testsData, error: tErr },
+      { data: scoresData, error: sErr },
+      { data: studentsData, error: stErr }
+    ] = await Promise.all([
+      this.listClasses(),
+      this.listSubjects(),
+      db().from('class_subject_teachers').select('class_id, subject_id, teacher_id, profiles!class_subject_teachers_teacher_id_fkey(full_name)'),
+      db().from('unit_tests').select('id, class_id, subject_id, title, test_date, max_mark, subjects(name), classes(name)').order('test_date', { ascending: false }),
+      db().from('scores').select('unit_test_id, student_id, score'),
+      db().from('students').select('id, class_id')
+    ])
+
+    if (aErr) throw new Error(aErr.message)
+    if (tErr) throw new Error(tErr.message)
+    if (sErr) throw new Error(sErr.message)
+    if (stErr) throw new Error(stErr.message)
+
+    const classMap = new Map<string, string>()
+    const classHomeroomMap = new Map<string, string>()
+    for (const c of classes) {
+      classMap.set(c.id, c.name)
+      if (c.homeroom_teacher_name) classHomeroomMap.set(c.id, c.homeroom_teacher_name)
+    }
+
+    const assignmentMap = new Map<string, string>()
+    for (const a of (assignmentsData ?? []) as any[]) {
+      const key = `${a.class_id}_${a.subject_id}`
+      const name = a.profiles?.full_name
+      if (name) assignmentMap.set(key, name)
+    }
+
+    const studentsByClass = new Map<string, number>()
+    for (const st of (studentsData ?? []) as any[]) {
+      studentsByClass.set(st.class_id, (studentsByClass.get(st.class_id) ?? 0) + 1)
+    }
+
+    const scoresByTest = new Map<string, number[]>()
+    for (const sc of (scoresData ?? []) as any[]) {
+      if (sc.score !== null && sc.score !== undefined) {
+        const arr = scoresByTest.get(sc.unit_test_id) ?? []
+        arr.push(Number(sc.score))
+        scoresByTest.set(sc.unit_test_id, arr)
+      }
+    }
+
+    const all_tests: UnitTestSummaryItem[] = (testsData ?? []).map((t: any) => {
+      const maxMark = Number(t.max_mark) || 100
+      const enteredMarks = scoresByTest.get(t.id) ?? []
+      const marksCount = enteredMarks.length
+      const totalStudents = studentsByClass.get(t.class_id) ?? 0
+      const hasMarks = marksCount > 0
+      const avgScore = hasMarks ? enteredMarks.reduce((a, b) => a + b, 0) / marksCount : null
+      const avgPct = avgScore !== null && maxMark > 0 ? Number(((avgScore / maxMark) * 100).toFixed(1)) : null
+      const highest = hasMarks ? Math.max(...enteredMarks) : null
+      const lowest = hasMarks ? Math.min(...enteredMarks) : null
+      const teacherName = assignmentMap.get(`${t.class_id}_${t.subject_id}`) || classHomeroomMap.get(t.class_id) || 'Unassigned'
+
+      return {
+        test_id: t.id,
+        class_id: t.class_id,
+        class_name: t.classes?.name ?? classMap.get(t.class_id) ?? 'Class',
+        subject_id: t.subject_id,
+        subject_name: t.subjects?.name ?? 'Subject',
+        teacher_name: teacherName,
+        title: t.title,
+        test_date: t.test_date,
+        max_mark: maxMark,
+        total_students: totalStudents,
+        marks_entered_count: marksCount,
+        marks_entered_pct: totalStudents > 0 ? Number(((marksCount / totalStudents) * 100).toFixed(1)) : (hasMarks ? 100 : 0),
+        has_marks_entered: hasMarks,
+        average_score: avgScore !== null ? Number(avgScore.toFixed(1)) : null,
+        average_pct: avgPct,
+        highest_score: highest,
+        lowest_score: lowest
+      }
+    })
+
+    const tests_with_marks = all_tests.filter((t) => t.has_marks_entered)
+
+    // Aggregate by subject
+    const subjectMap = new Map<string, { tests: UnitTestSummaryItem[]; teachers: Set<string> }>()
+    for (const sub of subjects) {
+      subjectMap.set(sub.id, { tests: [], teachers: new Set() })
+    }
+    for (const t of all_tests) {
+      const entry = subjectMap.get(t.subject_id) ?? { tests: [], teachers: new Set() }
+      entry.tests.push(t)
+      if (t.teacher_name && t.teacher_name !== 'Unassigned') entry.teachers.add(t.teacher_name)
+      subjectMap.set(t.subject_id, entry)
+    }
+
+    const subject_summaries: SubjectTestSummary[] = subjects.map((sub) => {
+      const entry = subjectMap.get(sub.id) ?? { tests: [], teachers: new Set() }
+      const tests = entry.tests
+      const withMarks = tests.filter((t) => t.has_marks_entered)
+      const totalMarksEntered = withMarks.reduce((sum, t) => sum + t.marks_entered_count, 0)
+      const validAvgPcts = withMarks.filter((t) => t.average_pct !== null).map((t) => t.average_pct!)
+      const avgPct = validAvgPcts.length > 0 ? Number((validAvgPcts.reduce((a, b) => a + b, 0) / validAvgPcts.length).toFixed(1)) : null
+
+      return {
+        subject_id: sub.id,
+        subject_name: sub.name,
+        tests_count: tests.length,
+        tests_with_marks_count: withMarks.length,
+        total_marks_entered: totalMarksEntered,
+        average_score_pct: avgPct,
+        teachers: Array.from(entry.teachers)
+      }
+    }).filter((s) => s.tests_count > 0 || s.tests_with_marks_count > 0)
+
+    const testsWithAvgPct = tests_with_marks.filter((t) => t.average_pct !== null)
+    const overall_average_pct = testsWithAvgPct.length > 0
+      ? Number((testsWithAvgPct.reduce((sum, t) => sum + t.average_pct!, 0) / testsWithAvgPct.length).toFixed(1))
+      : null
+
+    return {
+      total_tests: all_tests.length,
+      total_tests_with_marks: tests_with_marks.length,
+      overall_average_pct,
+      tests_with_marks,
+      all_tests,
+      subject_summaries
+    }
+  },
+
   async getClassReportRows(classId: string): Promise<Record<string, StudentReportRow[]>> {
     const students = await this.listStudents(classId)
     const ids = students.map((s) => s.id)
@@ -413,3 +698,4 @@ export const supabaseApi: Api = {
     return out
   }
 }
+

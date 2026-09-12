@@ -1,7 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { useAuth } from '../context/AuthContext'
-import { DEMO_PERSONAS } from '../lib/auth'
-import { isDemo } from '../lib/api'
 
 export default function Login() {
   const { signIn } = useAuth()
@@ -17,15 +15,7 @@ export default function Login() {
     setError('')
     setInfo('')
     setBusy(true)
-    const res = await signIn(email, password)
-    if (res.error) setError(res.error)
-    setBusy(false)
-  }
-
-  const quickSignIn = async (personaEmail: string) => {
-    setError('')
-    setBusy(true)
-    const res = await signIn(personaEmail, 'demo')
+    const res = await signIn(email.trim(), password)
     if (res.error) setError(res.error)
     setBusy(false)
   }
@@ -42,47 +32,38 @@ export default function Login() {
       <div className="login-card">
         <img src="/icons/icon-192.png" alt="" width="72" height="72" className="login-logo" />
         <h1>Leera End-of-Unit Reports</h1>
-        <p className="muted">Record unit-test marks and share parent reports.</p>
+        <p className="muted">Record unit-test marks and view school summaries & reports.</p>
 
-        {isDemo ? (
-          <>
-            <div className="notice">
-              <strong>Demo mode</strong> — Supabase isn’t connected yet, so data lives in this
-              browser. Pick a role below to explore.
-            </div>
-            <div className="personas">
-              {DEMO_PERSONAS.map((p) => (
-                <button
-                  key={p.email}
-                  className="persona"
-                  disabled={busy}
-                  onClick={() => quickSignIn(p.email)}
-                >
-                  <span className="persona-label">{p.label}</span>
-                  <span className="persona-hint">{p.hint}</span>
-                </button>
-              ))}
-            </div>
-          </>
-        ) : (
-          <>
-            <form onSubmit={submit} className="stack">
-              <label className="field">
-                <span>Email</span>
-                <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="teacher@school.ac.tz" autoComplete="email" />
-              </label>
-              <label className="field">
-                <span>Password</span>
-                <input type="password" required minLength={6} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Enter your PIN" autoComplete="current-password" />
-              </label>
-              {error && <div className="notice notice-error">{error}</div>}
-              {info && <div className="notice notice-ok">{info}</div>}
-              <button className="btn btn-primary btn-block" disabled={busy}>
-                {busy ? 'Please wait…' : 'Sign in'}
-              </button>
-            </form>
-          </>
-        )}
+        <form onSubmit={submit} className="stack" style={{ marginTop: '16px' }}>
+          <label className="field">
+            <span>Email</span>
+            <input
+              type="email"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="e.g. director@leeraschool.ac.tz"
+              autoComplete="email"
+            />
+          </label>
+          <label className="field">
+            <span>Password / PIN</span>
+            <input
+              type="password"
+              required
+              minLength={6}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Enter your password"
+              autoComplete="current-password"
+            />
+          </label>
+          {error && <div className="notice notice-error">{error}</div>}
+          {info && <div className="notice notice-ok">{info}</div>}
+          <button className="btn btn-primary btn-block" disabled={busy}>
+            {busy ? 'Please wait…' : 'Sign in'}
+          </button>
+        </form>
 
         {apkReady && (
           <div className="apk-card">
@@ -98,3 +79,4 @@ export default function Login() {
     </div>
   )
 }
+
