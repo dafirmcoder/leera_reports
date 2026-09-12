@@ -625,8 +625,9 @@ export const supabaseApi: Api = {
 
     const attendanceRecords: Record<string, AttendanceStatus> = {}
     for (const r of (attData ?? []) as any[]) {
-      if (r.student_id && r.attendance_date && r.status) {
-        attendanceRecords[`${r.student_id}_${r.attendance_date}`] = r.status as AttendanceStatus
+      const d = String(r.attendance_date || '').slice(0, 10)
+      if (r.student_id && d && r.status) {
+        attendanceRecords[`${r.student_id}_${d}`] = r.status as AttendanceStatus
       }
     }
 
