@@ -2,6 +2,7 @@
 
 export type Role =
   | 'pending'
+  | 'admin'
   | 'director'
   | 'head_of_school'
   | 'curriculum_coordinator'
@@ -226,6 +227,28 @@ export interface ReportData {
   overall: number // percent
 }
 
+export interface ClassAttendanceExportData {
+  classInfo: ClassInfo
+  students: Student[]
+  dates: string[]
+  dateLabels: string[]
+  dayNames: string[]
+  attendanceRecords: Record<string, AttendanceStatus> // key `${student_id}_${date}` -> status
+}
+
+export interface DetailedAttendanceExport {
+  periodType: 'daily' | 'weekly' | 'monthly'
+  startDate: string
+  endDate: string
+  periodLabel: string
+  dates: string[]
+  dateLabels: string[]
+  dayNames: string[]
+  schoolName: string
+  classesData: ClassAttendanceExportData[]
+  summary: AttendanceAggregatedSummary
+}
+
 // ---------------------------------------------------------------------------
 // Data-access layer interface.
 // ---------------------------------------------------------------------------
@@ -276,6 +299,7 @@ export interface Api {
   saveAttendance(rows: Array<Pick<AttendanceRow, 'class_id' | 'student_id' | 'attendance_date' | 'status' | 'reason'>>): Promise<void>
   listAttendanceSummary(date: string): Promise<AttendanceSummary[]>
   getAttendancePeriodSummary(period: 'daily' | 'weekly' | 'monthly', date: string): Promise<AttendanceAggregatedSummary>
+  getDetailedAttendanceReport(period: 'daily' | 'weekly' | 'monthly', date: string): Promise<DetailedAttendanceExport>
 
   // unit tests
   listUnitTests(classId: string): Promise<UnitTest[]>

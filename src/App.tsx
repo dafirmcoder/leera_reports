@@ -45,7 +45,8 @@ export default function App() {
   }
 
   const isDirector = profile.role === 'director'
-  const defaultPath = isDirector ? '/dashboard' : '/students'
+  const isAdmin = profile.role === 'admin'
+  const defaultPath = isDirector ? '/dashboard' : isAdmin ? '/attendance' : '/students'
 
   return (
     <Routes>
@@ -54,15 +55,23 @@ export default function App() {
         {can(profile.role, 'viewDirectorDashboard', profile.additional_roles) && (
           <Route path="/dashboard" element={<Dashboard />} />
         )}
-        <Route path="/students" element={<Students />} />
-        <Route path="/marks" element={<Marks />} />
-        <Route path="/marks/:classId/:testId" element={<ScoreEntry />} />
-        <Route path="/reports" element={<Reports />} />
-        <Route path="/reports/:studentId" element={<ReportView />} />
-        <Route path="/classes" element={<Classes />} />
-        <Route path="/people" element={<People />} />
-        <Route path="/settings" element={<SettingsPage />} />
+        {!isAdmin && (
+          <>
+            <Route path="/students" element={<Students />} />
+            <Route path="/marks" element={<Marks />} />
+            <Route path="/marks/:classId/:testId" element={<ScoreEntry />} />
+            <Route path="/reports" element={<Reports />} />
+            <Route path="/reports/:studentId" element={<ReportView />} />
+          </>
+        )}
+        {(can(profile.role, 'manageClasses', profile.additional_roles) || can(profile.role, 'assignTeachers', profile.additional_roles)) && (
+          <Route path="/classes" element={<Classes />} />
+        )}
+        {can(profile.role, 'manageUsers', profile.additional_roles) && (
+          <Route path="/people" element={<People />} />
+        )}
         <Route path="/attendance" element={<Attendance />} />
+        <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to={defaultPath} replace />} />
       </Route>
     </Routes>

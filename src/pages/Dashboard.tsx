@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { api } from '../lib/api'
 import { fmtDate } from '../lib/report'
 import { useSchool } from '../context/SchoolContext'
+import { downloadAttendanceCsv, downloadAttendanceExcel } from '../lib/attendanceExport'
 import type {
   AttendanceAggregatedSummary,
   EndOfUnitTestOverview,
@@ -22,10 +23,35 @@ export default function Dashboard() {
   const [population, setPopulation] = useState<SchoolPopulationSummary | null>(null)
 
   // Attendance
-  const [attendancePeriod, setAttendancePeriod] = useState<'daily' | 'weekly' | 'monthly'>('daily')
+  const [attendancePeriod, setAttendancePeriod] = useState<'daily' | 'weekly' | 'monthly'>('weekly')
   const [selectedDate, setSelectedDate] = useState(today())
   const [attendanceSummary, setAttendanceSummary] = useState<AttendanceAggregatedSummary | null>(null)
   const [loadingAttendance, setLoadingAttendance] = useState(false)
+  const [exporting, setExporting] = useState<'xlsx' | 'csv' | null>(null)
+
+  const handleDownloadExcel = async () => {
+    setExporting('xlsx')
+    try {
+      const detailed = await api.getDetailedAttendanceReport(attendancePeriod, selectedDate)
+      await downloadAttendanceExcel(detailed)
+    } catch (e: any) {
+      setError(`Excel download failed: ${e.message}`)
+    } finally {
+      setExporting(null)
+    }
+  }
+
+  const handleDownloadCsv = async () => {
+    setExporting('csv')
+    try {
+      const detailed = await api.getDetailedAttendanceReport(attendancePeriod, selectedDate)
+      downloadAttendanceCsv(detailed)
+    } catch (e: any) {
+      setError(`CSV download failed: ${e.message}`)
+    } finally {
+      setExporting(null)
+    }
+  }
 
   // End of Unit Tests
   const [testOverview, setTestOverview] = useState<EndOfUnitTestOverview | null>(null)
@@ -186,7 +212,7 @@ export default function Dashboard() {
             </p>
           </div>
 
-          <div className="row">
+          <div className="row" style={{ gap: '8px', flexWrap: 'wrap' }}>
             <div className="seg" style={{ margin: 0 }}>
               <button
                 type="button"
@@ -208,6 +234,26 @@ export default function Dashboard() {
                 onClick={() => setAttendancePeriod('monthly')}
               >
                 Monthly
+              </button>
+            </div>
+
+            <div className="row" style={{ gap: '6px' }}>
+              <button
+                type="button"
+                className="btn btn-small"
+                style={{ background: '#1f8a5f', color: '#ffffff', fontWeight: 600 }}
+                disabled={exporting !== null}
+                onClick={handleDownloadExcel}
+              >
+                {exporting === 'xlsx' ? '⏳ Generating…' : '📥 Download Excel (.xlsx)'}
+              </button>
+              <button
+                type="button"
+                className="btn btn-small"
+                disabled={exporting !== null}
+                onClick={handleDownloadCsv}
+              >
+                {exporting === 'csv' ? '⏳ Generating…' : '📄 Download CSV (.csv)'}
               </button>
             </div>
           </div>

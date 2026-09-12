@@ -10,10 +10,12 @@ export type Capability =
   | 'assignTeachers'     // assign subject teachers (HOS + coordinators + homeroom teacher)
   | 'addStudents'        // homeroom teacher only
   | 'addMarks'           // homeroom + subject teachers + coordinators
-  | 'viewAllClasses'     // sees the whole school (director/HOS/coordinator)
+  | 'viewAllClasses'     // sees the whole school (director/HOS/coordinator/admin)
   | 'markAttendance'     // homeroom teachers today; coordinators for school classes
   | 'markPastAttendance' // coordinator backfills skipped attendance dates
   | 'viewDirectorDashboard' // executive summaries (director, HOS, coordinator)
+  | 'viewAttendanceSummaries' // attendance summaries (admin, director, HOS, coordinator)
+  | 'downloadAttendanceReports' // download xlsx/csv (admin, director, HOS, coordinator)
 
 export function hasRole(role: Role | undefined, requiredRole: Role, additionalRoles: Role[] = []): boolean {
   return role === requiredRole || additionalRoles.includes(requiredRole)
@@ -37,13 +39,16 @@ export function can(role: Role | undefined, cap: Capability, additionalRoles: Ro
     case 'addMarks':
       return roles.has('homeroom_teacher') || roles.has('subject_teacher') || roles.has('curriculum_coordinator') || roles.has('head_of_school')
     case 'viewAllClasses':
-      return roles.has('director') || roles.has('head_of_school') || roles.has('curriculum_coordinator')
+      return roles.has('director') || roles.has('head_of_school') || roles.has('curriculum_coordinator') || roles.has('admin')
     case 'markAttendance':
       return roles.has('homeroom_teacher') || roles.has('curriculum_coordinator')
     case 'markPastAttendance':
       return roles.has('curriculum_coordinator')
     case 'viewDirectorDashboard':
       return roles.has('director') || roles.has('head_of_school') || roles.has('curriculum_coordinator')
+    case 'viewAttendanceSummaries':
+    case 'downloadAttendanceReports':
+      return roles.has('admin') || roles.has('director') || roles.has('head_of_school') || roles.has('curriculum_coordinator')
     default:
       return false
   }
@@ -58,6 +63,13 @@ export interface Tab {
 export function navTabs(role: Role | undefined, additionalRoles: Role[] = []): Tab[] {
   if (!role || role === 'pending') return []
   const tabs: Tab[] = []
+
+  // Admin role: only sees Attendance and Settings
+  if (role === 'admin') {
+    tabs.push({ to: '/attendance', label: 'Attendance', icon: '📅' })
+    tabs.push({ to: '/settings', label: 'Settings', icon: '⚙️' })
+    return tabs
+  }
 
   if (can(role, 'viewDirectorDashboard', additionalRoles)) {
     tabs.push({ to: '/dashboard', label: 'Dashboard', icon: '📊' })
@@ -84,9 +96,9 @@ export function navTabs(role: Role | undefined, additionalRoles: Role[] = []): T
   return tabs
 }
 
-
 export const ROLE_LABEL: Record<Role, string> = {
   pending: 'Pending (no access)',
+  admin: 'Admin',
   director: 'Director',
   head_of_school: 'Head of School',
   curriculum_coordinator: 'Curriculum Coordinator',

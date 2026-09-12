@@ -110,16 +110,18 @@ export default function AppShell() {
       </main>
 
       <nav className="bottomnav">
-        {navTabs(profile?.role, profile?.additional_roles).map((t) => (
-          <NavLink
-            key={t.to}
-            to={t.to}
-            className={({ isActive }) => (isActive ? 'tab active' : 'tab')}
-          >
-            <span className="tab-icon">{t.icon}</span>
-            <span className="tab-label">{t.label}</span>
-          </NavLink>
-        ))}
+        <div className="bottomnav-inner">
+          {navTabs(profile?.role, profile?.additional_roles).map((t) => (
+            <NavLink
+              key={t.to}
+              to={t.to}
+              className={({ isActive }) => (isActive ? 'tab active' : 'tab')}
+            >
+              <span className="tab-icon">{t.icon}</span>
+              <span className="tab-label">{t.label}</span>
+            </NavLink>
+          ))}
+        </div>
       </nav>
     </div>
   )

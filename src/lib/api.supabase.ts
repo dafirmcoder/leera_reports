@@ -1,7 +1,8 @@
 import { supabase } from './supabase'
 import type {
-  Api, Assignment, AttendanceAggregatedSummary, AttendanceRow, AttendanceSummary,
-  ClassInfo, ClassPopulationSummary, EndOfUnitTestOverview, Profile, Role, School,
+  Api, Assignment, AttendanceAggregatedSummary, AttendanceRow, AttendanceStatus, AttendanceSummary,
+  ClassAttendanceExportData, ClassInfo, ClassPopulationSummary, DetailedAttendanceExport,
+  EndOfUnitTestOverview, Profile, Role, School,
   SchoolPopulationSummary, ScoreRow, Student, StudentReportRow, Subject,
   SubjectTestSummary, UnitTest, UnitTestSummaryItem
 } from './types'
@@ -562,6 +563,101 @@ export const supabaseApi: Api = {
       excusedPct,
       classBreakdown,
       absences
+    }
+  },
+
+  async getDetailedAttendanceReport(period: 'daily' | 'weekly' | 'monthly', date: string): Promise<DetailedAttendanceExport> {
+    const summary = await this.getAttendancePeriodSummary(period, date)
+    const school = await this.getSchool().catch(() => null)
+    const schoolName = school?.name || 'Leera International School'
+
+    // Determine the list of dates in the period (focusing on weekdays Mon-Fri for school attendance)
+    const dates: string[] = []
+    const dateLabels: string[] = []
+    const dayNames: string[] = []
+
+    const start = new Date(summary.startDate + 'T00:00:00')
+    const end = new Date(summary.endDate + 'T00:00:00')
+
+    const cur = new Date(start)
+    while (cur <= end) {
+      const day = cur.getDay() // 0 = Sun, 6 = Sat
+      if (period === 'daily' || (day >= 1 && day <= 5)) {
+        const iso = cur.toISOString().slice(0, 10)
+        dates.push(iso)
+
+        // Format label: e.g. "Mon 07-Sep"
+        const weekdayShort = cur.toLocaleDateString('en-GB', { weekday: 'short' })
+        const dayNum = String(cur.getDate()).padStart(2, '0')
+        const monthShort = cur.toLocaleDateString('en-GB', { month: 'short' })
+        dateLabels.push(`${weekdayShort} ${dayNum}-${monthShort}`)
+
+        const weekdayFull = cur.toLocaleDateString('en-GB', { weekday: 'long' }).toUpperCase()
+        dayNames.push(weekdayFull)
+      }
+      cur.setDate(cur.getDate() + 1)
+    }
+
+    const [classes, { data: allStudents, error: stErr }, { data: attData, error: attErr }] = await Promise.all([
+      this.listClasses(),
+      db().from('students').select('*').order('student_no', { ascending: true }),
+      db()
+        .from('attendance')
+        .select('class_id, student_id, attendance_date, status, reason')
+        .gte('attendance_date', summary.startDate)
+        .lte('attendance_date', summary.endDate)
+    ])
+
+    if (stErr) throw new Error(stErr.message)
+    if (attErr) throw new Error(attErr.message)
+
+    const attendanceRecords: Record<string, AttendanceStatus> = {}
+    for (const r of (attData ?? []) as any[]) {
+      if (r.student_id && r.attendance_date && r.status) {
+        attendanceRecords[`${r.student_id}_${r.attendance_date}`] = r.status as AttendanceStatus
+      }
+    }
+
+    const studentsByClass = new Map<string, Student[]>()
+    for (const s of (allStudents ?? []) as any[]) {
+      const arr = studentsByClass.get(s.class_id) ?? []
+      arr.push({
+        id: s.id,
+        class_id: s.class_id,
+        student_no: s.student_no ?? '',
+        admission_no: s.admission_no ?? '',
+        full_name: s.full_name ?? '',
+        gender: s.gender ?? ''
+      })
+      studentsByClass.set(s.class_id, arr)
+    }
+
+    const classesData: ClassAttendanceExportData[] = classes.map((cls) => {
+      const studs = (studentsByClass.get(cls.id) ?? []).sort((a, b) =>
+        (a.student_no || '').localeCompare(b.student_no || '', undefined, { numeric: true }) ||
+        a.full_name.localeCompare(b.full_name)
+      )
+      return {
+        classInfo: cls,
+        students: studs,
+        dates,
+        dateLabels,
+        dayNames,
+        attendanceRecords
+      }
+    })
+
+    return {
+      periodType: period,
+      startDate: summary.startDate,
+      endDate: summary.endDate,
+      periodLabel: summary.periodLabel,
+      dates,
+      dateLabels,
+      dayNames,
+      schoolName,
+      classesData,
+      summary
     }
   },
 

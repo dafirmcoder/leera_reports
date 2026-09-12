@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext'
 import { useSchool } from '../context/SchoolContext'
 import { can } from '../lib/permissions'
 import ClassPicker from '../components/ClassPicker'
+import { downloadAttendanceCsv, downloadAttendanceExcel } from '../lib/attendanceExport'
 import type { AttendanceAggregatedSummary, AttendanceRow, AttendanceStatus, Student } from '../lib/types'
 
 const today = () => new Date().toISOString().slice(0, 10)
@@ -16,11 +17,12 @@ export default function Attendance() {
   const [date, setDate] = useState(today())
   const [students, setStudents] = useState<Student[]>([])
   const [rows, setRows] = useState<AttendanceEntry[]>([])
-  const [period, setPeriod] = useState<'daily' | 'weekly' | 'monthly'>('daily')
+  const [period, setPeriod] = useState<'daily' | 'weekly' | 'monthly'>('weekly')
   const [aggregatedSummary, setAggregatedSummary] = useState<AttendanceAggregatedSummary | null>(null)
   const [error, setError] = useState('')
   const [info, setInfo] = useState('')
   const [busy, setBusy] = useState(false)
+  const [exporting, setExporting] = useState<'xlsx' | 'csv' | null>(null)
 
   const canMark = can(profile?.role, 'markAttendance', profile?.additional_roles)
   const canMarkPast = can(profile?.role, 'markPastAttendance', profile?.additional_roles)
@@ -60,6 +62,34 @@ export default function Attendance() {
       setAggregatedSummary(summary)
     } catch (e: any) {
       setError(e.message)
+    }
+  }
+
+  const canDownload = can(profile?.role, 'downloadAttendanceReports', profile?.additional_roles)
+
+  const handleDownloadExcel = async () => {
+    setError('')
+    setExporting('xlsx')
+    try {
+      const detailed = await api.getDetailedAttendanceReport(period, date)
+      await downloadAttendanceExcel(detailed)
+    } catch (e: any) {
+      setError(`Excel download failed: ${e.message}`)
+    } finally {
+      setExporting(null)
+    }
+  }
+
+  const handleDownloadCsv = async () => {
+    setError('')
+    setExporting('csv')
+    try {
+      const detailed = await api.getDetailedAttendanceReport(period, date)
+      downloadAttendanceCsv(detailed)
+    } catch (e: any) {
+      setError(`CSV download failed: ${e.message}`)
+    } finally {
+      setExporting(null)
     }
   }
 
@@ -223,28 +253,52 @@ export default function Attendance() {
               </p>
             </div>
 
-            <div className="seg" style={{ margin: 0 }}>
-              <button
-                type="button"
-                className={`seg-btn ${period === 'daily' ? 'active' : ''}`}
-                onClick={() => setPeriod('daily')}
-              >
-                Daily
-              </button>
-              <button
-                type="button"
-                className={`seg-btn ${period === 'weekly' ? 'active' : ''}`}
-                onClick={() => setPeriod('weekly')}
-              >
-                Weekly
-              </button>
-              <button
-                type="button"
-                className={`seg-btn ${period === 'monthly' ? 'active' : ''}`}
-                onClick={() => setPeriod('monthly')}
-              >
-                Monthly
-              </button>
+            <div className="row" style={{ gap: '8px', flexWrap: 'wrap' }}>
+              <div className="seg" style={{ margin: 0 }}>
+                <button
+                  type="button"
+                  className={`seg-btn ${period === 'daily' ? 'active' : ''}`}
+                  onClick={() => setPeriod('daily')}
+                >
+                  Daily
+                </button>
+                <button
+                  type="button"
+                  className={`seg-btn ${period === 'weekly' ? 'active' : ''}`}
+                  onClick={() => setPeriod('weekly')}
+                >
+                  Weekly
+                </button>
+                <button
+                  type="button"
+                  className={`seg-btn ${period === 'monthly' ? 'active' : ''}`}
+                  onClick={() => setPeriod('monthly')}
+                >
+                  Monthly
+                </button>
+              </div>
+
+              {canDownload && (
+                <div className="row" style={{ gap: '6px' }}>
+                  <button
+                    type="button"
+                    className="btn btn-small"
+                    style={{ background: '#1f8a5f', color: '#ffffff', fontWeight: 600 }}
+                    disabled={exporting !== null}
+                    onClick={handleDownloadExcel}
+                  >
+                    {exporting === 'xlsx' ? '⏳ Generating…' : '📥 Download Excel (.xlsx)'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-small"
+                    disabled={exporting !== null}
+                    onClick={handleDownloadCsv}
+                  >
+                    {exporting === 'csv' ? '⏳ Generating…' : '📄 Download CSV (.csv)'}
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 

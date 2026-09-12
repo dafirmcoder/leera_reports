@@ -5,7 +5,7 @@ import { useSchool } from '../context/SchoolContext'
 import { can, ROLE_LABEL } from '../lib/permissions'
 import type { Profile, Role } from '../lib/types'
 
-const ROLES: Role[] = ['pending', 'director', 'head_of_school', 'curriculum_coordinator', 'homeroom_teacher', 'subject_teacher']
+const ROLES: Role[] = ['pending', 'admin', 'director', 'head_of_school', 'curriculum_coordinator', 'homeroom_teacher', 'subject_teacher']
 
 export default function People() {
   const { profile } = useAuth()

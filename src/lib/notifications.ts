@@ -99,10 +99,10 @@ export async function unregisterDevicePushSubscription(userId: string): Promise<
 export async function showSystemNotification(title: string, options?: NotificationOptions & { url?: string }) {
   if (!isNotificationSupported() || Notification.permission !== 'granted') return
 
-  const defaultOptions: NotificationOptions = {
+  const defaultOptions: any = {
     icon: '/icons/icon-192.png',
     badge: '/icons/icon-192.png',
-    vibrate: [200, 100, 200] as any,
+    vibrate: [200, 100, 200],
     ...options
   }
 

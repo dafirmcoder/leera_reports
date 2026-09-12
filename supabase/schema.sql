@@ -52,7 +52,7 @@ create table if not exists public.profiles (
   email      text,
   full_name  text not null default '',
   role       text not null default 'pending'
-             check (role in ('pending','director','head_of_school','curriculum_coordinator','homeroom_teacher','subject_teacher')),
+             check (role in ('pending','admin','director','head_of_school','curriculum_coordinator','homeroom_teacher','subject_teacher')),
   additional_roles text[] not null default '{}',
   school_id  uuid references public.schools (id) on delete set null,
   class_id   uuid,                                  -- homeroom teacher's class
