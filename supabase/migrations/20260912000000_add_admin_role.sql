@@ -11,6 +11,15 @@ alter table public.profiles
   add constraint profiles_role_check
   check (role in ('pending', 'admin', 'director', 'head_of_school', 'curriculum_coordinator', 'homeroom_teacher', 'subject_teacher'));
 
+-- 1b. Resilient my_school function (fallback if profile.school_id is null)
+create or replace function public.my_school()
+returns uuid language sql stable security definer set search_path = public as $$
+  select coalesce(
+    (select school_id from public.profiles where id = auth.uid()),
+    (select id from public.schools order by created_at limit 1)
+  );
+$$;
+
 -- 2. Attendance select policy: Allow Admin, Director, Head of School, Coordinator
 drop policy if exists attendance_select on public.attendance;
 create policy attendance_select on public.attendance for select using (

@@ -154,7 +154,10 @@ $$;
 
 create or replace function public.my_school()
 returns uuid language sql stable security definer set search_path = public as $$
-  select school_id from public.profiles where id = auth.uid();
+  select coalesce(
+    (select school_id from public.profiles where id = auth.uid()),
+    (select id from public.schools order by created_at limit 1)
+  );
 $$;
 
 create or replace function public.my_class()

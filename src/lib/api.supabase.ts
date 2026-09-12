@@ -44,6 +44,18 @@ function toProfile(r: any): Profile {
   }
 }
 
+function toLocalIsoDate(d: Date): string {
+  const year = d.getFullYear()
+  const month = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function parseLocalDate(str: string): Date {
+  const parts = str.split('-').map(Number)
+  return new Date(parts[0] || new Date().getFullYear(), (parts[1] || 1) - 1, parts[2] || 1)
+}
+
 export const supabaseApi: Api = {
   async getProfile(): Promise<Profile | null> {
     const id = await uid()
@@ -470,18 +482,18 @@ export const supabaseApi: Api = {
     if (period === 'daily') {
       startDate = date
       endDate = date
-      const d = new Date(date + 'T00:00:00')
+      const d = parseLocalDate(date)
       periodLabel = isNaN(d.getTime()) ? date : d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
     } else if (period === 'weekly') {
-      const d = new Date(date + 'T00:00:00')
+      const d = parseLocalDate(date)
       const day = d.getDay() // 0 = Sun, 1 = Mon ...
       const diffToMon = day === 0 ? -6 : 1 - day
       const mon = new Date(d)
       mon.setDate(d.getDate() + diffToMon)
       const sun = new Date(mon)
       sun.setDate(mon.getDate() + 6)
-      startDate = mon.toISOString().slice(0, 10)
-      endDate = sun.toISOString().slice(0, 10)
+      startDate = toLocalIsoDate(mon)
+      endDate = toLocalIsoDate(sun)
       periodLabel = `${mon.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} – ${sun.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`
     } else if (period === 'monthly') {
       const parts = date.split('-')
@@ -576,14 +588,14 @@ export const supabaseApi: Api = {
     const dateLabels: string[] = []
     const dayNames: string[] = []
 
-    const start = new Date(summary.startDate + 'T00:00:00')
-    const end = new Date(summary.endDate + 'T00:00:00')
+    const start = parseLocalDate(summary.startDate)
+    const end = parseLocalDate(summary.endDate)
 
     const cur = new Date(start)
     while (cur <= end) {
       const day = cur.getDay() // 0 = Sun, 6 = Sat
       if (period === 'daily' || (day >= 1 && day <= 5)) {
-        const iso = cur.toISOString().slice(0, 10)
+        const iso = toLocalIsoDate(cur)
         dates.push(iso)
 
         // Format label: e.g. "Mon 07-Sep"
