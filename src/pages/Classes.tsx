@@ -147,7 +147,7 @@ export default function Classes() {
                 onChange={(e) => setHomeroom(c.id, e.target.value)}
               >
                 <option value="">— none —</option>
-                {people.filter((p) => p.role === 'homeroom_teacher').map((p) => (
+                {people.filter((p) => p.role === 'homeroom_teacher' || p.additional_roles?.includes('homeroom_teacher')).map((p) => (
                   <option key={p.id} value={p.id}>{p.full_name}</option>
                 ))}
               </select>

@@ -90,6 +90,10 @@ Deno.serve(async (req: Request) => {
     )
     if (profileErr) throw profileErr
 
+    if (role === 'homeroom_teacher' && class_id) {
+      await admin.from('classes').update({ homeroom_teacher_id: invited.user.id }).eq('id', class_id)
+    }
+
     return new Response(JSON.stringify({ ok: true, user_id: invited.user.id }), {
       headers: { ...cors, 'Content-Type': 'application/json' }
     })

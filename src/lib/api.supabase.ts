@@ -102,31 +102,48 @@ export const supabaseApi: Api = {
   },
 
   async listClasses(): Promise<ClassInfo[]> {
-    const { data, error } = await db()
-      .from('classes')
-      .select('id, name, homeroom_teacher_id')
-      .order('name', { ascending: true })
-    if (error) throw new Error(error.message)
-
-    const teacherIds = (data ?? [])
-      .map((r: any) => r.homeroom_teacher_id)
-      .filter(Boolean)
-    const teacherNames = new Map<string, string>()
-    if (teacherIds.length > 0) {
-      const { data: profiles, error: profileError } = await db()
+    const [classesRes, profilesRes] = await Promise.all([
+      db()
+        .from('classes')
+        .select('id, name, homeroom_teacher_id')
+        .order('name', { ascending: true }),
+      db()
         .from('profiles')
-        .select('id, full_name')
-        .in('id', teacherIds)
-      if (profileError) throw new Error(profileError.message)
-      for (const profile of profiles ?? []) teacherNames.set(profile.id, profile.full_name ?? '')
+        .select('id, full_name, class_id, role, additional_roles')
+    ])
+
+    if (classesRes.error) throw new Error(classesRes.error.message)
+
+    const profiles = profilesRes.data ?? []
+    const profileById = new Map<string, string>()
+    const homeroomByClassId = new Map<string, { id: string; name: string }>()
+
+    for (const p of profiles) {
+      if (p.id && p.full_name) {
+        profileById.set(p.id, p.full_name)
+      }
+      const isHomeroom =
+        p.role === 'homeroom_teacher' ||
+        (Array.isArray(p.additional_roles) && p.additional_roles.includes('homeroom_teacher'))
+      if (p.class_id && isHomeroom) {
+        homeroomByClassId.set(p.class_id, { id: p.id, name: p.full_name || '' })
+      }
     }
 
-    return (data ?? []).map((r: any) => ({
-      id: r.id,
-      name: r.name,
-      homeroom_teacher_id: r.homeroom_teacher_id,
-      homeroom_teacher_name: teacherNames.get(r.homeroom_teacher_id) ?? ''
-    }))
+    return (classesRes.data ?? []).map((r: any) => {
+      const explicitName = r.homeroom_teacher_id ? profileById.get(r.homeroom_teacher_id) : undefined
+      const fallback = homeroomByClassId.get(r.id)
+
+      const teacherId = r.homeroom_teacher_id || fallback?.id || null
+      const teacherName = explicitName || fallback?.name || ''
+
+      return {
+        id: r.id,
+        name: r.name,
+        homeroom_teacher_id: teacherId,
+        homeroom_teacher_name: teacherName
+      }
+    })
   },
 
   async createClass(name: string): Promise<void> {
@@ -166,6 +183,12 @@ export const supabaseApi: Api = {
       .update({ role, additional_roles: additionalRoles, class_id: classId ?? null, school_id: schoolId })
       .eq('id', userId)
     if (error) throw new Error(error.message)
+
+    if (role === 'homeroom_teacher' && classId) {
+      await db().from('classes').update({ homeroom_teacher_id: userId }).eq('id', classId)
+    } else if (role !== 'homeroom_teacher') {
+      await db().from('classes').update({ homeroom_teacher_id: null }).eq('homeroom_teacher_id', userId)
+    }
   },
 
   async inviteUser(input): Promise<void> {

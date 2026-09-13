@@ -267,15 +267,29 @@ create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function public.handle_new_user();
 
+drop policy if exists profiles_select on public.profiles;
+create policy profiles_select on public.profiles for select using (
+  id = auth.uid()
+  or public.has_role('admin')
+  or public.has_role('director')
+  or public.has_role('head_of_school')
+  or public.has_role('curriculum_coordinator')
+  or school_id = public.my_school()
+);
+
 drop policy if exists profiles_update on public.profiles;
 create policy profiles_update on public.profiles for update using (
   id = auth.uid()
-  or public.has_role('head_of_school')
-  or public.has_role('curriculum_coordinator')
+  or (
+    (public.has_role('admin') or public.has_role('head_of_school') or public.has_role('curriculum_coordinator'))
+    and school_id = public.my_school()
+  )
 ) with check (
   id = auth.uid()
-  or public.has_role('head_of_school')
-  or public.has_role('curriculum_coordinator')
+  or (
+    (public.has_role('admin') or public.has_role('head_of_school') or public.has_role('curriculum_coordinator'))
+    and school_id = public.my_school()
+  )
 );
 
 -- ---- classes ----
