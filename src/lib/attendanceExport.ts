@@ -232,9 +232,7 @@ export async function downloadAttendanceExcel(exportData: DetailedAttendanceExpo
       const pCol = 3 + i * 3
       const aCol = pCol + 1
       const eCol = pCol + 2
-      const classPColLetter = colLetter(3 + i * 3)
-      const classAColLetter = colLetter(3 + i * 3 + 1)
-      const classEColLetter = colLetter(3 + i * 3 + 2)
+      const classDayColLet = colLetter(3 + i) // Single day column in class sheet starts at Col C (3)
       const dateIso = dates[i]
 
       // Count actual records for this class & day
@@ -255,19 +253,19 @@ export async function downloadAttendanceExcel(exportData: DetailedAttendanceExpo
       dayEGrandTotals[i] += dayECount
 
       const pCell = wsSummary.getCell(r, pCol)
-      pCell.value = { formula: `COUNTIF(${safeSheet}!${classPColLetter}5:${classPColLetter}${maxStudentRow},"P")`, result: dayPCount }
+      pCell.value = { formula: `COUNTIF(${safeSheet}!${classDayColLet}5:${classDayColLet}${maxStudentRow},"P")`, result: dayPCount }
       pCell.alignment = { horizontal: 'center' }
       pCell.border = borderThin
       dayPCellCoords.push(`${colLetter(pCol)}${r}`)
 
       const aCell = wsSummary.getCell(r, aCol)
-      aCell.value = { formula: `COUNTIF(${safeSheet}!${classAColLetter}5:${classAColLetter}${maxStudentRow},"A")`, result: dayACount }
+      aCell.value = { formula: `COUNTIF(${safeSheet}!${classDayColLet}5:${classDayColLet}${maxStudentRow},"A")`, result: dayACount }
       aCell.alignment = { horizontal: 'center' }
       aCell.border = borderThin
       dayACellCoords.push(`${colLetter(aCol)}${r}`)
 
       const eCell = wsSummary.getCell(r, eCol)
-      eCell.value = { formula: `COUNTIF(${safeSheet}!${classEColLetter}5:${classEColLetter}${maxStudentRow},"E")`, result: dayECount }
+      eCell.value = { formula: `COUNTIF(${safeSheet}!${classDayColLet}5:${classDayColLet}${maxStudentRow},"E")`, result: dayECount }
       eCell.alignment = { horizontal: 'center' }
       eCell.border = borderThin
       dayECellCoords.push(`${colLetter(eCol)}${r}`)
@@ -446,7 +444,7 @@ export async function downloadAttendanceExcel(exportData: DetailedAttendanceExpo
   wsSummary.getColumn(pctColIdx).width = 14
 
   // -------------------------------------------------------------------------
-  // 2. INDIVIDUAL CLASS SHEETS
+  // 2. INDIVIDUAL CLASS SHEETS (Single day column format)
   // -------------------------------------------------------------------------
   classesData.forEach((cd) => {
     const sheetName = cd.classInfo.name.slice(0, 31) // Excel 31 char sheet limit
@@ -455,8 +453,8 @@ export async function downloadAttendanceExcel(exportData: DetailedAttendanceExpo
       properties: { tabColor: { argb: 'FF' + PRIMARY_COLOR } }
     })
 
-    const classTotalCols = 2 + numDays * 3 + 4 // S/N, Name, Day triplets..., Total P, Total A, Total E, Weekly %
-    const classTotPColIdx = 2 + numDays * 3 + 1
+    const classTotalCols = 2 + numDays + 4 // S/N, Name, Days..., Total P, Total A, Total E, Weekly %
+    const classTotPColIdx = 2 + numDays + 1
     const classTotAColIdx = classTotPColIdx + 1
     const classTotEColIdx = classTotAColIdx + 1
     const classPctColIdx = classTotEColIdx + 1
@@ -484,85 +482,25 @@ export async function downloadAttendanceExcel(exportData: DetailedAttendanceExpo
     cNote.alignment = { vertical: 'middle' }
     ws.getRow(2).height = 20
 
-    // Row 3: Day Names (e.g. MONDAY, TUESDAY...)
-    ws.mergeCells(3, 1, 4, 1)
-    const snH = ws.getCell(3, 1)
-    snH.value = 'S/N'
-    snH.font = { bold: true, color: { argb: 'FFFFFFFF' } }
-    snH.fill = headerFill
-    snH.alignment = { vertical: 'middle', horizontal: 'center' }
-    snH.border = borderThin
-    ws.getCell(4, 1).border = borderThin
-
-    ws.mergeCells(3, 2, 4, 2)
-    const nameH = ws.getCell(3, 2)
-    nameH.value = 'Student Name'
-    nameH.font = { bold: true, color: { argb: 'FFFFFFFF' } }
-    nameH.fill = headerFill
-    nameH.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 }
-    nameH.border = borderThin
-    ws.getCell(4, 2).border = borderThin
+    // Row 4: Column Headers
+    ws.getCell(4, 1).value = 'S/N'
+    ws.getCell(4, 2).value = 'Student Name'
 
     for (let i = 0; i < numDays; i++) {
-      const startC = 3 + i * 3
-      const endC = startC + 2
-      ws.mergeCells(3, startC, 3, endC)
-      const dayCell = ws.getCell(3, startC)
-      dayCell.value = dayNames[i] || dateLabels[i]
-      dayCell.font = { bold: true, size: 10, color: { argb: 'FF' + PRIMARY_COLOR } }
-      dayCell.fill = lightFill
-      dayCell.alignment = { vertical: 'middle', horizontal: 'center' }
-      dayCell.border = borderThin
-      ws.getCell(3, startC + 1).border = borderThin
-      ws.getCell(3, endC).border = borderThin
+      ws.getCell(4, 3 + i).value = dateLabels[i]
     }
 
-    // Totals headers merged across rows 3 and 4
-    const totHeaders = [
-      { col: classTotPColIdx, label: 'Total P' },
-      { col: classTotAColIdx, label: 'Total A' },
-      { col: classTotEColIdx, label: 'Total E' },
-      { col: classPctColIdx, label: periodType === 'weekly' ? 'Weekly %' : periodType === 'monthly' ? 'Monthly %' : 'Rate %' }
-    ]
-    totHeaders.forEach(({ col, label }) => {
-      ws.mergeCells(3, col, 4, col)
-      const cell = ws.getCell(3, col)
-      cell.value = label
+    ws.getCell(4, classTotPColIdx).value = 'Total P'
+    ws.getCell(4, classTotAColIdx).value = 'Total A'
+    ws.getCell(4, classTotEColIdx).value = 'Total E'
+    ws.getCell(4, classPctColIdx).value = periodType === 'weekly' ? 'Weekly %' : periodType === 'monthly' ? 'Monthly %' : 'Rate %'
+
+    for (let c = 1; c <= classTotalCols; c++) {
+      const cell = ws.getCell(4, c)
       cell.font = { bold: true, color: { argb: 'FFFFFFFF' } }
       cell.fill = headerFill
       cell.alignment = { vertical: 'middle', horizontal: 'center' }
       cell.border = borderThin
-      ws.getCell(4, col).border = borderThin
-    })
-
-    ws.getRow(3).height = 20
-
-    // Row 4: Day Sub-headers (P, A, E)
-    for (let i = 0; i < numDays; i++) {
-      const pCol = 3 + i * 3
-      const aCol = pCol + 1
-      const eCol = pCol + 2
-
-      const pCell = ws.getCell(4, pCol)
-      pCell.value = 'P'
-      pCell.font = { bold: true, color: { argb: 'FFFFFFFF' } }
-      pCell.fill = headerFill
-      pCell.alignment = { vertical: 'middle', horizontal: 'center' }
-      pCell.border = borderThin
-
-      const aCell = ws.getCell(4, aCol)
-      aCell.value = 'A'
-      aCell.font = { bold: true, color: { argb: 'FFFFFFFF' } }
-      aCell.fill = headerFill
-      aCell.alignment = { vertical: 'middle', horizontal: 'center' }
-      aCell.border = borderThin
-
-      const eCell = ws.getCell(4, eCol)
-      eCell.value = 'E'
-      eCell.font = { bold: true, color: { argb: 'FFFFFFFF' } }
-      eCell.fill = headerFill
-      eCell.alignment = { vertical: 'middle', horizontal: 'center' }
-      eCell.border = borderThin
     }
     ws.getRow(4).height = 22
 
@@ -574,14 +512,11 @@ export async function downloadAttendanceExcel(exportData: DetailedAttendanceExpo
     const totalStudentRows = enrolledCount + bufferCount
 
     const dayStartColLet = colLetter(3)
-    const dayEndColLet = colLetter(2 + numDays * 3)
+    const dayEndColLet = colLetter(2 + numDays)
 
     let classPresSum = 0
     let classAbsSum = 0
     let classExcSum = 0
-    const dayPCounts: number[] = new Array(numDays).fill(0)
-    const dayACounts: number[] = new Array(numDays).fill(0)
-    const dayECounts: number[] = new Array(numDays).fill(0)
 
     for (let i = 0; i < totalStudentRows; i++) {
       const r = stRow
@@ -602,64 +537,40 @@ export async function downloadAttendanceExcel(exportData: DetailedAttendanceExpo
       let stAbsCount = 0
       let stExcCount = 0
 
-      // Attendance values across 3 columns per day (P, A, E)
+      // Attendance values: single cell per day
       for (let d = 0; d < numDays; d++) {
-        const pCol = 3 + d * 3
-        const aCol = pCol + 1
-        const eCol = pCol + 2
         const dateIso = dates[d]
-
-        const pCell = ws.getCell(r, pCol)
-        const aCell = ws.getCell(r, aCol)
-        const eCell = ws.getCell(r, eCol)
-
+        const dCell = ws.getCell(r, 3 + d)
         if (st) {
           const status = cd.attendanceRecords[`${st.id}_${dateIso}`] || ''
-          pCell.value = status === 'P' ? 'P' : ''
-          aCell.value = status === 'A' ? 'A' : ''
-          eCell.value = status === 'E' ? 'E' : ''
-
-          if (status === 'P') {
-            stPresCount++
-            dayPCounts[d]++
-          } else if (status === 'A') {
-            stAbsCount++
-            dayACounts[d]++
-          } else if (status === 'E') {
-            stExcCount++
-            dayECounts[d]++
-          }
+          dCell.value = status
+          if (status === 'P') stPresCount++
+          else if (status === 'A') stAbsCount++
+          else if (status === 'E') stExcCount++
         } else {
-          pCell.value = ''
-          aCell.value = ''
-          eCell.value = ''
+          dCell.value = ''
         }
-
-        pCell.alignment = { horizontal: 'center' }
-        pCell.border = borderThin
-        aCell.alignment = { horizontal: 'center' }
-        aCell.border = borderThin
-        eCell.alignment = { horizontal: 'center' }
-        eCell.border = borderThin
+        dCell.alignment = { horizontal: 'center' }
+        dCell.border = borderThin
       }
 
       classPresSum += stPresCount
       classAbsSum += stAbsCount
       classExcSum += stExcCount
 
-      // Total P formula: =COUNTIF(C5:Q5,"P")
+      // Total P formula: =COUNTIF(C5:G5,"P")
       const totPCell = ws.getCell(r, classTotPColIdx)
       totPCell.value = { formula: `COUNTIF(${dayStartColLet}${r}:${dayEndColLet}${r},"P")`, result: stPresCount }
       totPCell.alignment = { horizontal: 'center' }
       totPCell.border = borderThin
 
-      // Total A formula: =COUNTIF(C5:Q5,"A")
+      // Total A formula: =COUNTIF(C5:G5,"A")
       const totACell = ws.getCell(r, classTotAColIdx)
       totACell.value = { formula: `COUNTIF(${dayStartColLet}${r}:${dayEndColLet}${r},"A")`, result: stAbsCount }
       totACell.alignment = { horizontal: 'center' }
       totACell.border = borderThin
 
-      // Total E formula: =COUNTIF(C5:Q5,"E")
+      // Total E formula: =COUNTIF(C5:G5,"E")
       const totECell = ws.getCell(r, classTotEColIdx)
       totECell.value = { formula: `COUNTIF(${dayStartColLet}${r}:${dayEndColLet}${r},"E")`, result: stExcCount }
       totECell.alignment = { horizontal: 'center' }
@@ -698,35 +609,10 @@ export async function downloadAttendanceExcel(exportData: DetailedAttendanceExpo
     totStudCell.fill = totalFill
     totStudCell.border = borderThin
 
-    // For each day sub-column in the total row:
-    for (let d = 0; d < numDays; d++) {
-      const pCol = 3 + d * 3
-      const aCol = pCol + 1
-      const eCol = pCol + 2
-      const pLet = colLetter(pCol)
-      const aLet = colLetter(aCol)
-      const eLet = colLetter(eCol)
-
-      const pSumCell = ws.getCell(classTotRow, pCol)
-      pSumCell.value = { formula: `COUNTIF(${pLet}${firstStRow}:${pLet}${lastStRow},"P")`, result: dayPCounts[d] }
-      pSumCell.font = { bold: true }
-      pSumCell.alignment = { horizontal: 'center' }
-      pSumCell.fill = totalFill
-      pSumCell.border = borderThin
-
-      const aSumCell = ws.getCell(classTotRow, aCol)
-      aSumCell.value = { formula: `COUNTIF(${aLet}${firstStRow}:${aLet}${lastStRow},"A")`, result: dayACounts[d] }
-      aSumCell.font = { bold: true }
-      aSumCell.alignment = { horizontal: 'center' }
-      aSumCell.fill = totalFill
-      aSumCell.border = borderThin
-
-      const eSumCell = ws.getCell(classTotRow, eCol)
-      eSumCell.value = { formula: `COUNTIF(${eLet}${firstStRow}:${eLet}${lastStRow},"E")`, result: dayECounts[d] }
-      eSumCell.font = { bold: true }
-      eSumCell.alignment = { horizontal: 'center' }
-      eSumCell.fill = totalFill
-      eSumCell.border = borderThin
+    for (let c = 3; c <= 2 + numDays; c++) {
+      const cell = ws.getCell(classTotRow, c)
+      cell.fill = totalFill
+      cell.border = borderThin
     }
 
     const classTotPLet = colLetter(classTotPColIdx)
@@ -775,8 +661,8 @@ export async function downloadAttendanceExcel(exportData: DetailedAttendanceExpo
     // Column widths
     ws.getColumn(1).width = 6
     ws.getColumn(2).width = 32
-    for (let c = 3; c <= 2 + numDays * 3; c++) {
-      ws.getColumn(c).width = 7
+    for (let d = 0; d < numDays; d++) {
+      ws.getColumn(3 + d).width = 13
     }
     ws.getColumn(classTotPColIdx).width = 11
     ws.getColumn(classTotAColIdx).width = 11
