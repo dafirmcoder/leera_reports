@@ -1,4 +1,4 @@
-import { supabase } from './supabase'
+import { getSupabaseConfigError, supabase } from './supabase'
 import type {
   Api, Assignment, AttendanceAggregatedSummary, AttendanceRow, AttendanceStatus, AttendanceSummary,
   ClassAttendanceExportData, ClassInfo, ClassPopulationSummary, DetailedAttendanceExport,
@@ -8,8 +8,17 @@ import type {
 } from './types'
 
 function db() {
-  if (!supabase) throw new Error('Supabase is not configured')
+  const configError = getSupabaseConfigError()
+  if (configError) throw configError
   return supabase
+}
+
+function readableSupabaseError(error: unknown): Error {
+  if (error instanceof Error && error.message !== 'Failed to fetch') return error
+  if (error instanceof TypeError && error.message === 'Failed to fetch') {
+    return new Error('Unable to reach Supabase. Check your internet connection and VITE_SUPABASE_URL, then try again.')
+  }
+  return error instanceof Error ? error : new Error('The Supabase request failed. Please try again.')
 }
 
 async function uid(): Promise<string> {
@@ -324,8 +333,19 @@ export const supabaseApi: Api = {
 
   async saveAttendance(rows): Promise<void> {
     if (rows.length === 0) return
-    const { error } = await db().from('attendance').upsert(rows, { onConflict: 'class_id,student_id,attendance_date' })
-    if (error) throw new Error(error.message)
+    try {
+      await uid()
+      const { data, error } = await db()
+        .from('attendance')
+        .upsert(rows, { onConflict: 'class_id,student_id,attendance_date' })
+        .select('id')
+      if (error) throw new Error(error.message)
+      if (!data || data.length !== rows.length) {
+        throw new Error('Attendance was not saved for every student. Please try again.')
+      }
+    } catch (error) {
+      throw readableSupabaseError(error)
+    }
 
     // Trigger leadership notifications
     try {
