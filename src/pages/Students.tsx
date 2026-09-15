@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { api } from '../lib/api'
-import { nextStudentNo } from '../lib/report'
+import { formatAdmissionNo, nextStudentNo } from '../lib/report'
 import { useSchool } from '../context/SchoolContext'
 import { useAuth } from '../context/AuthContext'
 import { can } from '../lib/permissions'
@@ -49,7 +49,7 @@ export default function Students() {
         : suggestedNo
       const payload = {
         student_no: studentNo,
-        admission_no: form.admission_no.trim() || (editingId ? '' : nextAdmissionNo),
+        admission_no: formatAdmissionNo(form.admission_no.trim()) || (editingId ? '' : nextAdmissionNo),
         full_name: form.full_name.trim(),
         gender: form.gender
       }
@@ -74,7 +74,12 @@ export default function Students() {
 
   const startEdit = (s: Student) => {
     setEditingId(s.id)
-    setForm({ student_no: s.student_no, admission_no: s.admission_no, full_name: s.full_name, gender: s.gender })
+    setForm({
+      student_no: s.student_no,
+      admission_no: formatAdmissionNo(s.admission_no),
+      full_name: s.full_name,
+      gender: s.gender
+    })
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
@@ -153,7 +158,7 @@ export default function Students() {
             {students.map((s) => (
               <tr key={s.id}>
                 <td className="mono">{s.student_no}</td>
-                <td>{s.admission_no}</td>
+                <td className="mono">{formatAdmissionNo(s.admission_no)}</td>
                 <td>{s.full_name}</td>
                 <td>{s.gender || '—'}</td>
                 {canAdd && (

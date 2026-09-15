@@ -78,3 +78,45 @@ export function nextStudentNo(existing: string[]): string {
   }
   return `ST-${String(max + 1).padStart(3, '0')}`
 }
+
+/**
+ * Formats an admission number so scientific notation (e.g. "2.48923E+13" or "2.48923E+13-1")
+ * is expanded and displayed as a real, full numeric string (e.g. "24892300000000" or "24892300000000-1").
+ */
+export function formatAdmissionNo(val: string | number | null | undefined): string {
+  if (val === null || val === undefined) return ''
+  const str = String(val).trim()
+  if (!str) return ''
+
+  // Match scientific notation (e.g. 2.48923E+13, 2.48923e+13, with optional suffix like -1)
+  const sciMatch = /^([+-]?[0-9]+(?:\.[0-9]+)?)[eE]([+-]?[0-9]+)(.*)$/.exec(str)
+  if (!sciMatch) return str
+
+  const [, coeffStr, expStr, suffix] = sciMatch
+  const exp = parseInt(expStr, 10)
+  if (isNaN(exp)) return str
+
+  const isNegative = coeffStr.startsWith('-')
+  const cleanCoeff = coeffStr.replace(/^[+-]/, '')
+  const [intPart, fracPart = ''] = cleanCoeff.split('.')
+
+  let expanded = ''
+  if (exp >= 0) {
+    if (exp >= fracPart.length) {
+      expanded = intPart + fracPart + '0'.repeat(exp - fracPart.length)
+    } else {
+      expanded = intPart + fracPart.slice(0, exp) + '.' + fracPart.slice(exp)
+    }
+  } else {
+    const absExp = Math.abs(exp)
+    if (absExp >= intPart.length) {
+      expanded = '0.' + '0'.repeat(absExp - intPart.length) + intPart + fracPart
+    } else {
+      expanded = intPart.slice(0, intPart.length - absExp) + '.' + intPart.slice(intPart.length - absExp) + fracPart
+    }
+  }
+
+  expanded = expanded.replace(/^0+(?=\d)/, '')
+  return (isNegative ? '-' : '') + expanded + suffix
+}
+

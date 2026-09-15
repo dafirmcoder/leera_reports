@@ -1,7 +1,7 @@
 import { jsPDF } from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import JSZip from 'jszip'
-import { buildReport, fmtDate, fmtPct } from './report'
+import { buildReport, fmtDate, fmtPct, formatAdmissionNo } from './report'
 import type { School, Student, StudentReportRow } from './types'
 
 // ---------------------------------------------------------------------------
@@ -97,7 +97,7 @@ export async function generateStudentPdf(ctx: PdfContext): Promise<jsPDF> {
   const printed = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })
   const infoLines: Array<Array<[string, boolean]>> = [
     [['Student: ', true], [student.full_name, false]],
-    [['Admission No.: ', true], [student.admission_no || '—', false], ['   ·   ', false], ['Class: ', true], [className || '—', false]],
+    [['Admission No.: ', true], [formatAdmissionNo(student.admission_no) || '—', false], ['   ·   ', false], ['Class: ', true], [className || '—', false]],
     [['Term: ', true], [school.term, false], ['   ·   ', false], ['Academic Year: ', true], [school.academic_year, false]],
     [['Teacher: ', true], [teacherName || '—', false], ['   ·   ', false], ['Printed: ', true], [printed, false]]
   ]

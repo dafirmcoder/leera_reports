@@ -1,5 +1,5 @@
 import { getSupabaseConfigError, supabase } from './supabase'
-import { formatStudentNo } from './report'
+import { formatAdmissionNo, formatStudentNo } from './report'
 import type {
   Api, Assignment, AttendanceAggregatedSummary, AttendanceRow, AttendanceStatus, AttendanceSummary,
   ClassAttendanceExportData, ClassInfo, ClassPopulationSummary, DetailedAttendanceExport,
@@ -277,7 +277,7 @@ export const supabaseApi: Api = {
     if (error) throw new Error(error.message)
     const list = (data ?? []).map((r: any) => ({
       id: r.id, class_id: r.class_id, student_no: r.student_no,
-      admission_no: r.admission_no, full_name: r.full_name, gender: r.gender
+      admission_no: formatAdmissionNo(r.admission_no), full_name: r.full_name, gender: r.gender
     }))
     return list.sort((a, b) =>
       (a.student_no || '').localeCompare(b.student_no || '', undefined, { numeric: true }) ||
@@ -288,12 +288,13 @@ export const supabaseApi: Api = {
   async getStudent(id: string): Promise<Student | null> {
     const { data } = await db().from('students').select('*').eq('id', id).maybeSingle()
     if (!data) return null
-    return { id: data.id, class_id: data.class_id, student_no: data.student_no, admission_no: data.admission_no, full_name: data.full_name, gender: data.gender }
+    return { id: data.id, class_id: data.class_id, student_no: data.student_no, admission_no: formatAdmissionNo(data.admission_no), full_name: data.full_name, gender: data.gender }
   },
 
   async addStudent(classId: string, s): Promise<Student> {
     const formattedNo = formatStudentNo(s.student_no) || s.student_no
-    const payload = { ...s, student_no: formattedNo }
+    const formattedAdm = formatAdmissionNo(s.admission_no) || s.admission_no
+    const payload = { ...s, student_no: formattedNo, admission_no: formattedAdm }
     const { data, error } = await db().from('students').insert({ class_id: classId, ...payload }).select().single()
     if (error) {
       if (error.code === '23505' && error.message.includes('students_admission_no_unique_idx')) {
@@ -306,8 +307,9 @@ export const supabaseApi: Api = {
 
   async updateStudent(s: Student): Promise<void> {
     // Exclude student_no so teachers or clients cannot alter the assigned serial number
+    const formattedAdm = formatAdmissionNo(s.admission_no) || s.admission_no
     const { error } = await db().from('students')
-      .update({ admission_no: s.admission_no, full_name: s.full_name, gender: s.gender })
+      .update({ admission_no: formattedAdm, full_name: s.full_name, gender: s.gender })
       .eq('id', s.id)
     if (error) {
       if (error.code === '23505' && error.message.includes('students_admission_no_unique_idx')) {
@@ -689,7 +691,7 @@ export const supabaseApi: Api = {
         id: s.id,
         class_id: s.class_id,
         student_no: s.student_no ?? '',
-        admission_no: s.admission_no ?? '',
+        admission_no: formatAdmissionNo(s.admission_no),
         full_name: s.full_name ?? '',
         gender: s.gender ?? ''
       })
