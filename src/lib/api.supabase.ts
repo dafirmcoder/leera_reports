@@ -1,4 +1,5 @@
 import { getSupabaseConfigError, supabase } from './supabase'
+import { formatStudentNo } from './report'
 import type {
   Api, Assignment, AttendanceAggregatedSummary, AttendanceRow, AttendanceStatus, AttendanceSummary,
   ClassAttendanceExportData, ClassInfo, ClassPopulationSummary, DetailedAttendanceExport,
@@ -274,10 +275,14 @@ export const supabaseApi: Api = {
       .from('students').select('*').eq('class_id', classId)
       .order('student_no', { ascending: true })
     if (error) throw new Error(error.message)
-    return (data ?? []).map((r: any) => ({
+    const list = (data ?? []).map((r: any) => ({
       id: r.id, class_id: r.class_id, student_no: r.student_no,
       admission_no: r.admission_no, full_name: r.full_name, gender: r.gender
     }))
+    return list.sort((a, b) =>
+      (a.student_no || '').localeCompare(b.student_no || '', undefined, { numeric: true }) ||
+      a.full_name.localeCompare(b.full_name)
+    )
   },
 
   async getStudent(id: string): Promise<Student | null> {
@@ -287,19 +292,22 @@ export const supabaseApi: Api = {
   },
 
   async addStudent(classId: string, s): Promise<Student> {
-    const { data, error } = await db().from('students').insert({ class_id: classId, ...s }).select().single()
+    const formattedNo = formatStudentNo(s.student_no) || s.student_no
+    const payload = { ...s, student_no: formattedNo }
+    const { data, error } = await db().from('students').insert({ class_id: classId, ...payload }).select().single()
     if (error) {
       if (error.code === '23505' && error.message.includes('students_admission_no_unique_idx')) {
         throw new Error('Admission number already exists. Enter a different number.')
       }
       throw new Error(error.message)
     }
-    return { id: data.id, class_id: classId, ...s }
+    return { id: data.id, class_id: classId, ...payload }
   },
 
   async updateStudent(s: Student): Promise<void> {
+    // Exclude student_no so teachers or clients cannot alter the assigned serial number
     const { error } = await db().from('students')
-      .update({ student_no: s.student_no, admission_no: s.admission_no, full_name: s.full_name, gender: s.gender })
+      .update({ admission_no: s.admission_no, full_name: s.full_name, gender: s.gender })
       .eq('id', s.id)
     if (error) {
       if (error.code === '23505' && error.message.includes('students_admission_no_unique_idx')) {

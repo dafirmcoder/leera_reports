@@ -44,8 +44,11 @@ export default function Students() {
     setError('')
     setBusy(true)
     try {
+      const studentNo = editingId
+        ? (students.find((s) => s.id === editingId)?.student_no || form.student_no)
+        : suggestedNo
       const payload = {
-        student_no: form.student_no.trim() || suggestedNo,
+        student_no: studentNo,
         admission_no: form.admission_no.trim() || (editingId ? '' : nextAdmissionNo),
         full_name: form.full_name.trim(),
         gender: form.gender
@@ -102,8 +105,16 @@ export default function Students() {
           <h3>{editingId ? 'Edit student' : 'Add student'}</h3>
           <div className="grid4">
             <label className="field"><span>Class S/N</span>
-              <input value={form.student_no} placeholder={suggestedNo} onChange={(e) => setForm({ ...form, student_no: e.target.value })} />
-              {!editingId && <small className="muted">Starts again from 001 in each class.</small>}
+              <input
+                value={editingId ? form.student_no : suggestedNo}
+                readOnly
+                disabled
+                tabIndex={-1}
+                style={{ background: '#f8fafc', cursor: 'not-allowed', color: '#475569', fontWeight: 600 }}
+              />
+              <small className="muted">
+                {editingId ? 'Serial numbers are permanent and cannot be modified.' : `Auto-assigned sequential serial number.`}
+              </small>
             </label>
             <label className="field"><span>Admission No. (school-wide)</span>
               <input

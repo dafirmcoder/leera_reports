@@ -215,9 +215,9 @@ export async function downloadAttendanceExcel(exportData: DetailedAttendanceExpo
     cellA.font = { bold: true }
     cellA.border = borderThin
 
-    // Total Students formula: =COUNTA('Year 5'!B5:B23)
+    // Total Students formula: =COUNTIF('Year 5'!B5:B23,"?*")
     const cellB = wsSummary.getCell(r, 2)
-    cellB.value = { formula: `COUNTA(${safeSheet}!B5:B${maxStudentRow})`, result: cd.students.length }
+    cellB.value = { formula: `COUNTIF(${safeSheet}!B5:B${maxStudentRow},"?*")`, result: cd.students.length }
     cellB.alignment = { horizontal: 'center' }
     cellB.border = borderThin
 

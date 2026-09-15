@@ -56,11 +56,25 @@ export function fmtDate(iso: string): string {
   return `${d}/${m}/${y}`
 }
 
+export function formatStudentNo(value: string | number | null | undefined): string {
+  if (value === null || value === undefined) return ''
+  const str = String(value).trim()
+  const digits = str.replace(/\D/g, '')
+  if (!digits) return str
+  const n = parseInt(digits, 10)
+  if (isNaN(n) || n <= 0) return str
+  return `ST-${String(n).padStart(3, '0')}`
+}
+
 export function nextStudentNo(existing: string[]): string {
   let max = 0
   for (const s of existing) {
-    const m = /^ST-(\d+)$/i.exec(s.trim())
-    if (m) max = Math.max(max, parseInt(m[1], 10))
+    if (!s) continue
+    const digits = s.trim().replace(/\D/g, '')
+    if (digits) {
+      const n = parseInt(digits, 10)
+      if (!isNaN(n)) max = Math.max(max, n)
+    }
   }
   return `ST-${String(max + 1).padStart(3, '0')}`
 }
