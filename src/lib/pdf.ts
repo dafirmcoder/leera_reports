@@ -2,7 +2,7 @@ import { jsPDF } from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import JSZip from 'jszip'
 import { buildReport, fmtDate, fmtPct, formatAdmissionNo } from './report'
-import type { School, Student, StudentReportRow } from './types'
+import type { School, Student, StudentReportRow, UnitTest } from './types'
 
 // ---------------------------------------------------------------------------
 // Report -> PDF. Mirrors the on-screen report sheet:
@@ -345,7 +345,7 @@ export async function generateSubjectMarksheetPdf(ctx: SubjectMarksheetContext):
 
   // Info line
   const printed = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })
-  const infoCols = [
+  const infoCols: Array<Array<[string, boolean]>> = [
     [['Class: ', true], [className || '—', false], ['   ·   ', false], ['Subject: ', true], [subjectName || '—', false], ['   ·   ', false], ['Teacher: ', true], [teacherName || '—', false]],
     [['Academic Year: ', true], [school.academic_year || '—', false], ['   ·   ', false], ['Term: ', true], [school.term || '—', false], ['   ·   ', false], ['Printed: ', true], [printed, false]]
   ]
