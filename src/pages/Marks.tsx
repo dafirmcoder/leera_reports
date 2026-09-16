@@ -10,10 +10,12 @@ import type { Assignment, UnitTest } from '../lib/types'
 
 export default function Marks() {
   const navigate = useNavigate()
-  const { selectedClassId, classes, subjects } = useSchool()
+  const { selectedClassId, classes, subjects, school } = useSchool()
   const { profile } = useAuth()
   const [tests, setTests] = useState<UnitTest[]>([])
   const [assignments, setAssignments] = useState<Assignment[]>([])
+  const [selectedSubjectId, setSelectedSubjectId] = useState<string>('')
+  const [downloadingSubjectId, setDownloadingSubjectId] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ subject_id: '', title: '', test_date: today(), max_mark: '100' })
   const [error, setError] = useState('')
@@ -48,6 +50,57 @@ export default function Marks() {
     || (isOwnClass && test.class_id === profile?.class_id)
     || myAssignments.some((a) => a.class_id === test.class_id && a.subject_id === test.subject_id)
 
+  const downloadMarksheet = async (subjectId: string, subjectName: string) => {
+    if (!selectedClassId || !school) return
+    setError('')
+    setDownloadingSubjectId(subjectId)
+    try {
+      const subjectTests = tests
+        .filter((t) => t.subject_id === subjectId)
+        .sort((a, b) => a.test_date.localeCompare(b.test_date))
+
+      if (subjectTests.length === 0) {
+        setError(`No unit tests found for ${subjectName} in this class.`)
+        return
+      }
+
+      const students = await api.listStudents(selectedClassId)
+      if (students.length === 0) {
+        setError('No students found in this class.')
+        return
+      }
+
+      const scoresPerTest = await Promise.all(
+        subjectTests.map((t) => api.listScoresForTest(t.id).catch(() => []))
+      )
+
+      const scoresByTest: Record<string, Record<string, number | null>> = {}
+      subjectTests.forEach((t, idx) => {
+        scoresByTest[t.id] = {}
+        scoresPerTest[idx].forEach((r) => {
+          scoresByTest[t.id][r.student_id] = r.score
+        })
+      })
+
+      const assignment = assignments.find((a) => a.subject_id === subjectId)
+      const teacherName = assignment?.teacher_name || profile?.full_name || ''
+
+      const { downloadSubjectMarksheetPdf } = await import('../lib/pdf')
+      await downloadSubjectMarksheetPdf({
+        school,
+        className,
+        subjectName,
+        teacherName,
+        students,
+        tests: subjectTests,
+        scoresByTest
+      })
+    } catch (err: any) {
+      setError(err?.message ?? 'Failed to download marksheet.')
+    } finally {
+      setDownloadingSubjectId(null)
+    }
+  }
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
@@ -85,6 +138,18 @@ export default function Marks() {
     }
   }
 
+  // Filter tests if a subject is selected
+  const visibleTests = selectedSubjectId
+    ? tests.filter((t) => t.subject_id === selectedSubjectId)
+    : tests
+
+  // Group tests by subject
+  const subjectGroups = Array.from(new Set(visibleTests.map((t) => t.subject_id))).map((subjId) => {
+    const subjTests = visibleTests.filter((t) => t.subject_id === subjId)
+    const subjName = subjTests[0]?.subject_name || subjects.find((s) => s.id === subjId)?.name || 'Subject'
+    return { id: subjId, name: subjName, tests: subjTests }
+  })
+
   return (
     <div className="page">
       <div className="page-head">
@@ -101,6 +166,42 @@ export default function Marks() {
           )}
         </div>
       </div>
+
+      <div className="row" style={{ alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
+        <div className="row" style={{ alignItems: 'center', gap: 8 }}>
+          <label style={{ fontSize: 13, fontWeight: 600 }}>Filter by Subject:</label>
+          <select
+            value={selectedSubjectId}
+            onChange={(e) => setSelectedSubjectId(e.target.value)}
+            style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid var(--line)', background: '#fff' }}
+          >
+            <option value="">All Subjects ({tests.length} tests)</option>
+            {subjects.map((s) => {
+              const count = tests.filter((t) => t.subject_id === s.id).length
+              return (
+                <option key={s.id} value={s.id}>
+                  {s.name} {count > 0 ? `(${count})` : ''}
+                </option>
+              )
+            })}
+          </select>
+        </div>
+
+        {selectedSubjectId && (
+          <button
+            className="btn btn-primary"
+            disabled={downloadingSubjectId === selectedSubjectId}
+            onClick={() => {
+              const subj = subjects.find((s) => s.id === selectedSubjectId)
+              downloadMarksheet(selectedSubjectId, subj?.name || 'Subject')
+            }}
+          >
+            {downloadingSubjectId === selectedSubjectId ? 'Generating PDF…' : '⬇ Download Subject Marksheet (PDF)'}
+          </button>
+        )}
+      </div>
+
+      {error && <div className="notice notice-error">{error}</div>}
 
       {showForm && canAdd && (
         <form onSubmit={submit} className="card stack">
@@ -125,25 +226,48 @@ export default function Marks() {
           <div className="row">
             <button className="btn btn-primary" disabled={busy}>{busy ? 'Creating…' : 'Create test & enter scores'}</button>
           </div>
-          {error && <div className="notice notice-error">{error}</div>}
         </form>
       )}
 
-      <div className="card">
-        {tests.length === 0 && <p className="muted center">No unit tests yet for this class.</p>}
-        {tests.map((t) => (
-          <div key={t.id} className="list-row">
-            <div className="list-main">
-              <strong>{t.subject_name} — {t.title}</strong>
-              <span className="muted"> {fmtDate(t.test_date)} · Max {t.max_mark}</span>
+      {visibleTests.length === 0 && (
+        <div className="card">
+          <p className="muted center">No unit tests found for this selection.</p>
+        </div>
+      )}
+
+      {subjectGroups.map((grp) => (
+        <div key={grp.id} className="card stack" style={{ marginBottom: 16 }}>
+          <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--line)', paddingBottom: 10 }}>
+            <div>
+              <h3 style={{ margin: 0 }}>{grp.name}</h3>
+              <span className="muted" style={{ fontSize: 13 }}>
+                {grp.tests.length} unit test{grp.tests.length === 1 ? '' : 's'} recorded
+              </span>
             </div>
-            <div className="list-actions">
-              <Link to={`/marks/${t.class_id}/${t.id}`} className="btn btn-small">Enter scores</Link>{' '}
-              {canEditTest(t) && <button className="btn btn-small btn-danger" onClick={() => remove(t)}>Delete</button>}
-            </div>
+            <button
+              className="btn btn-small"
+              disabled={downloadingSubjectId === grp.id}
+              onClick={() => downloadMarksheet(grp.id, grp.name)}
+              title="Download PDF Class Marksheet for this subject"
+            >
+              {downloadingSubjectId === grp.id ? 'Generating…' : '⬇ Marksheet (PDF)'}
+            </button>
           </div>
-        ))}
-      </div>
+
+          {grp.tests.map((t) => (
+            <div key={t.id} className="list-row">
+              <div className="list-main">
+                <strong>{t.title}</strong>
+                <span className="muted"> {fmtDate(t.test_date)} · Max {t.max_mark}</span>
+              </div>
+              <div className="list-actions">
+                <Link to={`/marks/${t.class_id}/${t.id}`} className="btn btn-small">Enter scores</Link>{' '}
+                {canEditTest(t) && <button className="btn btn-small btn-danger" onClick={() => remove(t)}>Delete</button>}
+              </div>
+            </div>
+          ))}
+        </div>
+      ))}
     </div>
   )
 }

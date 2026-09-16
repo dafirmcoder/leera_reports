@@ -248,6 +248,264 @@ function drawFooter(doc: jsPDF, school: School): void {
 }
 
 // ---------------------------------------------------------------------------
+// Subject Class Marksheet -> Landscape PDF
+// Shows all students in a class with every unit test recorded for a subject,
+// total marks, average %, and class performance summary.
+// ---------------------------------------------------------------------------
+
+export interface SubjectMarksheetContext {
+  school: School
+  className: string
+  subjectName: string
+  teacherName: string
+  students: Student[]
+  tests: UnitTest[]
+  scoresByTest: Record<string, Record<string, number | null>>
+}
+
+export async function generateSubjectMarksheetPdf(ctx: SubjectMarksheetContext): Promise<jsPDF> {
+  const { school, className, subjectName, teacherName, students, tests, scoresByTest } = ctx
+  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'landscape' })
+  const PAGE_W = 297
+  const PAGE_H = 210
+  const MARGIN = 12
+
+  // ---- header ---------------------------------------------------------------
+  const schoolLogoW = 24.5
+  const schoolLogoH = 21
+  const schoolLogoX = MARGIN
+  const schoolLogoY = 10
+
+  const cambridgeLogoW = 44
+  const cambridgeLogoH = 7.4
+  const cambridgeLogoX = PAGE_W - MARGIN - cambridgeLogoW
+  const cambridgeLogoY = 11.5
+
+  if (school.show_school_logo) {
+    if (!schoolLogoData) schoolLogoData = await loadImageDataUrl('/logos/school-logo.png')
+    doc.addImage(schoolLogoData, 'PNG', schoolLogoX, schoolLogoY, schoolLogoW, schoolLogoH)
+  }
+  if (school.show_cambridge_logo) {
+    if (!cambridgeLogoData) cambridgeLogoData = await loadImageDataUrl('/logos/cambridge-logo.png')
+    doc.addImage(cambridgeLogoData, 'PNG', cambridgeLogoX, cambridgeLogoY, cambridgeLogoW, cambridgeLogoH)
+  }
+
+  const logoGap = 4
+  const leftBound = school.show_school_logo ? schoolLogoX + schoolLogoW + logoGap : MARGIN
+  const rightBound = school.show_cambridge_logo ? cambridgeLogoX - logoGap : PAGE_W - MARGIN
+
+  const centerX = PAGE_W / 2
+  const maxAllowedHalfW = Math.min(centerX - leftBound, rightBound - centerX)
+  const maxBandW = Math.max(60, maxAllowedHalfW * 2)
+
+  const name = school.name.toUpperCase()
+  let fontSize = 17
+  doc.setFont('helvetica', 'bold')
+  while (fontSize > 9) {
+    doc.setFontSize(fontSize)
+    if (doc.getTextWidth(name) + 12 <= maxBandW) break
+    fontSize -= 0.5
+  }
+
+  const nameW = doc.getTextWidth(name)
+  const bandW = Math.min(nameW + 12, maxBandW)
+  const bandH = 10
+  const bandX = (PAGE_W - bandW) / 2
+  const bandY = 11.5
+  const [rr, rg, rb] = hexToRgb('#C00000')
+  doc.setFillColor(rr, rg, rb)
+  doc.roundedRect(bandX, bandY, bandW, bandH, 1.5, 1.5, 'F')
+  doc.setTextColor(255, 255, 255)
+  doc.text(name, PAGE_W / 2, bandY + bandH / 2, { align: 'center', baseline: 'middle' })
+
+  let titleBottom = bandY + bandH
+  if (school.motto) {
+    const mottoY = titleBottom + 3.5
+    doc.setFont('helvetica', 'italic')
+    doc.setFontSize(9)
+    doc.setTextColor(107, 127, 138)
+    doc.text(school.motto, PAGE_W / 2, mottoY, { align: 'center' })
+    titleBottom = mottoY + 2
+  }
+
+  let headerBottom = titleBottom
+  if (school.show_school_logo) headerBottom = Math.max(headerBottom, schoolLogoY + schoolLogoH)
+  if (school.show_cambridge_logo) headerBottom = Math.max(headerBottom, cambridgeLogoY + cambridgeLogoH)
+
+  // Title band
+  let y = headerBottom + 3.5
+  const band2H = 7
+  doc.setFillColor(31, 78, 95)
+  doc.rect(MARGIN, y, PAGE_W - 2 * MARGIN, band2H, 'F')
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(11)
+  doc.setTextColor(255, 255, 255)
+  doc.text(`SUBJECT MARKSHEET — ${subjectName.toUpperCase()}`, PAGE_W / 2, y + band2H / 2, { align: 'center', baseline: 'middle' })
+  y += band2H + 3.5
+
+  // Info line
+  const printed = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })
+  const infoCols = [
+    [['Class: ', true], [className || '—', false], ['   ·   ', false], ['Subject: ', true], [subjectName || '—', false], ['   ·   ', false], ['Teacher: ', true], [teacherName || '—', false]],
+    [['Academic Year: ', true], [school.academic_year || '—', false], ['   ·   ', false], ['Term: ', true], [school.term || '—', false], ['   ·   ', false], ['Printed: ', true], [printed, false]]
+  ]
+  doc.setFontSize(9.5)
+  for (const segs of infoCols) {
+    let x = MARGIN
+    for (const [txt, bold] of segs) {
+      doc.setFont('helvetica', bold ? 'bold' : 'normal')
+      doc.setTextColor(bold ? 31 : 28, bold ? 78 : 43, bold ? 95 : 51)
+      doc.text(txt, x, y)
+      x += doc.getTextWidth(txt)
+    }
+    y += 4.8
+  }
+  const startY = y + 2
+
+  // Table structure
+  const headRow: string[] = ['#', 'Adm No.', 'Student Name']
+  tests.forEach((t) => {
+    headRow.push(`${t.title}\n(${fmtDate(t.test_date)})\nMax: ${t.max_mark}`)
+  })
+  headRow.push('Total')
+  headRow.push('Average %')
+
+  const sortedStudents = [...students].sort((a, b) => a.full_name.localeCompare(b.full_name))
+  const body: any[] = []
+
+  const testScoresList: number[][] = tests.map(() => [])
+  let classTotalPctSum = 0
+  let studentsWithMarksCount = 0
+
+  sortedStudents.forEach((student, idx) => {
+    const rowCells: any[] = [
+      String(idx + 1),
+      formatAdmissionNo(student.admission_no) || '—',
+      student.full_name
+    ]
+
+    let studentScoreSum = 0
+    let studentMaxSum = 0
+    let studentTestsTaken = 0
+
+    tests.forEach((t, tIdx) => {
+      const score = scoresByTest[t.id]?.[student.id]
+      if (score !== null && score !== undefined) {
+        rowCells.push(String(score))
+        studentScoreSum += score
+        studentMaxSum += t.max_mark
+        studentTestsTaken += 1
+        testScoresList[tIdx].push(score)
+      } else {
+        rowCells.push('—')
+      }
+    })
+
+    if (studentTestsTaken > 0 && studentMaxSum > 0) {
+      const studentPct = (studentScoreSum / studentMaxSum) * 100
+      rowCells.push(`${studentScoreSum} / ${studentMaxSum}`)
+      rowCells.push(`${studentPct.toFixed(1)}%`)
+      classTotalPctSum += studentPct
+      studentsWithMarksCount += 1
+    } else {
+      rowCells.push('—')
+      rowCells.push('—')
+    }
+
+    body.push(rowCells)
+  })
+
+  // Summary rows
+  const avgRow: any[] = [{ content: 'Class Average', colSpan: 3, styles: { halign: 'left', fontStyle: 'bold', fillColor: [221, 235, 241], textColor: [31, 78, 95] } }]
+  const highRow: any[] = [{ content: 'Highest Score', colSpan: 3, styles: { halign: 'left', fontStyle: 'bold', fillColor: [238, 246, 241], textColor: [20, 83, 45] } }]
+  const lowRow: any[] = [{ content: 'Lowest Score', colSpan: 3, styles: { halign: 'left', fontStyle: 'bold', fillColor: [253, 242, 242], textColor: [153, 27, 27] } }]
+
+  tests.forEach((t, tIdx) => {
+    const scores = testScoresList[tIdx]
+    if (scores.length > 0) {
+      const sum = scores.reduce((a, b) => a + b, 0)
+      const avg = sum / scores.length
+      const avgPct = (avg / (t.max_mark || 1)) * 100
+      avgRow.push({ content: `${avg.toFixed(1)} (${avgPct.toFixed(1)}%)`, styles: { halign: 'center', fontStyle: 'bold', fillColor: [221, 235, 241], textColor: [31, 78, 95] } })
+      highRow.push({ content: String(Math.max(...scores)), styles: { halign: 'center', fontStyle: 'bold', fillColor: [238, 246, 241], textColor: [20, 83, 45] } })
+      lowRow.push({ content: String(Math.min(...scores)), styles: { halign: 'center', fontStyle: 'bold', fillColor: [253, 242, 242], textColor: [153, 27, 27] } })
+    } else {
+      avgRow.push({ content: '—', styles: { halign: 'center', fontStyle: 'bold', fillColor: [221, 235, 241] } })
+      highRow.push({ content: '—', styles: { halign: 'center', fontStyle: 'bold', fillColor: [238, 246, 241] } })
+      lowRow.push({ content: '—', styles: { halign: 'center', fontStyle: 'bold', fillColor: [253, 242, 242] } })
+    }
+  })
+
+  const overallAvg = studentsWithMarksCount > 0 ? (classTotalPctSum / studentsWithMarksCount).toFixed(1) + '%' : '—'
+  avgRow.push({ content: '—', styles: { halign: 'center', fontStyle: 'bold', fillColor: [221, 235, 241] } })
+  avgRow.push({ content: overallAvg, styles: { halign: 'center', fontStyle: 'bold', fillColor: [221, 235, 241], textColor: [31, 78, 95] } })
+
+  highRow.push({ content: '', styles: { fillColor: [238, 246, 241] } })
+  highRow.push({ content: '', styles: { fillColor: [238, 246, 241] } })
+  lowRow.push({ content: '', styles: { fillColor: [253, 242, 242] } })
+  lowRow.push({ content: '', styles: { fillColor: [253, 242, 242] } })
+
+  if (tests.length > 0) {
+    body.push(avgRow)
+    body.push(highRow)
+    body.push(lowRow)
+  } else {
+    body.push([{ content: 'No unit tests recorded yet for this subject.', colSpan: 5, styles: { textColor: [107, 127, 138], halign: 'center' } }])
+  }
+
+  autoTable(doc, {
+    startY,
+    margin: { left: MARGIN, right: MARGIN, top: startY, bottom: 20 },
+    head: [headRow],
+    body,
+    theme: 'grid',
+    styles: {
+      font: 'helvetica',
+      fontSize: 8.5,
+      cellPadding: 1.6,
+      textColor: [28, 43, 51],
+      lineColor: [212, 222, 228],
+      lineWidth: 0.2
+    },
+    headStyles: {
+      fillColor: [31, 78, 95],
+      textColor: 255,
+      fontStyle: 'bold',
+      halign: 'center',
+      valign: 'middle'
+    },
+    columnStyles: {
+      0: { cellWidth: 8, halign: 'center' },
+      1: { cellWidth: 18, halign: 'center' },
+      2: { cellWidth: 48, halign: 'left' }
+    },
+    didDrawPage: () => drawFooterLandscape(doc, school)
+  })
+
+  return doc
+}
+
+function drawFooterLandscape(doc: jsPDF, school: School): void {
+  const PAGE_W = 297
+  const PAGE_H = 210
+  const MARGIN = 12
+  const fh = 7
+  const fy = PAGE_H - MARGIN - fh
+  const [fr, fg, fb] = hexToRgb(school.footer_color || '#1F8A5F')
+  doc.setFillColor(fr, fg, fb)
+  doc.rect(MARGIN, fy, PAGE_W - 2 * MARGIN, fh, 'F')
+  doc.setTextColor(255, 255, 255)
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(8.5)
+  doc.text(school.footer_text || '', PAGE_W / 2, fy + fh / 2, { align: 'center', baseline: 'middle' })
+}
+
+export async function downloadSubjectMarksheetPdf(ctx: SubjectMarksheetContext): Promise<void> {
+  const doc = await generateSubjectMarksheetPdf(ctx)
+  triggerDownload(doc.output('blob'), safeName(`${ctx.className} - ${ctx.subjectName} Marksheet`) + '.pdf')
+}
+
+// ---------------------------------------------------------------------------
 // File-name + download helpers
 // ---------------------------------------------------------------------------
 
