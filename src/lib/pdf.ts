@@ -50,40 +50,77 @@ export async function generateStudentPdf(ctx: PdfContext): Promise<jsPDF> {
   const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' })
 
   // ---- header ---------------------------------------------------------------
+  const schoolLogoW = 24.5
+  const schoolLogoH = 21 // Preserves ~1.17 aspect ratio of 400x342
+  const schoolLogoX = MARGIN
+  const schoolLogoY = 10
+
+  const cambridgeLogoW = 44
+  const cambridgeLogoH = 7.4 // Preserves ~5.95 aspect ratio of 1000x168
+  const cambridgeLogoX = PAGE_W - MARGIN - cambridgeLogoW
+  const cambridgeLogoY = 11.5
+
   if (school.show_school_logo) {
     if (!schoolLogoData) schoolLogoData = await loadImageDataUrl('/logos/school-logo.png')
-    doc.addImage(schoolLogoData, 'PNG', MARGIN, 10, 25.7, 22)
+    doc.addImage(schoolLogoData, 'PNG', schoolLogoX, schoolLogoY, schoolLogoW, schoolLogoH)
   }
   if (school.show_cambridge_logo) {
     if (!cambridgeLogoData) cambridgeLogoData = await loadImageDataUrl('/logos/cambridge-logo.png')
-    doc.addImage(cambridgeLogoData, 'PNG', PAGE_W - MARGIN - 50.6, 10, 50.6, 8.5)
+    doc.addImage(cambridgeLogoData, 'PNG', cambridgeLogoX, cambridgeLogoY, cambridgeLogoW, cambridgeLogoH)
   }
 
-  // school name — white uppercase on red
+  // Determine available horizontal space for the center school title so it NEVER collides with logos
+  const logoGap = 4
+  const leftBound = school.show_school_logo ? schoolLogoX + schoolLogoW + logoGap : MARGIN
+  const rightBound = school.show_cambridge_logo ? cambridgeLogoX - logoGap : PAGE_W - MARGIN
+
+  // Keep title centered on page, capped to available safe clearance on both sides
+  const centerX = PAGE_W / 2
+  const maxAllowedHalfW = Math.min(centerX - leftBound, rightBound - centerX)
+  const maxBandW = Math.max(50, maxAllowedHalfW * 2)
+
+  // School name — auto-fit font size so it fits inside maxBandW without overlapping logos
   const name = school.name.toUpperCase()
+  let fontSize = 16
   doc.setFont('helvetica', 'bold')
-  doc.setFontSize(20)
+  while (fontSize > 8.5) {
+    doc.setFontSize(fontSize)
+    if (doc.getTextWidth(name) + 10 <= maxBandW) break
+    fontSize -= 0.5
+  }
+
   const nameW = doc.getTextWidth(name)
-  const bandW = Math.min(nameW + 10, PAGE_W - 2 * MARGIN)
-  const bandH = 11
+  const bandW = Math.min(nameW + 10, maxBandW)
+  const bandH = 10
   const bandX = (PAGE_W - bandW) / 2
-  const bandY = 12
+  const bandY = 11.5
   const [rr, rg, rb] = hexToRgb('#C00000')
   doc.setFillColor(rr, rg, rb)
   doc.roundedRect(bandX, bandY, bandW, bandH, 1.5, 1.5, 'F')
   doc.setTextColor(255, 255, 255)
   doc.text(name, PAGE_W / 2, bandY + bandH / 2, { align: 'center', baseline: 'middle' })
 
-  let y = bandY + bandH + 4
+  let titleBottom = bandY + bandH
   if (school.motto) {
+    const mottoY = titleBottom + 3.5
     doc.setFont('helvetica', 'italic')
-    doc.setFontSize(10)
+    doc.setFontSize(9)
     doc.setTextColor(107, 127, 138)
-    doc.text(school.motto, PAGE_W / 2, y, { align: 'center' })
-    y += 6
+    doc.text(school.motto, PAGE_W / 2, mottoY, { align: 'center' })
+    titleBottom = mottoY + 2
   }
 
-  // "END OF UNIT TEST REPORT" band
+  // Calculate bottom of all header content so the report band never slices through the logos
+  let headerBottom = titleBottom
+  if (school.show_school_logo) {
+    headerBottom = Math.max(headerBottom, schoolLogoY + schoolLogoH)
+  }
+  if (school.show_cambridge_logo) {
+    headerBottom = Math.max(headerBottom, cambridgeLogoY + cambridgeLogoH)
+  }
+
+  // "END OF UNIT TEST REPORT" band — placed strictly below ALL header elements with clean spacing
+  let y = headerBottom + 4
   const band2H = 7
   doc.setFillColor(31, 78, 95)
   doc.rect(MARGIN, y, PAGE_W - 2 * MARGIN, band2H, 'F')

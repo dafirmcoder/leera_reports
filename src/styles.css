@@ -272,23 +272,23 @@ h3 { font-size: 15px; margin-top: 8px; }
   position: relative;
 }
 
-.report-header { position: relative; display: flex; align-items: center; justify-content: center; min-height: 26mm; }
+.report-header { position: relative; display: flex; align-items: center; justify-content: center; min-height: 26mm; margin-bottom: 4px; }
 .logo { position: absolute; }
-.logo-left { left: 0; top: 0; height: 24mm; }
-.logo-right { right: 0; top: 0; height: 7mm; }
-.report-title-block { text-align: center; }
+.logo-left { left: 0; top: 0; height: 22mm; }
+.logo-right { right: 0; top: 2mm; height: 7.4mm; }
+.report-title-block { text-align: center; max-width: 96mm; margin: 0 auto; }
 .report-title-block h1 {
-  font-size: 20px;
+  font-size: 16px;
   color: #ffffff;
   background: var(--red);
   text-transform: uppercase;
   display: inline-block;
-  padding: 5px 16px;
+  padding: 4px 14px;
   border-radius: 4px;
   margin: 0;
   letter-spacing: 0.04em;
 }
-.motto { font-style: italic; color: var(--muted); font-size: 13px; margin-top: 4px; }
+.motto { font-style: italic; color: var(--muted); font-size: 12px; margin-top: 4px; }
 
 .report-band {
   background: var(--teal); color: #fff; text-align: center; font-weight: 700;
