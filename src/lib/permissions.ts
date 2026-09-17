@@ -10,6 +10,7 @@ export type Capability =
   | 'assignTeachers'     // assign subject teachers (HOS + coordinators + homeroom teacher)
   | 'addStudents'        // homeroom teacher only
   | 'addMarks'           // homeroom + subject teachers + coordinators
+  | 'deleteTests'        // coordinators + HOS + admin only (regular teachers cannot delete)
   | 'viewAllClasses'     // sees the whole school (director/HOS/coordinator/admin)
   | 'markAttendance'     // homeroom teachers today; coordinators for school classes
   | 'markPastAttendance' // coordinator backfills skipped attendance dates
@@ -38,6 +39,8 @@ export function can(role: Role | undefined, cap: Capability, additionalRoles: Ro
       return roles.has('homeroom_teacher')
     case 'addMarks':
       return roles.has('homeroom_teacher') || roles.has('subject_teacher') || roles.has('curriculum_coordinator') || roles.has('head_of_school')
+    case 'deleteTests':
+      return roles.has('curriculum_coordinator') || roles.has('head_of_school') || roles.has('admin')
     case 'viewAllClasses':
       return roles.has('director') || roles.has('head_of_school') || roles.has('curriculum_coordinator') || roles.has('admin')
     case 'markAttendance':

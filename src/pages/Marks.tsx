@@ -50,6 +50,7 @@ export default function Marks() {
   const canEditTest = (test: UnitTest) => isLeadership
     || (isOwnClass && test.class_id === profile?.class_id)
     || myAssignments.some((a) => a.class_id === test.class_id && a.subject_id === test.subject_id)
+  const canDeleteTest = can(profile?.role, 'deleteTests', profile?.additional_roles)
 
   const openExamPaper = async (test: UnitTest) => {
     try {
@@ -149,6 +150,10 @@ export default function Marks() {
   }
 
   const remove = async (t: UnitTest) => {
+    if (!canDeleteTest) {
+      setError('Only coordinators and leadership can delete a unit test.')
+      return
+    }
     if (!confirm(`Delete "${t.subject_name} – ${t.title}"? All its scores and exam paper will be removed.`)) return
     try {
       await api.deleteUnitTest(t.id)
@@ -319,7 +324,7 @@ export default function Marks() {
                   </button>
                 )}{' '}
                 <Link to={`/marks/${t.class_id}/${t.id}`} className="btn btn-small">Enter scores</Link>{' '}
-                {canEditTest(t) && <button className="btn btn-small btn-danger" onClick={() => remove(t)}>Delete</button>}
+                {canDeleteTest && <button className="btn btn-small btn-danger" onClick={() => remove(t)}>Delete</button>}
               </div>
             </div>
           ))}
