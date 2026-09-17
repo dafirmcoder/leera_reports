@@ -471,13 +471,14 @@ export const supabaseApi: Api = {
   async listUnitTests(classId: string): Promise<UnitTest[]> {
     const { data, error } = await db()
       .from('unit_tests')
-      .select('id, class_id, subject_id, title, test_date, max_mark, exam_paper_url, exam_paper_path, exam_paper_name, subjects(name)')
+      .select('id, class_id, subject_id, title, test_date, max_mark, created_by, exam_paper_url, exam_paper_path, exam_paper_name, subjects(name)')
       .eq('class_id', classId)
     if (error) throw new Error(error.message)
     const list = (data ?? []).map((r: any) => ({
       id: r.id, class_id: r.class_id, subject_id: r.subject_id,
       subject_name: r.subjects?.name ?? '—', title: r.title,
       test_date: r.test_date, max_mark: Number(r.max_mark),
+      created_by: r.created_by ?? null,
       exam_paper_url: r.exam_paper_url ?? null,
       exam_paper_path: r.exam_paper_path ?? null,
       exam_paper_name: r.exam_paper_name ?? null

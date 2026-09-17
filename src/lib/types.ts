@@ -205,6 +205,7 @@ export interface UnitTest {
   exam_paper_url?: string | null
   exam_paper_path?: string | null
   exam_paper_name?: string | null
+  created_by?: string | null
 }
 
 export interface ScoreRow {

@@ -736,7 +736,7 @@ export default function Dashboard({ section = 'overview' }: DashboardProps) {
                           : '—'}
                       </td>
                       <td className="right">
-                        <Link to={`/marks/${t.class_id}/${t.test_id}`} className="btn btn-small">
+                        <Link to={`/marks/${t.class_id}/${t.test_id}?view=marksheet`} className="btn btn-small">
                           View Sheet →
                         </Link>
                       </td>

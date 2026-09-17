@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { api } from '../lib/api'
 import { fmtDate } from '../lib/report'
 import { useAuth } from '../context/AuthContext'
@@ -9,6 +9,8 @@ import type { ScoreRow, Student, UnitTest } from '../lib/types'
 
 export default function ScoreEntry() {
   const { classId, testId } = useParams<{ classId: string; testId: string }>()
+  const [searchParams] = useSearchParams()
+  const viewParam = searchParams.get('view')
   const { profile } = useAuth()
   const { school, classes } = useSchool()
   const [test, setTest] = useState<UnitTest | null>(null)
@@ -16,14 +18,36 @@ export default function ScoreEntry() {
   const [error, setError] = useState('')
   const [canEdit, setCanEdit] = useState(false)
   const [downloading, setDownloading] = useState(false)
-  const [directorData, setDirectorData] = useState<{
+  const [marksheetData, setMarksheetData] = useState<{
     students: Student[]
     subjectTests: UnitTest[]
     scoresByTest: Record<string, Record<string, number | null>>
   } | null>(null)
+  const [loadingMarksheet, setLoadingMarksheet] = useState(false)
   const timers = useRef<Record<string, number>>({})
 
   const isDirector = hasRole(profile?.role, 'director', profile?.additional_roles)
+  const isHeadOfSchool = hasRole(profile?.role, 'head_of_school', profile?.additional_roles)
+  const isCoordinator = hasRole(profile?.role, 'curriculum_coordinator', profile?.additional_roles)
+  const isLeadership = isDirector || isHeadOfSchool || isCoordinator
+
+  // Determine active view mode: 'marksheet' (read-only table) vs 'entry' (score input boxes)
+  const [activeTab, setActiveTab] = useState<'marksheet' | 'entry'>(() => {
+    if (viewParam === 'marksheet') return 'marksheet'
+    if (viewParam === 'entry') return 'entry'
+    if (isLeadership) return 'marksheet'
+    return 'entry'
+  })
+
+  useEffect(() => {
+    if (viewParam === 'marksheet') {
+      setActiveTab('marksheet')
+    } else if (viewParam === 'entry') {
+      setActiveTab('entry')
+    } else if (isLeadership && !viewParam) {
+      setActiveTab('marksheet')
+    }
+  }, [viewParam, isLeadership])
 
   useEffect(() => {
     if (!testId) return
@@ -34,20 +58,21 @@ export default function ScoreEntry() {
         setTest(selected)
         if (!selected || !profile) return
         const isHomeroomOfClass = hasRole(profile.role, 'homeroom_teacher', profile.additional_roles) && profile.class_id === classId
-        const isLeadership = hasRole(profile.role, 'curriculum_coordinator', profile.additional_roles)
+        const isLead = hasRole(profile.role, 'curriculum_coordinator', profile.additional_roles)
           || hasRole(profile.role, 'head_of_school', profile.additional_roles)
         const assignments = await api.listAssignments(classId).catch(() => [])
         const isAssignedSubjectTeacher = assignments.some((a) => a.teacher_id === profile.id && a.subject_id === selected.subject_id)
 
-        setCanEdit(!isDirector && (isHomeroomOfClass || isAssignedSubjectTeacher || isLeadership))
+        setCanEdit(!isDirector && (isHomeroomOfClass || isAssignedSubjectTeacher || selected.created_by === profile.id || isLead))
       }).catch(() => {})
     }
   }, [testId, classId, profile, isDirector])
 
   useEffect(() => {
-    if (!isDirector || !classId || !test?.subject_id) return
+    if (!classId || !test?.subject_id) return
     let isCancelled = false
-    async function loadDirectorData() {
+    async function loadMarksheet() {
+      setLoadingMarksheet(true)
       try {
         const [allTests, students] = await Promise.all([
           api.listUnitTests(classId!),
@@ -55,7 +80,7 @@ export default function ScoreEntry() {
         ])
         const subjectTests = allTests
           .filter((t) => t.subject_id === test!.subject_id)
-          .sort((a, b) => a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' }))
+          .sort((a, b) => a.test_date.localeCompare(b.test_date) || a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' }))
 
         const scoresPerTest = await Promise.all(
           subjectTests.map((t) => api.listScoresForTest(t.id).catch(() => []))
@@ -70,15 +95,17 @@ export default function ScoreEntry() {
         })
 
         if (!isCancelled) {
-          setDirectorData({ students, subjectTests, scoresByTest })
+          setMarksheetData({ students, subjectTests, scoresByTest })
         }
       } catch (err: any) {
         if (!isCancelled) setError(err.message)
+      } finally {
+        if (!isCancelled) setLoadingMarksheet(false)
       }
     }
-    loadDirectorData()
+    loadMarksheet()
     return () => { isCancelled = true }
-  }, [isDirector, classId, test?.subject_id])
+  }, [classId, test?.subject_id])
 
   const maxMark = test?.max_mark ?? 100
 
@@ -164,6 +191,7 @@ export default function ScoreEntry() {
     }
   }
 
+  const isReadOnlyMarksheet = isDirector || activeTab === 'marksheet'
   const entered = rows.filter((r) => r.score !== null).length
 
   return (
@@ -195,21 +223,44 @@ export default function ScoreEntry() {
           >
             {downloading ? 'Preparing Marksheet…' : '⬇ Subject Marksheet (PDF)'}
           </button>
-          <Link to={isDirector ? '/dashboard/marks' : '/marks'} className="btn btn-ghost">
-            ← Back {isDirector ? 'to Marks' : ''}
+          <Link
+            to={isDirector || viewParam === 'marksheet' ? '/dashboard/marks' : '/marks'}
+            className="btn btn-ghost"
+          >
+            ← Back to {isDirector || viewParam === 'marksheet' ? 'Marks Summaries' : 'Tests'}
           </Link>
         </div>
       </div>
 
       {error && <div className="notice notice-error">{error}</div>}
 
-      {isDirector ? (
+      {/* Tab Switch: allowed for teachers and coordinators who have edit permissions */}
+      {canEdit && !isDirector && (
+        <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+          <button
+            type="button"
+            className={`btn btn-small ${isReadOnlyMarksheet ? 'btn-primary' : 'btn-ghost'}`}
+            onClick={() => setActiveTab('marksheet')}
+          >
+            📊 Marksheet Overview (Read-Only)
+          </button>
+          <button
+            type="button"
+            className={`btn btn-small ${!isReadOnlyMarksheet ? 'btn-primary' : 'btn-ghost'}`}
+            onClick={() => setActiveTab('entry')}
+          >
+            ✏️ Enter Scores
+          </button>
+        </div>
+      )}
+
+      {isReadOnlyMarksheet ? (
         <div className="card stack">
           <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
             <div>
               <h3>Subject Marksheet Overview</h3>
               <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-                Executive view of all student performance across unit tests in {test?.subject_name}
+                {isLeadership ? 'Executive view' : 'Read-only overview'} of all student performance across unit tests in {test?.subject_name}
               </p>
             </div>
             {test && (test.exam_paper_url || test.exam_paper_path) && (
@@ -230,7 +281,7 @@ export default function ScoreEntry() {
                 <tr>
                   <th>Student</th>
                   <th>Student No.</th>
-                  {directorData?.subjectTests.map((t) => (
+                  {marksheetData?.subjectTests.map((t) => (
                     <th key={t.id} className="num" title={t.title}>
                       <div>{t.title}</div>
                       <div className="muted" style={{ fontSize: 11, fontWeight: 'normal' }}>
@@ -253,7 +304,7 @@ export default function ScoreEntry() {
                 </tr>
               </thead>
               <tbody>
-                {directorData?.students.map((st) => {
+                {marksheetData?.students.map((st) => {
                   let studentEarned = 0
                   let studentMax = 0
                   let testsTaken = 0
@@ -262,8 +313,8 @@ export default function ScoreEntry() {
                     <tr key={st.id}>
                       <td><strong>{st.full_name}</strong></td>
                       <td className="mono">{st.student_no}</td>
-                      {directorData.subjectTests.map((t) => {
-                        const sc = directorData.scoresByTest[t.id]?.[st.id]
+                      {marksheetData.subjectTests.map((t) => {
+                        const sc = marksheetData.scoresByTest[t.id]?.[st.id]
                         const isCurrent = t.id === testId
                         if (sc !== null && sc !== undefined) {
                           studentEarned += sc
@@ -305,17 +356,17 @@ export default function ScoreEntry() {
                     </tr>
                   )
                 })}
-                {(!directorData?.students || directorData.students.length === 0) && (
+                {(!marksheetData?.students || marksheetData.students.length === 0) && (
                   <tr>
-                    <td colSpan={3 + (directorData?.subjectTests.length || 0)} className="muted center">
-                      {directorData ? 'No students found in this class.' : 'Loading marksheet…'}
+                    <td colSpan={3 + (marksheetData?.subjectTests.length || 0)} className="muted center">
+                      {loadingMarksheet ? 'Loading marksheet…' : 'No students found in this class.'}
                     </td>
                   </tr>
                 )}
               </tbody>
             </table>
           </div>
-          <p className="muted">Executive read-only view. Total and average scores are computed across all subject tests.</p>
+          <p className="muted">Read-only marksheet overview. Total and average scores are computed across all subject tests.</p>
         </div>
       ) : (
         <div className="card">
