@@ -40,7 +40,7 @@ export function can(role: Role | undefined, cap: Capability, additionalRoles: Ro
     case 'addMarks':
       return roles.has('homeroom_teacher') || roles.has('subject_teacher') || roles.has('curriculum_coordinator') || roles.has('head_of_school')
     case 'deleteTests':
-      return roles.has('curriculum_coordinator') || roles.has('head_of_school') || roles.has('admin')
+      return roles.has('curriculum_coordinator') || roles.has('head_of_school')
     case 'viewAllClasses':
       return roles.has('director') || roles.has('head_of_school') || roles.has('curriculum_coordinator') || roles.has('admin')
     case 'markAttendance':

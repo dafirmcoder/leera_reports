@@ -5,7 +5,7 @@ import type {
   ClassAttendanceExportData, ClassInfo, ClassPopulationSummary, DetailedAttendanceExport,
   EndOfUnitTestOverview, Profile, Role, School,
   SchoolPopulationSummary, ScoreRow, Student, StudentReportRow, Subject,
-  SubjectTestSummary, TeacherTestSummary, UnitTest, UnitTestSummaryItem
+  SubjectTestSummary, TeacherTestSummary, UnitTest, UnitTestSummaryItem, UpdateUnitTestInput
 } from './types'
 
 function db() {
@@ -548,6 +548,52 @@ export const supabaseApi: Api = {
       if (ierr) throw new Error(ierr.message)
     }
     return testId
+  },
+
+  async updateUnitTest(id: string, input: UpdateUnitTestInput): Promise<void> {
+    const d = db()
+    const { data: testData, error: fetchErr } = await d
+      .from('unit_tests')
+      .select('id, class_id, exam_paper_path')
+      .eq('id', id)
+      .single()
+    if (fetchErr) throw new Error(fetchErr.message)
+
+    const updatePayload: Record<string, any> = {}
+    if (input.title !== undefined) updatePayload.title = input.title.trim()
+    if (input.test_date !== undefined) updatePayload.test_date = input.test_date
+    if (input.max_mark !== undefined) updatePayload.max_mark = Number(input.max_mark)
+
+    if (input.examPaperFile) {
+      const sanitizedName = input.examPaperFile.name.replace(/[^a-zA-Z0-9._-]/g, '_')
+      const exam_paper_path = `${testData.class_id}/${id}/${Date.now()}_${sanitizedName}`
+      const exam_paper_name = input.examPaperFile.name
+
+      const { error: uploadErr } = await d.storage
+        .from('exam-papers')
+        .upload(exam_paper_path, input.examPaperFile, {
+          cacheControl: '3600',
+          upsert: true,
+          contentType: 'application/pdf'
+        })
+
+      if (uploadErr) throw new Error(`Failed to upload exam paper: ${uploadErr.message}`)
+
+      const { data: pubData } = d.storage.from('exam-papers').getPublicUrl(exam_paper_path)
+      updatePayload.exam_paper_url = pubData?.publicUrl || null
+      updatePayload.exam_paper_path = exam_paper_path
+      updatePayload.exam_paper_name = exam_paper_name
+
+      // Remove old exam paper if path changed
+      if (testData.exam_paper_path && testData.exam_paper_path !== exam_paper_path) {
+        d.storage.from('exam-papers').remove([testData.exam_paper_path]).catch(() => {})
+      }
+    }
+
+    if (Object.keys(updatePayload).length > 0) {
+      const { error: updateErr } = await d.from('unit_tests').update(updatePayload).eq('id', id)
+      if (updateErr) throw new Error(updateErr.message)
+    }
   },
 
   async deleteUnitTest(id: string): Promise<void> {

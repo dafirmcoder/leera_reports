@@ -19,6 +19,10 @@ export default function Marks() {
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ subject_id: '', title: '', test_date: today(), max_mark: '100' })
   const [examPaperFile, setExamPaperFile] = useState<File | null>(null)
+  const [editingTest, setEditingTest] = useState<UnitTest | null>(null)
+  const [editForm, setEditForm] = useState({ title: '', test_date: today(), max_mark: '100' })
+  const [editExamFile, setEditExamFile] = useState<File | null>(null)
+  const [editBusy, setEditBusy] = useState(false)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -50,7 +54,49 @@ export default function Marks() {
   const canEditTest = (test: UnitTest) => isLeadership
     || (isOwnClass && test.class_id === profile?.class_id)
     || myAssignments.some((a) => a.class_id === test.class_id && a.subject_id === test.subject_id)
+    || test.created_by === profile?.id
   const canDeleteTest = can(profile?.role, 'deleteTests', profile?.additional_roles)
+
+  const startEditing = (t: UnitTest) => {
+    setEditingTest(t)
+    setEditForm({
+      title: t.title,
+      test_date: t.test_date,
+      max_mark: String(t.max_mark)
+    })
+    setEditExamFile(null)
+    setError('')
+  }
+
+  const cancelEditing = () => {
+    setEditingTest(null)
+    setEditExamFile(null)
+  }
+
+  const submitEdit = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!editingTest || !editForm.title.trim()) {
+      setError('Unit / Topic name cannot be empty.')
+      return
+    }
+    setError('')
+    setEditBusy(true)
+    try {
+      await api.updateUnitTest(editingTest.id, {
+        title: editForm.title.trim(),
+        test_date: editForm.test_date,
+        max_mark: Number(editForm.max_mark) || 100,
+        examPaperFile: editExamFile
+      })
+      setEditingTest(null)
+      setEditExamFile(null)
+      reload()
+    } catch (err: any) {
+      setError(err.message || 'Failed to update unit test.')
+    } finally {
+      setEditBusy(false)
+    }
+  }
 
   const openExamPaper = async (test: UnitTest) => {
     try {
@@ -312,7 +358,7 @@ export default function Marks() {
                 <span className="muted"> {fmtDate(t.test_date)} · Max {t.max_mark}</span>
               </div>
               <div className="list-actions">
-                {(t.exam_paper_url || t.exam_paper_path) && (
+                {(t.exam_paper_url || t.exam_paper_path) ? (
                   <button
                     type="button"
                     className="btn btn-small"
@@ -322,14 +368,134 @@ export default function Marks() {
                   >
                     📄 Exam Paper
                   </button>
+                ) : (
+                  <span
+                    style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, background: '#fef3c7', color: '#92400e', fontWeight: 600 }}
+                    title="No exam paper uploaded. Click Update to attach PDF."
+                  >
+                    ⚠️ Missing PDF
+                  </span>
                 )}{' '}
                 <Link to={`/marks/${t.class_id}/${t.id}`} className="btn btn-small">Enter scores</Link>{' '}
+                {canEditTest(t) && (
+                  <button
+                    type="button"
+                    className="btn btn-small"
+                    onClick={() => startEditing(t)}
+                    style={{ background: '#f1f5f9', color: '#0f172a', borderColor: '#cbd5e1' }}
+                  >
+                    ✏️ Update
+                  </button>
+                )}{' '}
                 {canDeleteTest && <button className="btn btn-small btn-danger" onClick={() => remove(t)}>Delete</button>}
               </div>
             </div>
           ))}
         </div>
       ))}
+
+      {editingTest && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0,0,0,0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000,
+          padding: 16
+        }}>
+          <form onSubmit={submitEdit} className="card stack" style={{ maxWidth: 540, width: '100%', background: '#fff', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)' }}>
+            <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ margin: 0 }}>Update Unit Test — {editingTest.subject_name}</h3>
+              <button type="button" className="btn btn-ghost btn-small" onClick={cancelEditing}>✕</button>
+            </div>
+
+            <label className="field">
+              <span>Unit / Topic Name *</span>
+              <input
+                required
+                value={editForm.title}
+                onChange={(e) => setEditForm({ ...editForm, title: e.target.value })}
+                placeholder="e.g. Fractions & Decimals"
+              />
+            </label>
+
+            <div className="grid2">
+              <label className="field">
+                <span>Date</span>
+                <input
+                  type="date"
+                  value={editForm.test_date}
+                  onChange={(e) => setEditForm({ ...editForm, test_date: e.target.value })}
+                />
+              </label>
+              <label className="field">
+                <span>Max Mark</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={editForm.max_mark}
+                  onChange={(e) => setEditForm({ ...editForm, max_mark: e.target.value })}
+                />
+              </label>
+            </div>
+
+            <div className="field">
+              <span>Exam Paper (PDF)</span>
+              {(editingTest.exam_paper_url || editingTest.exam_paper_path) ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: '#f8fafc', borderRadius: 6, border: '1px solid #e2e8f0', marginBottom: 6 }}>
+                  <span style={{ fontSize: 13 }}>📄 <strong>{editingTest.exam_paper_name || 'Current Exam Paper'}</strong></span>
+                  <button
+                    type="button"
+                    className="btn btn-small btn-ghost"
+                    onClick={() => openExamPaper(editingTest)}
+                    style={{ fontSize: 12, padding: '2px 8px' }}
+                  >
+                    Preview
+                  </button>
+                </div>
+              ) : (
+                <div style={{ padding: '8px 12px', background: '#fffbeb', borderRadius: 6, border: '1px solid #fef3c7', marginBottom: 6, fontSize: 13, color: '#92400e' }}>
+                  ⚠️ No exam paper attached yet. Upload sample exam paper PDF below:
+                </div>
+              )}
+              <input
+                type="file"
+                accept="application/pdf,.pdf"
+                onChange={(e) => {
+                  const file = e.target.files?.[0] || null
+                  if (file && !file.name.toLowerCase().endsWith('.pdf')) {
+                    setError('Exam paper must be a PDF file (.pdf)')
+                    setEditExamFile(null)
+                    e.target.value = ''
+                    return
+                  }
+                  setError('')
+                  setEditExamFile(file)
+                }}
+              />
+              {editExamFile && (
+                <span style={{ fontSize: 12, color: 'var(--brand)', marginTop: 4 }}>
+                  Selected: {editExamFile.name} ({(editExamFile.size / 1024).toFixed(0)} KB)
+                </span>
+              )}
+            </div>
+
+            <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 10 }}>
+              <button type="button" className="btn btn-ghost" onClick={cancelEditing} disabled={editBusy}>
+                Cancel
+              </button>
+              <button type="submit" className="btn btn-primary" disabled={editBusy}>
+                {editBusy ? 'Saving Changes…' : 'Save Changes'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   )
 }

@@ -208,6 +208,13 @@ export interface UnitTest {
   created_by?: string | null
 }
 
+export interface UpdateUnitTestInput {
+  title?: string
+  test_date?: string
+  max_mark?: number
+  examPaperFile?: File | null
+}
+
 export interface ScoreRow {
   id?: string
   unit_test_id: string
@@ -328,6 +335,7 @@ export interface Api {
   // unit tests
   listUnitTests(classId: string): Promise<UnitTest[]>
   createUnitTest(classId: string, input: { subject_id: string; title: string; test_date: string; max_mark: number; examPaperFile?: File | null }): Promise<string>
+  updateUnitTest(id: string, input: UpdateUnitTestInput): Promise<void>
   deleteUnitTest(id: string): Promise<void>
   getUnitTestOverview(): Promise<EndOfUnitTestOverview>
   getExamPaperUrl?(pathOrUrl: string): Promise<string>
