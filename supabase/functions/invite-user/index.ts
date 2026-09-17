@@ -48,8 +48,8 @@ Deno.serve(async (req: Request) => {
       const { data: target, error: targetErr } = await admin
         .from('profiles').select('role, school_id, email').eq('id', body.user_id).single()
       if (targetErr || !target) throw new Error('Teacher account not found')
-      if (!['homeroom_teacher', 'subject_teacher'].includes(target.role) || target.school_id !== callerProfile.school_id) {
-        throw new Error('Only teachers in your school can be deleted')
+      if (!['admin', 'homeroom_teacher', 'subject_teacher'].includes(target.role) || target.school_id !== callerProfile.school_id) {
+        throw new Error('Only teachers or admin in your school can be deleted')
       }
       const { error: deleteErr } = await admin.auth.admin.deleteUser(body.user_id)
       if (deleteErr) throw deleteErr
@@ -60,7 +60,7 @@ Deno.serve(async (req: Request) => {
 
     const { email, full_name, role, class_id, additional_roles } = body
     if (!email || !full_name) throw new Error('email and full_name are required')
-    if (!['director', 'curriculum_coordinator', 'homeroom_teacher', 'subject_teacher'].includes(role)) {
+    if (!['admin', 'director', 'curriculum_coordinator', 'homeroom_teacher', 'subject_teacher'].includes(role)) {
       throw new Error('Invalid teacher role')
     }
 

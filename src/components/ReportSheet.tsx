@@ -1,5 +1,5 @@
 import { Fragment } from 'react'
-import { buildReport, fmtDate, fmtPct, formatAdmissionNo } from '../lib/report'
+import { buildReport, fmtDate, fmtPct, formatRollNo } from '../lib/report'
 import type { School, Student, StudentReportRow } from '../lib/types'
 
 interface Props {
@@ -30,12 +30,12 @@ export default function ReportSheet({ student, school, className, teacherName, r
       <div className="report-info">
         <div><span className="lbl">Student:</span> {student.full_name}</div>
         <div>
-          <span className="lbl">Admission No.:</span> {formatAdmissionNo(student.admission_no) || '—'}
+          <span className="lbl">Roll No.:</span> {formatRollNo(student.roll_no || student.admission_no) || '—'}
           <span className="sep">·</span>
           <span className="lbl">Class:</span> {className || '—'}
         </div>
         <div>
-          <span className="lbl">Term:</span> {school.term}
+          <span className="lbl">Semester:</span> {school.semester || school.term}
           <span className="sep">·</span>
           <span className="lbl">Academic Year:</span> {school.academic_year}
         </div>

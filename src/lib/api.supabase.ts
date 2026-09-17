@@ -1,11 +1,11 @@
 import { getSupabaseConfigError, supabase } from './supabase'
-import { formatAdmissionNo, formatStudentNo } from './report'
+import { formatAdmissionNo, formatRollNo, formatStudentNo } from './report'
 import type {
   Api, Assignment, AttendanceAggregatedSummary, AttendanceRow, AttendanceStatus, AttendanceSummary,
   ClassAttendanceExportData, ClassInfo, ClassPopulationSummary, DetailedAttendanceExport,
   EndOfUnitTestOverview, Profile, Role, School,
   SchoolPopulationSummary, ScoreRow, Student, StudentReportRow, Subject,
-  SubjectTestSummary, UnitTest, UnitTestSummaryItem
+  SubjectTestSummary, TeacherTestSummary, UnitTest, UnitTestSummaryItem
 } from './types'
 
 function db() {
@@ -29,16 +29,31 @@ async function uid(): Promise<string> {
 }
 
 function toSchool(r: any): School {
+  const semester = r.semester ?? r.term ?? '1'
   return {
     id: r.id,
     name: r.name,
     motto: r.motto,
     academic_year: r.academic_year,
-    term: r.term,
+    semester,
+    term: semester,
     footer_text: r.footer_text,
     footer_color: r.footer_color,
     show_school_logo: r.show_school_logo,
     show_cambridge_logo: r.show_cambridge_logo
+  }
+}
+
+function toStudent(r: any): Student {
+  const roll = formatRollNo(r.roll_no ?? r.admission_no ?? '')
+  return {
+    id: r.id,
+    class_id: r.class_id,
+    student_no: formatStudentNo(r.student_no) || String(r.student_no ?? ''),
+    roll_no: roll,
+    admission_no: roll,
+    full_name: r.full_name ?? '',
+    gender: r.gender ?? ''
   }
 }
 
@@ -79,11 +94,21 @@ export const supabaseApi: Api = {
   },
 
   async saveSchool(s: School): Promise<void> {
-    const { error } = await db().from('schools').update({
-      name: s.name, motto: s.motto, academic_year: s.academic_year, term: s.term,
-      footer_text: s.footer_text, footer_color: s.footer_color,
-      show_school_logo: s.show_school_logo, show_cambridge_logo: s.show_cambridge_logo
-    }).eq('id', s.id)
+    const sem = s.semester ?? s.term ?? '1'
+    const updatePayload: Record<string, any> = {
+      name: s.name,
+      motto: s.motto,
+      academic_year: s.academic_year,
+      footer_text: s.footer_text,
+      footer_color: s.footer_color,
+      show_school_logo: s.show_school_logo,
+      show_cambridge_logo: s.show_cambridge_logo
+    }
+    let { error } = await db().from('schools').update({ ...updatePayload, semester: sem }).eq('id', s.id)
+    if (error && (error.code === '42703' || error.message.includes('semester'))) {
+      const retry = await db().from('schools').update({ ...updatePayload, term: sem }).eq('id', s.id)
+      error = retry.error
+    }
     if (error) throw new Error(error.message)
   },
 
@@ -235,10 +260,26 @@ export const supabaseApi: Api = {
     if (!res.ok) throw new Error(json.error ?? 'Teacher deletion failed')
   },
 
-  async nextAdmissionNo(): Promise<string> {
-    const { data, error } = await db().rpc('next_admission_no')
-    if (error) throw new Error(error.message)
-    return data ?? '1'
+  async nextAdmissionNo(classId?: string): Promise<string> {
+    return this.nextRollNo(classId)
+  },
+
+  async nextRollNo(classId?: string): Promise<string> {
+    try {
+      if (classId) {
+        const { data, error } = await db().rpc('next_roll_no', { p_class_id: classId })
+        if (!error && data) return data
+      }
+      const { data, error } = await db().rpc('next_admission_no', classId ? { p_class_id: classId } : {})
+      if (!error && data) return data
+      if (error) {
+        const fallback = await db().rpc('next_admission_no')
+        if (!fallback.error && fallback.data) return fallback.data
+      }
+    } catch {
+      // ignore
+    }
+    return '1'
   },
 
   async listAssignments(classId: string): Promise<Assignment[]> {
@@ -275,10 +316,7 @@ export const supabaseApi: Api = {
       .from('students').select('*').eq('class_id', classId)
       .order('student_no', { ascending: true })
     if (error) throw new Error(error.message)
-    const list = (data ?? []).map((r: any) => ({
-      id: r.id, class_id: r.class_id, student_no: r.student_no,
-      admission_no: formatAdmissionNo(r.admission_no), full_name: r.full_name, gender: r.gender
-    }))
+    const list = (data ?? []).map(toStudent)
     return list.sort((a, b) =>
       (a.student_no || '').localeCompare(b.student_no || '', undefined, { numeric: true }) ||
       a.full_name.localeCompare(b.full_name)
@@ -288,32 +326,58 @@ export const supabaseApi: Api = {
   async getStudent(id: string): Promise<Student | null> {
     const { data } = await db().from('students').select('*').eq('id', id).maybeSingle()
     if (!data) return null
-    return { id: data.id, class_id: data.class_id, student_no: data.student_no, admission_no: formatAdmissionNo(data.admission_no), full_name: data.full_name, gender: data.gender }
+    return toStudent(data)
   },
 
-  async addStudent(classId: string, s): Promise<Student> {
+  async addStudent(classId: string, s: Omit<Student, 'id' | 'class_id'>): Promise<Student> {
     const formattedNo = formatStudentNo(s.student_no) || s.student_no
-    const formattedAdm = formatAdmissionNo(s.admission_no) || s.admission_no
-    const payload = { ...s, student_no: formattedNo, admission_no: formattedAdm }
-    const { data, error } = await db().from('students').insert({ class_id: classId, ...payload }).select().single()
+    const rawRoll = (s.roll_no || s.admission_no || '').trim()
+    const formattedRoll = formatRollNo(rawRoll) || rawRoll
+    let insertPayload: Record<string, any> = {
+      class_id: classId,
+      student_no: formattedNo,
+      roll_no: formattedRoll,
+      full_name: s.full_name.trim(),
+      gender: s.gender
+    }
+    let { data, error } = await db().from('students').insert(insertPayload).select().single()
+    if (error && (error.code === '42703' || error.message.includes('roll_no'))) {
+      insertPayload = {
+        class_id: classId,
+        student_no: formattedNo,
+        admission_no: formattedRoll,
+        full_name: s.full_name.trim(),
+        gender: s.gender
+      }
+      const retry = await db().from('students').insert(insertPayload).select().single()
+      data = retry.data
+      error = retry.error
+    }
     if (error) {
-      if (error.code === '23505' && error.message.includes('students_admission_no_unique_idx')) {
-        throw new Error('Admission number already exists. Enter a different number.')
+      if (error.code === '23505' && (error.message.includes('unique_idx') || error.message.includes('roll_no') || error.message.includes('admission_no'))) {
+        throw new Error('Roll number already exists. Enter a different number.')
       }
       throw new Error(error.message)
     }
-    return { id: data.id, class_id: classId, ...payload }
+    return toStudent(data)
   },
 
   async updateStudent(s: Student): Promise<void> {
     // Exclude student_no so teachers or clients cannot alter the assigned serial number
-    const formattedAdm = formatAdmissionNo(s.admission_no) || s.admission_no
-    const { error } = await db().from('students')
-      .update({ admission_no: formattedAdm, full_name: s.full_name, gender: s.gender })
+    const rawRoll = (s.roll_no || s.admission_no || '').trim()
+    const formattedRoll = formatRollNo(rawRoll) || rawRoll
+    let { error } = await db().from('students')
+      .update({ roll_no: formattedRoll, full_name: s.full_name.trim(), gender: s.gender })
       .eq('id', s.id)
+    if (error && (error.code === '42703' || error.message.includes('roll_no'))) {
+      const retry = await db().from('students')
+        .update({ admission_no: formattedRoll, full_name: s.full_name.trim(), gender: s.gender })
+        .eq('id', s.id)
+      error = retry.error
+    }
     if (error) {
-      if (error.code === '23505' && error.message.includes('students_admission_no_unique_idx')) {
-        throw new Error('Admission number already exists. Enter a different number.')
+      if (error.code === '23505' && (error.message.includes('unique_idx') || error.message.includes('roll_no') || error.message.includes('admission_no'))) {
+        throw new Error('Roll number already exists. Enter a different number.')
       }
       throw new Error(error.message)
     }
@@ -407,22 +471,73 @@ export const supabaseApi: Api = {
   async listUnitTests(classId: string): Promise<UnitTest[]> {
     const { data, error } = await db()
       .from('unit_tests')
-      .select('id, class_id, subject_id, title, test_date, max_mark, subjects(name)')
+      .select('id, class_id, subject_id, title, test_date, max_mark, exam_paper_url, exam_paper_path, exam_paper_name, subjects(name)')
       .eq('class_id', classId)
-      .order('test_date', { ascending: false })
     if (error) throw new Error(error.message)
-    return (data ?? []).map((r: any) => ({
+    const list = (data ?? []).map((r: any) => ({
       id: r.id, class_id: r.class_id, subject_id: r.subject_id,
       subject_name: r.subjects?.name ?? '—', title: r.title,
-      test_date: r.test_date, max_mark: Number(r.max_mark)
+      test_date: r.test_date, max_mark: Number(r.max_mark),
+      exam_paper_url: r.exam_paper_url ?? null,
+      exam_paper_path: r.exam_paper_path ?? null,
+      exam_paper_name: r.exam_paper_name ?? null
     }))
+    // Sort subject-wise, then topic-wise
+    return list.sort((a, b) => {
+      const subjectComp = a.subject_name.localeCompare(b.subject_name, undefined, { numeric: true, sensitivity: 'base' })
+      if (subjectComp !== 0) return subjectComp
+      return a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' })
+    })
   },
 
-  async createUnitTest(classId: string, input): Promise<string> {
+  async createUnitTest(
+    classId: string,
+    input: { subject_id: string; title: string; test_date: string; max_mark: number; examPaperFile?: File | null }
+  ): Promise<string> {
     const d = db()
-    const { data, error } = await d.from('unit_tests').insert({ class_id: classId, ...input }).select().single()
+    const { examPaperFile, ...testData } = input
+    let exam_paper_url: string | null = null
+    let exam_paper_path: string | null = null
+    let exam_paper_name: string | null = null
+
+    const { data, error } = await d.from('unit_tests').insert({
+      class_id: classId,
+      ...testData
+    }).select().single()
     if (error) throw new Error(error.message)
     const testId = data.id as string
+
+    if (examPaperFile) {
+      try {
+        const sanitizedName = examPaperFile.name.replace(/[^a-zA-Z0-9._-]/g, '_')
+        exam_paper_path = `${classId}/${testId}/${Date.now()}_${sanitizedName}`
+        exam_paper_name = examPaperFile.name
+
+        const { error: uploadErr } = await d.storage
+          .from('exam-papers')
+          .upload(exam_paper_path, examPaperFile, {
+            cacheControl: '3600',
+            upsert: true,
+            contentType: 'application/pdf'
+          })
+
+        if (uploadErr) {
+          console.error('Failed to upload exam paper:', uploadErr)
+        } else {
+          const { data: pubData } = d.storage.from('exam-papers').getPublicUrl(exam_paper_path)
+          exam_paper_url = pubData?.publicUrl || null
+
+          await d.from('unit_tests').update({
+            exam_paper_url,
+            exam_paper_path,
+            exam_paper_name
+          }).eq('id', testId)
+        }
+      } catch (uploadEx) {
+        console.error('Error handling exam paper upload:', uploadEx)
+      }
+    }
+
     const { data: students, error: serr } = await d.from('students').select('id').eq('class_id', classId)
     if (serr) throw new Error(serr.message)
     if (students && students.length > 0) {
@@ -435,8 +550,28 @@ export const supabaseApi: Api = {
   },
 
   async deleteUnitTest(id: string): Promise<void> {
-    const { error } = await db().from('unit_tests').delete().eq('id', id)
+    const d = db()
+    const { data: testData } = await d.from('unit_tests').select('exam_paper_path').eq('id', id).maybeSingle()
+    if (testData?.exam_paper_path) {
+      try {
+        await d.storage.from('exam-papers').remove([testData.exam_paper_path])
+      } catch (err) {
+        console.error('Failed to remove exam paper from storage:', err)
+      }
+    }
+    const { error } = await d.from('unit_tests').delete().eq('id', id)
     if (error) throw new Error(error.message)
+  },
+
+  async getExamPaperUrl(pathOrUrl: string): Promise<string> {
+    if (!pathOrUrl) return ''
+    if (pathOrUrl.startsWith('http://') || pathOrUrl.startsWith('https://')) {
+      return pathOrUrl
+    }
+    const { data, error } = await db().storage.from('exam-papers').createSignedUrl(pathOrUrl, 3600)
+    if (!error && data?.signedUrl) return data.signedUrl
+    const { data: pubData } = db().storage.from('exam-papers').getPublicUrl(pathOrUrl)
+    return pubData?.publicUrl || ''
   },
 
   async listScoresForTest(testId: string): Promise<ScoreRow[]> {
@@ -479,7 +614,7 @@ export const supabaseApi: Api = {
   async getPopulationSummary(): Promise<SchoolPopulationSummary> {
     const [classes, { data: studentsData, error }] = await Promise.all([
       this.listClasses(),
-      db().from('students').select('id, class_id, full_name, student_no, admission_no, gender')
+      db().from('students').select('id, class_id, full_name, student_no, gender')
     ])
     if (error) throw new Error(error.message)
 
@@ -687,14 +822,7 @@ export const supabaseApi: Api = {
     const studentsByClass = new Map<string, Student[]>()
     for (const s of (allStudents ?? []) as any[]) {
       const arr = studentsByClass.get(s.class_id) ?? []
-      arr.push({
-        id: s.id,
-        class_id: s.class_id,
-        student_no: s.student_no ?? '',
-        admission_no: formatAdmissionNo(s.admission_no),
-        full_name: s.full_name ?? '',
-        gender: s.gender ?? ''
-      })
+      arr.push(toStudent(s))
       studentsByClass.set(s.class_id, arr)
     }
 
@@ -731,6 +859,7 @@ export const supabaseApi: Api = {
     const [
       classes,
       subjects,
+      profiles,
       { data: assignmentsData, error: aErr },
       { data: testsData, error: tErr },
       { data: scoresData, error: sErr },
@@ -738,8 +867,9 @@ export const supabaseApi: Api = {
     ] = await Promise.all([
       this.listClasses(),
       this.listSubjects(),
-      db().from('class_subject_teachers').select('class_id, subject_id, teacher_id, profiles!class_subject_teachers_teacher_id_fkey(full_name)'),
-      db().from('unit_tests').select('id, class_id, subject_id, title, test_date, max_mark, subjects(name), classes(name)').order('test_date', { ascending: false }),
+      this.listProfiles().catch(() => [] as Profile[]),
+      db().from('class_subject_teachers').select('id, class_id, subject_id, teacher_id, profiles!class_subject_teachers_teacher_id_fkey(id, full_name)'),
+      db().from('unit_tests').select('id, class_id, subject_id, title, test_date, max_mark, exam_paper_url, exam_paper_path, exam_paper_name, subjects(name), classes(name)'),
       db().from('scores').select('unit_test_id, student_id, score'),
       db().from('students').select('id, class_id')
     ])
@@ -751,16 +881,20 @@ export const supabaseApi: Api = {
 
     const classMap = new Map<string, string>()
     const classHomeroomMap = new Map<string, string>()
+    const classHomeroomIdMap = new Map<string, string>()
     for (const c of classes) {
       classMap.set(c.id, c.name)
       if (c.homeroom_teacher_name) classHomeroomMap.set(c.id, c.homeroom_teacher_name)
+      if (c.homeroom_teacher_id) classHomeroomIdMap.set(c.id, c.homeroom_teacher_id)
     }
 
     const assignmentMap = new Map<string, string>()
+    const assignmentIdMap = new Map<string, string>()
     for (const a of (assignmentsData ?? []) as any[]) {
       const key = `${a.class_id}_${a.subject_id}`
       const name = a.profiles?.full_name
       if (name) assignmentMap.set(key, name)
+      if (a.teacher_id) assignmentIdMap.set(key, a.teacher_id)
     }
 
     const studentsByClass = new Map<string, number>()
@@ -806,8 +940,19 @@ export const supabaseApi: Api = {
         average_score: avgScore !== null ? Number(avgScore.toFixed(1)) : null,
         average_pct: avgPct,
         highest_score: highest,
-        lowest_score: lowest
+        lowest_score: lowest,
+        exam_paper_url: t.exam_paper_url ?? null,
+        exam_paper_name: t.exam_paper_name ?? null
       }
+    })
+
+    // Sort class-wise, subject-wise, topic-wise
+    all_tests.sort((a, b) => {
+      const classComp = a.class_name.localeCompare(b.class_name, undefined, { numeric: true, sensitivity: 'base' })
+      if (classComp !== 0) return classComp
+      const subjectComp = a.subject_name.localeCompare(b.subject_name, undefined, { numeric: true, sensitivity: 'base' })
+      if (subjectComp !== 0) return subjectComp
+      return a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' })
     })
 
     const tests_with_marks = all_tests.filter((t) => t.has_marks_entered)
@@ -839,9 +984,102 @@ export const supabaseApi: Api = {
         tests_with_marks_count: withMarks.length,
         total_marks_entered: totalMarksEntered,
         average_score_pct: avgPct,
-        teachers: Array.from(entry.teachers)
+        teachers: Array.from(entry.teachers).sort()
       }
     }).filter((s) => s.tests_count > 0 || s.tests_with_marks_count > 0)
+    subject_summaries.sort((a, b) => a.subject_name.localeCompare(b.subject_name, undefined, { numeric: true, sensitivity: 'base' }))
+
+    // Build teacher summary
+    const subjectMapById = new Map<string, string>()
+    for (const s of subjects) subjectMapById.set(s.id, s.name)
+
+    const teacherProfiles = profiles.filter((p) =>
+      p.role === 'homeroom_teacher' ||
+      p.role === 'subject_teacher' ||
+      p.role === 'curriculum_coordinator' ||
+      p.additional_roles?.includes('homeroom_teacher') ||
+      p.additional_roles?.includes('subject_teacher') ||
+      p.additional_roles?.includes('curriculum_coordinator')
+    )
+
+    const teacherProfileIds = new Set(teacherProfiles.map((p) => p.id))
+    for (const a of (assignmentsData ?? []) as any[]) {
+      if (a.teacher_id && !teacherProfileIds.has(a.teacher_id)) {
+        teacherProfiles.push({
+          id: a.teacher_id,
+          full_name: a.profiles?.full_name || 'Teacher',
+          email: '',
+          role: 'subject_teacher',
+          additional_roles: [],
+          school_id: null,
+          class_id: null
+        })
+        teacherProfileIds.add(a.teacher_id)
+      }
+    }
+
+    const teacher_summaries: TeacherTestSummary[] = teacherProfiles.map((p) => {
+      const teacherName = p.full_name || p.email || 'Teacher'
+
+      const classNamesSet = new Set<string>()
+      const subjectsSet = new Set<string>()
+
+      for (const a of (assignmentsData ?? []) as any[]) {
+        if (a.teacher_id === p.id) {
+          const cName = classMap.get(a.class_id)
+          if (cName) classNamesSet.add(cName)
+          const sName = subjectMapById.get(a.subject_id)
+          if (sName) subjectsSet.add(sName)
+        }
+      }
+
+      for (const c of classes) {
+        if (c.homeroom_teacher_id === p.id || p.class_id === c.id) {
+          classNamesSet.add(c.name)
+        }
+      }
+
+      const teacherTests = all_tests.filter((t) => {
+        const key = `${t.class_id}_${t.subject_id}`
+        const assignedTeacherId = assignmentIdMap.get(key)
+        if (assignedTeacherId) return assignedTeacherId === p.id
+        const hrId = classHomeroomIdMap.get(t.class_id)
+        if (hrId) return hrId === p.id
+        return t.teacher_name === teacherName
+      })
+
+      const testsCount = teacherTests.length
+      const withMarks = teacherTests.filter((t) => t.has_marks_entered)
+      const testsWithMarksCount = withMarks.length
+      const testsWithMarksPct = testsCount > 0 ? Number(((testsWithMarksCount / testsCount) * 100).toFixed(1)) : 0
+      const totalMarksEntered = withMarks.reduce((sum, t) => sum + t.marks_entered_count, 0)
+      const validAvgPcts = withMarks.filter((t) => t.average_pct !== null).map((t) => t.average_pct!)
+      const avgPct = validAvgPcts.length > 0 ? Number((validAvgPcts.reduce((a, b) => a + b, 0) / validAvgPcts.length).toFixed(1)) : null
+
+      const sortedByDate = [...withMarks].sort((a, b) => (b.test_date || '').localeCompare(a.test_date || ''))
+      const lastSubmissionDate = sortedByDate.length > 0 ? sortedByDate[0].test_date : null
+
+      for (const t of teacherTests) {
+        if (t.subject_name) subjectsSet.add(t.subject_name)
+        if (t.class_name) classNamesSet.add(t.class_name)
+      }
+
+      return {
+        teacher_id: p.id,
+        teacher_name: teacherName,
+        role: p.role,
+        class_names: Array.from(classNamesSet).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })),
+        subjects: Array.from(subjectsSet).sort(),
+        tests_count: testsCount,
+        tests_with_marks_count: testsWithMarksCount,
+        tests_with_marks_pct: testsWithMarksPct,
+        total_marks_entered: totalMarksEntered,
+        average_score_pct: avgPct,
+        last_submission_date: lastSubmissionDate
+      }
+    })
+
+    teacher_summaries.sort((a, b) => a.teacher_name.localeCompare(b.teacher_name))
 
     const testsWithAvgPct = tests_with_marks.filter((t) => t.average_pct !== null)
     const overall_average_pct = testsWithAvgPct.length > 0
@@ -854,7 +1092,8 @@ export const supabaseApi: Api = {
       overall_average_pct,
       tests_with_marks,
       all_tests,
-      subject_summaries
+      subject_summaries,
+      teacher_summaries
     }
   },
 

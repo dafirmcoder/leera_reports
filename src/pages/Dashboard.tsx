@@ -3,17 +3,25 @@ import { Link } from 'react-router-dom'
 import { api } from '../lib/api'
 import { fmtDate } from '../lib/report'
 import { useSchool } from '../context/SchoolContext'
+import { useAuth } from '../context/AuthContext'
+import { ROLE_LABEL } from '../lib/permissions'
 import { downloadAttendanceCsv, downloadAttendanceExcel } from '../lib/attendanceExport'
 import type {
   AttendanceAggregatedSummary,
   EndOfUnitTestOverview,
-  SchoolPopulationSummary
+  SchoolPopulationSummary,
+  TeacherTestSummary
 } from '../lib/types'
 
 const today = () => new Date().toISOString().slice(0, 10)
 
-export default function Dashboard() {
+interface DashboardProps {
+  section?: 'overview' | 'population' | 'attendance' | 'marks' | 'teachers'
+}
+
+export default function Dashboard({ section = 'overview' }: DashboardProps) {
   const { school, classes, subjects } = useSchool()
+  const { profile } = useAuth()
 
   // State
   const [loading, setLoading] = useState(true)
@@ -53,12 +61,13 @@ export default function Dashboard() {
     }
   }
 
-  // End of Unit Tests
+  // End of Unit Tests & Teachers
   const [testOverview, setTestOverview] = useState<EndOfUnitTestOverview | null>(null)
-  const [onlyWithMarks, setOnlyWithMarks] = useState(true)
+  const [onlyWithMarks, setOnlyWithMarks] = useState(false)
   const [filterClassId, setFilterClassId] = useState<string>('all')
   const [filterSubjectId, setFilterSubjectId] = useState<string>('all')
   const [testSearch, setTestSearch] = useState('')
+  const [teacherSearch, setTeacherSearch] = useState('')
 
   // Load initial overall data
   const loadOverallData = async () => {
@@ -119,11 +128,19 @@ export default function Dashboard() {
     }
   }
 
-  // Filtered unit tests
+  // Dynamic header title based on leadership role
+  const dashboardTitle = useMemo(() => {
+    if (profile?.role === 'director') return "Director's Executive Summary"
+    if (profile?.role === 'head_of_school') return "Head of School Dashboard"
+    if (profile?.role === 'curriculum_coordinator') return "Curriculum Coordinator Dashboard"
+    return "Executive Dashboard"
+  }, [profile?.role])
+
+  // Filtered unit tests, sorted strictly Class-wise -> Subject-wise -> Topic-wise
   const filteredTests = useMemo(() => {
     if (!testOverview) return []
     const source = onlyWithMarks ? testOverview.tests_with_marks : testOverview.all_tests
-    return source.filter((t) => {
+    const filtered = source.filter((t) => {
       if (filterClassId !== 'all' && t.class_id !== filterClassId) return false
       if (filterSubjectId !== 'all' && t.subject_id !== filterSubjectId) return false
       if (testSearch.trim()) {
@@ -136,16 +153,38 @@ export default function Dashboard() {
       }
       return true
     })
+
+    return filtered.sort((a, b) => {
+      const classComp = a.class_name.localeCompare(b.class_name, undefined, { numeric: true, sensitivity: 'base' })
+      if (classComp !== 0) return classComp
+      const subjectComp = a.subject_name.localeCompare(b.subject_name, undefined, { numeric: true, sensitivity: 'base' })
+      if (subjectComp !== 0) return subjectComp
+      return a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' })
+    })
   }, [testOverview, onlyWithMarks, filterClassId, filterSubjectId, testSearch])
+
+  // Filtered teachers summary
+  const filteredTeachers = useMemo(() => {
+    if (!testOverview?.teacher_summaries) return []
+    if (!teacherSearch.trim()) return testOverview.teacher_summaries
+    const q = teacherSearch.toLowerCase()
+    return testOverview.teacher_summaries.filter((t) =>
+      t.teacher_name.toLowerCase().includes(q) ||
+      t.class_names.some((c) => c.toLowerCase().includes(q)) ||
+      t.subjects.some((s) => s.toLowerCase().includes(q))
+    )
+  }, [testOverview?.teacher_summaries, teacherSearch])
+
+  const activeSection = section || 'overview'
 
   return (
     <div className="page stack" style={{ gap: '20px' }}>
       {/* Header */}
       <div className="page-head">
         <div>
-          <h2>Director's Executive Summary</h2>
+          <h2>{dashboardTitle}</h2>
           <p className="muted">
-            {school?.name || 'Leera International School'} · Academic Year {school?.academic_year || '2026/2027'} · Term {school?.term || '1'}
+            {school?.name || 'Leera International School'} · Academic Year {school?.academic_year || '2026/2027'} · Semester {school?.semester || school?.term || '1'}
           </p>
         </div>
         <div className="row">
@@ -155,55 +194,92 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {/* Sub-menu / Segmented Navigation Tabs */}
+      <div className="seg" style={{ margin: 0, alignSelf: 'flex-start', flexWrap: 'wrap' }}>
+        <Link
+          to="/dashboard"
+          className={`seg-btn ${activeSection === 'overview' ? 'active' : ''}`}
+        >
+          📊 Overview
+        </Link>
+        <Link
+          to="/dashboard/population"
+          className={`seg-btn ${activeSection === 'population' ? 'active' : ''}`}
+        >
+          👥 Population
+        </Link>
+        <Link
+          to="/dashboard/attendance"
+          className={`seg-btn ${activeSection === 'attendance' ? 'active' : ''}`}
+        >
+          📅 Attendance
+        </Link>
+        <Link
+          to="/dashboard/marks"
+          className={`seg-btn ${activeSection === 'marks' ? 'active' : ''}`}
+        >
+          📝 Marks Summaries
+        </Link>
+        <Link
+          to="/dashboard/teachers"
+          className={`seg-btn ${activeSection === 'teachers' ? 'active' : ''}`}
+        >
+          👩‍🏫 Teachers Summary
+        </Link>
+      </div>
+
       {error && <div className="notice notice-error">{error}</div>}
 
       {/* Top High-level KPI Cards */}
-      <div className="grid4">
-        <div className="card stat-box">
-          <div className="stat-label">Total Student Population</div>
-          <div className="stat-value">{population?.total_students ?? '—'}</div>
-          <div className="stat-meta">
-            Across {population?.total_classes ?? 0} classes · 👦 {population?.boys_percentage ?? 0}% Boys · 👧 {population?.girls_percentage ?? 0}% Girls
+      {(activeSection === 'overview' || activeSection === 'marks' || activeSection === 'teachers') && (
+        <div className="grid4">
+          <div className="card stat-box">
+            <div className="stat-label">Total Student Population</div>
+            <div className="stat-value">{population?.total_students ?? '—'}</div>
+            <div className="stat-meta">
+              Across {population?.total_classes ?? 0} classes · 👦 {population?.boys_percentage ?? 0}% Boys · 👧 {population?.girls_percentage ?? 0}% Girls
+            </div>
           </div>
-        </div>
 
-        <div className="card stat-box">
-          <div className="stat-label">
-            {attendancePeriod === 'daily' ? 'Attendance Rate (Selected Day)' : attendancePeriod === 'weekly' ? 'Weekly Attendance Rate' : 'Monthly Attendance Rate'}
+          <div className="card stat-box">
+            <div className="stat-label">
+              {attendancePeriod === 'daily' ? 'Attendance (Selected Day)' : attendancePeriod === 'weekly' ? 'Weekly Attendance' : 'Monthly Attendance'}
+            </div>
+            <div className="stat-value" style={{ color: (attendanceSummary?.presentPct ?? 0) >= 90 ? 'var(--green)' : '#d97706' }}>
+              {attendanceSummary ? `${attendanceSummary.presentPct}%` : '—'}
+            </div>
+            <div className="stat-meta">
+              {attendanceSummary ? `${attendanceSummary.present} Present · ${attendanceSummary.absent} Absent · ${attendanceSummary.excused} Excused` : 'Loading…'}
+            </div>
           </div>
-          <div className="stat-value" style={{ color: (attendanceSummary?.presentPct ?? 0) >= 90 ? 'var(--green)' : '#d97706' }}>
-            {attendanceSummary ? `${attendanceSummary.presentPct}%` : '—'}
-          </div>
-          <div className="stat-meta">
-            {attendanceSummary ? `${attendanceSummary.present} Present · ${attendanceSummary.absent} Absent · ${attendanceSummary.excused} Excused` : 'Loading…'}
-          </div>
-        </div>
 
-        <div className="card stat-box">
-          <div className="stat-label">Unit Tests with Marks</div>
-          <div className="stat-value" style={{ color: 'var(--teal)' }}>
-            {testOverview ? `${testOverview.total_tests_with_marks} / ${testOverview.total_tests}` : '—'}
+          <div className="card stat-box">
+            <div className="stat-label">Unit Tests with Marks</div>
+            <div className="stat-value" style={{ color: 'var(--teal)' }}>
+              {testOverview ? `${testOverview.total_tests_with_marks} / ${testOverview.total_tests}` : '—'}
+            </div>
+            <div className="stat-meta">
+              {testOverview && testOverview.total_tests > 0
+                ? `${((testOverview.total_tests_with_marks / testOverview.total_tests) * 100).toFixed(0)}% of tests have marks entered`
+                : 'No tests recorded'}
+            </div>
           </div>
-          <div className="stat-meta">
-            {testOverview && testOverview.total_tests > 0
-              ? `${((testOverview.total_tests_with_marks / testOverview.total_tests) * 100).toFixed(0)}% of tests have marks entered`
-              : 'No tests recorded'}
-          </div>
-        </div>
 
-        <div className="card stat-box">
-          <div className="stat-label">School-wide Unit Test Avg</div>
-          <div className="stat-value" style={{ color: 'var(--green-dark)' }}>
-            {testOverview?.overall_average_pct !== null && testOverview?.overall_average_pct !== undefined
-              ? `${testOverview.overall_average_pct}%`
-              : '—'}
+          <div className="card stat-box">
+            <div className="stat-label">School-wide Unit Test Avg</div>
+            <div className="stat-value" style={{ color: 'var(--green-dark)' }}>
+              {testOverview?.overall_average_pct !== null && testOverview?.overall_average_pct !== undefined
+                ? `${testOverview.overall_average_pct}%`
+                : '—'}
+            </div>
+            <div className="stat-meta">Average across all scored unit tests</div>
           </div>
-          <div className="stat-meta">Average across all scored unit tests</div>
         </div>
-      </div>
+      )}
 
       {/* SECTION 1: ATTENDANCE SUMMARIES */}
-      <section className="card stack">
+      {(activeSection === 'overview' || activeSection === 'attendance') && (
+        <section className="card stack">
         <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <h3 style={{ fontSize: '17px' }}>📅 Attendance Summaries & Percentages</h3>
@@ -405,10 +481,12 @@ export default function Dashboard() {
             )}
           </>
         )}
-      </section>
+        </section>
+      )}
 
       {/* SECTION 2: POPULATION NUMBERS WITH % PER CLASS */}
-      <section className="card stack">
+      {(activeSection === 'overview' || activeSection === 'population') && (
+        <section className="card stack">
         <div className="page-head" style={{ marginBottom: 0 }}>
           <div>
             <h3 style={{ fontSize: '17px' }}>👥 School Population Numbers & Class Percentages</h3>
@@ -494,154 +572,291 @@ export default function Dashboard() {
             )}
           </table>
         </div>
-      </section>
+        </section>
+      )}
 
-      {/* SECTION 3: END OF UNIT TESTS & TEACHERS / SUBJECTS WITH MARKS ENTERED */}
-      <section className="card stack">
-        <div className="page-head" style={{ marginBottom: 0 }}>
-          <div>
-            <h3 style={{ fontSize: '17px' }}>📝 End of Unit Tests Summary</h3>
-            <p className="muted" style={{ fontSize: '13px', margin: 0 }}>
-              Summary of subjects and teachers who have issued unit tests, with completion and class performance averages.
-            </p>
+      {/* SECTION 3: END OF UNIT TESTS & MARKS SUMMARIES */}
+      {(activeSection === 'overview' || activeSection === 'marks') && (
+        <section className="card stack">
+          <div className="page-head" style={{ marginBottom: 0 }}>
+            <div>
+              <h3 style={{ fontSize: '17px', margin: 0 }}>📝 End of Unit Tests & Marks Summaries</h3>
+              <p className="muted" style={{ fontSize: '13px', margin: '4px 0 0' }}>
+                Sorted Class-wise, Subject-wise, and Topic-wise. View scores, average percentages, and sample exam paper PDFs.
+              </p>
+            </div>
+
+            <div className="row">
+              <label className="check" style={{ fontWeight: 600, color: 'var(--teal)' }}>
+                <input
+                  type="checkbox"
+                  checked={onlyWithMarks}
+                  onChange={(e) => setOnlyWithMarks(e.target.checked)}
+                />
+                <span>Show ONLY tests with marks entered</span>
+              </label>
+            </div>
           </div>
 
-          <div className="row">
-            <label className="check" style={{ fontWeight: 600, color: 'var(--teal)' }}>
-              <input
-                type="checkbox"
-                checked={onlyWithMarks}
-                onChange={(e) => setOnlyWithMarks(e.target.checked)}
-              />
-              <span>Show ONLY tests with marks entered</span>
-            </label>
-          </div>
-        </div>
-
-        {/* Subject Summary Cards */}
-        {testOverview && testOverview.subject_summaries.length > 0 && (
-          <div className="grid3" style={{ marginTop: '8px' }}>
-            {testOverview.subject_summaries.map((sub) => (
-              <div key={sub.subject_id} style={{ background: '#f8fafc', border: '1px solid var(--line)', padding: '12px', borderRadius: '10px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <strong style={{ fontSize: '15px', color: 'var(--teal)' }}>{sub.subject_name}</strong>
-                  <span className="chip" style={{ background: '#e0f2fe', color: '#0369a1', fontSize: '11px' }}>
-                    {sub.tests_with_marks_count} scored test{sub.tests_with_marks_count === 1 ? '' : 's'}
-                  </span>
-                </div>
-                <div style={{ marginTop: '6px', fontSize: '13px' }}>
-                  <div><strong>Average Score:</strong> {sub.average_score_pct !== null ? `${sub.average_score_pct}%` : '—'}</div>
-                  <div className="muted" style={{ fontSize: '12px', marginTop: '3px' }}>
-                    Teacher(s): {sub.teachers.length > 0 ? sub.teachers.join(', ') : 'Assigned teachers'}
+          {/* Subject Summary Cards */}
+          {testOverview && testOverview.subject_summaries.length > 0 && (
+            <div className="grid3" style={{ marginTop: '8px' }}>
+              {testOverview.subject_summaries.map((sub) => (
+                <div key={sub.subject_id} style={{ background: '#f8fafc', border: '1px solid var(--line)', padding: '12px', borderRadius: '10px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <strong style={{ fontSize: '15px', color: 'var(--teal)' }}>{sub.subject_name}</strong>
+                    <span className="chip" style={{ background: '#e0f2fe', color: '#0369a1', fontSize: '11px' }}>
+                      {sub.tests_with_marks_count} scored test{sub.tests_with_marks_count === 1 ? '' : 's'}
+                    </span>
+                  </div>
+                  <div style={{ marginTop: '6px', fontSize: '13px' }}>
+                    <div><strong>Average Score:</strong> {sub.average_score_pct !== null ? `${sub.average_score_pct}%` : '—'}</div>
+                    <div className="muted" style={{ fontSize: '12px', marginTop: '3px' }}>
+                      Teacher(s): {sub.teachers.length > 0 ? sub.teachers.join(', ') : 'Assigned teachers'}
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
+          )}
+
+          {/* Filters */}
+          <div className="row" style={{ gap: '10px', marginTop: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
+            <input
+              className="search"
+              style={{ maxWidth: '240px', margin: 0 }}
+              placeholder="Search topic, subject, teacher…"
+              value={testSearch}
+              onChange={(e) => setTestSearch(e.target.value)}
+            />
+
+            <label className="field inline" style={{ margin: 0 }}>
+              <span>Class:</span>
+              <select value={filterClassId} onChange={(e) => setFilterClassId(e.target.value)}>
+                <option value="all">All Classes</option>
+                {classes.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            </label>
+
+            <label className="field inline" style={{ margin: 0 }}>
+              <span>Subject:</span>
+              <select value={filterSubjectId} onChange={(e) => setFilterSubjectId(e.target.value)}>
+                <option value="all">All Subjects</option>
+                {subjects.map((s) => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+            </label>
+
+            <span className="muted" style={{ marginLeft: 'auto', fontSize: '13px' }}>
+              Showing {filteredTests.length} test{filteredTests.length === 1 ? '' : 's'} (Sorted Class → Subject → Topic)
+            </span>
           </div>
-        )}
 
-        {/* Filters */}
-        <div className="row" style={{ gap: '10px', marginTop: '6px' }}>
-          <input
-            className="search"
-            style={{ maxWidth: '240px', margin: 0 }}
-            placeholder="Search topic, subject, teacher…"
-            value={testSearch}
-            onChange={(e) => setTestSearch(e.target.value)}
-          />
-
-          <label className="field inline" style={{ margin: 0 }}>
-            <span>Class:</span>
-            <select value={filterClassId} onChange={(e) => setFilterClassId(e.target.value)}>
-              <option value="all">All Classes</option>
-              {classes.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </select>
-          </label>
-
-          <label className="field inline" style={{ margin: 0 }}>
-            <span>Subject:</span>
-            <select value={filterSubjectId} onChange={(e) => setFilterSubjectId(e.target.value)}>
-              <option value="all">All Subjects</option>
-              {subjects.map((s) => (
-                <option key={s.id} value={s.id}>{s.name}</option>
-              ))}
-            </select>
-          </label>
-
-          <span className="muted" style={{ marginLeft: 'auto', fontSize: '13px' }}>
-            Showing {filteredTests.length} test{filteredTests.length === 1 ? '' : 's'}
-          </span>
-        </div>
-
-        {/* Detailed Tests Table */}
-        <div className="table-wrap">
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Class</th>
-                <th>Subject</th>
-                <th>Teacher</th>
-                <th>Unit / Topic</th>
-                <th>Date</th>
-                <th className="num">Marks Entered</th>
-                <th className="num">Class Avg (%)</th>
-                <th className="num">Score Range</th>
-                <th className="right">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredTests.length === 0 ? (
+          {/* Detailed Tests Table */}
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
                 <tr>
-                  <td colSpan={9} className="muted center" style={{ padding: '24px' }}>
-                    {onlyWithMarks
-                      ? 'No unit tests with marks entered match your filters.'
-                      : 'No unit tests found.'}
-                  </td>
+                  <th>Class</th>
+                  <th>Subject</th>
+                  <th>Teacher</th>
+                  <th>Unit / Topic</th>
+                  <th>Exam Paper</th>
+                  <th>Date</th>
+                  <th className="num">Marks Entered</th>
+                  <th className="num">Class Avg (%)</th>
+                  <th className="num">Score Range</th>
+                  <th className="right">Action</th>
                 </tr>
-              ) : (
-                filteredTests.map((t) => (
-                  <tr key={t.test_id}>
-                    <td><strong>{t.class_name}</strong></td>
-                    <td><span className="role-tag" style={{ background: '#e0f2fe', color: '#0369a1' }}>{t.subject_name}</span></td>
-                    <td>{t.teacher_name}</td>
-                    <td><strong>{t.title}</strong></td>
-                    <td className="mono">{fmtDate(t.test_date)}</td>
-                    <td className="num">
-                      <span className="chip" style={{
-                        background: t.marks_entered_count === t.total_students && t.total_students > 0 ? '#dcfce7' : t.has_marks_entered ? '#fef3c7' : '#f1f5f9',
-                        color: t.marks_entered_count === t.total_students && t.total_students > 0 ? '#166534' : t.has_marks_entered ? '#92400e' : '#64748b'
-                      }}>
-                        {t.marks_entered_count} / {t.total_students} ({t.marks_entered_pct}%)
-                      </span>
-                    </td>
-                    <td className="num">
-                      {t.average_pct !== null ? (
-                        <span style={{ fontWeight: 700, color: t.average_pct >= 70 ? '#1f8a5f' : t.average_pct >= 50 ? '#d97706' : '#dc2626' }}>
-                          {t.average_pct}% <small className="muted">({t.average_score}/{t.max_mark})</small>
-                        </span>
-                      ) : (
-                        <span className="muted">—</span>
-                      )}
-                    </td>
-                    <td className="num mono" style={{ fontSize: '12px' }}>
-                      {t.lowest_score !== null && t.highest_score !== null
-                        ? `${t.lowest_score} – ${t.highest_score}`
-                        : '—'}
-                    </td>
-                    <td className="right">
-                      <Link to={`/marks/${t.class_id}/${t.test_id}`} className="btn btn-small">
-                        View Sheet →
-                      </Link>
+              </thead>
+              <tbody>
+                {filteredTests.length === 0 ? (
+                  <tr>
+                    <td colSpan={10} className="muted center" style={{ padding: '24px' }}>
+                      {onlyWithMarks
+                        ? 'No unit tests with marks entered match your filters.'
+                        : 'No unit tests found.'}
                     </td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
+                ) : (
+                  filteredTests.map((t) => (
+                    <tr key={t.test_id}>
+                      <td><strong>{t.class_name}</strong></td>
+                      <td><span className="role-tag" style={{ background: '#e0f2fe', color: '#0369a1' }}>{t.subject_name}</span></td>
+                      <td>{t.teacher_name}</td>
+                      <td><strong>{t.title}</strong></td>
+                      <td>
+                        {t.exam_paper_url ? (
+                          <a
+                            href={t.exam_paper_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="chip"
+                            style={{
+                              background: '#e0e7ff',
+                              color: '#3730a3',
+                              borderColor: '#c7d2fe',
+                              textDecoration: 'none',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 4
+                            }}
+                            title={t.exam_paper_name ? `View ${t.exam_paper_name}` : 'Open Exam Paper PDF'}
+                          >
+                            📄 PDF
+                          </a>
+                        ) : (
+                          <span className="muted" style={{ fontSize: '12px' }}>—</span>
+                        )}
+                      </td>
+                      <td className="mono">{fmtDate(t.test_date)}</td>
+                      <td className="num">
+                        <span className="chip" style={{
+                          background: t.marks_entered_count === t.total_students && t.total_students > 0 ? '#dcfce7' : t.has_marks_entered ? '#fef3c7' : '#f1f5f9',
+                          color: t.marks_entered_count === t.total_students && t.total_students > 0 ? '#166534' : t.has_marks_entered ? '#92400e' : '#64748b'
+                        }}>
+                          {t.marks_entered_count} / {t.total_students} ({t.marks_entered_pct}%)
+                        </span>
+                      </td>
+                      <td className="num">
+                        {t.average_pct !== null ? (
+                          <span style={{ fontWeight: 700, color: t.average_pct >= 70 ? '#1f8a5f' : t.average_pct >= 50 ? '#d97706' : '#dc2626' }}>
+                            {t.average_pct}% <small className="muted">({t.average_score}/{t.max_mark})</small>
+                          </span>
+                        ) : (
+                          <span className="muted">—</span>
+                        )}
+                      </td>
+                      <td className="num mono" style={{ fontSize: '12px' }}>
+                        {t.lowest_score !== null && t.highest_score !== null
+                          ? `${t.lowest_score} – ${t.highest_score}`
+                          : '—'}
+                      </td>
+                      <td className="right">
+                        <Link to={`/marks/${t.class_id}/${t.test_id}`} className="btn btn-small">
+                          View Sheet →
+                        </Link>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      {/* SECTION 4: TEACHERS SUMMARY */}
+      {(activeSection === 'overview' || activeSection === 'teachers') && (
+        <section className="card stack">
+          <div className="page-head" style={{ marginBottom: 0 }}>
+            <div>
+              <h3 style={{ fontSize: '17px', margin: 0 }}>👩‍🏫 Teachers Mark Entry & Performance Summary</h3>
+              <p className="muted" style={{ fontSize: '13px', margin: '4px 0 0' }}>
+                Overview of tests issued, marks completion status, score averages, and last submission dates per teacher.
+              </p>
+            </div>
+            <div className="row">
+              <input
+                className="search"
+                style={{ maxWidth: '240px', margin: 0 }}
+                placeholder="Search teacher, class, subject…"
+                value={teacherSearch}
+                onChange={(e) => setTeacherSearch(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Teacher</th>
+                  <th>Role</th>
+                  <th>Assigned Classes</th>
+                  <th>Subjects</th>
+                  <th className="num">Tests Set</th>
+                  <th className="num">Marks Completed</th>
+                  <th className="num">Total Marks Entered</th>
+                  <th className="num">Average Score</th>
+                  <th>Last Submission</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredTeachers.length === 0 ? (
+                  <tr>
+                    <td colSpan={9} className="muted center" style={{ padding: '24px' }}>
+                      No teacher records found.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredTeachers.map((t) => (
+                    <tr key={t.teacher_id}>
+                      <td><strong>{t.teacher_name}</strong></td>
+                      <td>
+                        <span className="role-tag" style={{ fontSize: '11px' }}>
+                          {ROLE_LABEL[t.role] || t.role}
+                        </span>
+                      </td>
+                      <td>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                          {t.class_names.length > 0 ? (
+                            t.class_names.map((cn) => (
+                              <span key={cn} className="chip" style={{ fontSize: '11px', padding: '2px 6px' }}>
+                                {cn}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="muted">—</span>
+                          )}
+                        </div>
+                      </td>
+                      <td>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                          {t.subjects.length > 0 ? (
+                            t.subjects.map((sn) => (
+                              <span key={sn} className="role-tag" style={{ background: '#e0f2fe', color: '#0369a1', fontSize: '11px' }}>
+                                {sn}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="muted">—</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="num mono" style={{ fontWeight: 600 }}>{t.tests_count}</td>
+                      <td className="num">
+                        <span className="chip" style={{
+                          background: t.tests_count > 0 && t.tests_with_marks_pct === 100 ? '#dcfce7' : t.tests_with_marks_count > 0 ? '#fef3c7' : '#f1f5f9',
+                          color: t.tests_count > 0 && t.tests_with_marks_pct === 100 ? '#166534' : t.tests_with_marks_count > 0 ? '#92400e' : '#64748b'
+                        }}>
+                          {t.tests_with_marks_count} / {t.tests_count} ({t.tests_with_marks_pct}%)
+                        </span>
+                      </td>
+                      <td className="num mono">{t.total_marks_entered}</td>
+                      <td className="num">
+                        {t.average_score_pct !== null ? (
+                          <span style={{ fontWeight: 700, color: t.average_score_pct >= 70 ? '#1f8a5f' : t.average_score_pct >= 50 ? '#d97706' : '#dc2626' }}>
+                            {t.average_score_pct}%
+                          </span>
+                        ) : (
+                          <span className="muted">—</span>
+                        )}
+                      </td>
+                      <td className="mono" style={{ fontSize: '12px' }}>
+                        {t.last_submission_date ? fmtDate(t.last_submission_date) : <span className="muted">No marks yet</span>}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
     </div>
   )
 }

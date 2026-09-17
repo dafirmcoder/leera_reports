@@ -1,7 +1,7 @@
 import { jsPDF } from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import JSZip from 'jszip'
-import { buildReport, fmtDate, fmtPct, formatAdmissionNo } from './report'
+import { buildReport, fmtDate, fmtPct, formatRollNo } from './report'
 import type { School, Student, StudentReportRow, UnitTest } from './types'
 
 // ---------------------------------------------------------------------------
@@ -134,8 +134,8 @@ export async function generateStudentPdf(ctx: PdfContext): Promise<jsPDF> {
   const printed = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })
   const infoLines: Array<Array<[string, boolean]>> = [
     [['Student: ', true], [student.full_name, false]],
-    [['Admission No.: ', true], [formatAdmissionNo(student.admission_no) || '—', false], ['   ·   ', false], ['Class: ', true], [className || '—', false]],
-    [['Term: ', true], [school.term, false], ['   ·   ', false], ['Academic Year: ', true], [school.academic_year, false]],
+    [['Roll No.: ', true], [formatRollNo(student.roll_no || student.admission_no) || '—', false], ['   ·   ', false], ['Class: ', true], [className || '—', false]],
+    [['Semester: ', true], [school.semester || school.term || '—', false], ['   ·   ', false], ['Academic Year: ', true], [school.academic_year, false]],
     [['Teacher: ', true], [teacherName || '—', false], ['   ·   ', false], ['Printed: ', true], [printed, false]]
   ]
   doc.setFontSize(10)
@@ -347,7 +347,7 @@ export async function generateSubjectMarksheetPdf(ctx: SubjectMarksheetContext):
   const printed = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })
   const infoCols: Array<Array<[string, boolean]>> = [
     [['Class: ', true], [className || '—', false], ['   ·   ', false], ['Subject: ', true], [subjectName || '—', false], ['   ·   ', false], ['Teacher: ', true], [teacherName || '—', false]],
-    [['Academic Year: ', true], [school.academic_year || '—', false], ['   ·   ', false], ['Term: ', true], [school.term || '—', false], ['   ·   ', false], ['Printed: ', true], [printed, false]]
+    [['Academic Year: ', true], [school.academic_year || '—', false], ['   ·   ', false], ['Semester: ', true], [school.semester || school.term || '—', false], ['   ·   ', false], ['Printed: ', true], [printed, false]]
   ]
   doc.setFontSize(9.5)
   for (const segs of infoCols) {
@@ -363,7 +363,7 @@ export async function generateSubjectMarksheetPdf(ctx: SubjectMarksheetContext):
   const startY = y + 2
 
   // Table structure
-  const headRow: string[] = ['#', 'Adm No.', 'Student Name']
+  const headRow: string[] = ['#', 'Roll No.', 'Student Name']
   tests.forEach((t) => {
     headRow.push(`${t.title}\n(${fmtDate(t.test_date)})\nMax: ${t.max_mark}`)
   })
@@ -380,7 +380,7 @@ export async function generateSubjectMarksheetPdf(ctx: SubjectMarksheetContext):
   sortedStudents.forEach((student, idx) => {
     const rowCells: any[] = [
       String(idx + 1),
-      formatAdmissionNo(student.admission_no) || '—',
+      formatRollNo(student.roll_no || student.admission_no) || '—',
       student.full_name
     ]
 

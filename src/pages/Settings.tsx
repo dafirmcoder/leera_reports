@@ -177,8 +177,8 @@ export default function SettingsPage() {
           <label className="field"><span>Academic year</span>
             <input value={draft.academic_year} disabled={!canEdit} onChange={(e) => set({ academic_year: e.target.value })} />
           </label>
-          <label className="field"><span>Term</span>
-            <input value={draft.term} disabled={!canEdit} onChange={(e) => set({ term: e.target.value })} />
+          <label className="field"><span>Semester</span>
+            <input value={draft.semester || draft.term || ''} disabled={!canEdit} onChange={(e) => set({ semester: e.target.value, term: e.target.value })} />
           </label>
           <label className="field"><span>Footer text (contact details)</span>
             <input value={draft.footer_text} disabled={!canEdit} onChange={(e) => set({ footer_text: e.target.value })} />

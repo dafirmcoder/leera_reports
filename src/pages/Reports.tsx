@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../lib/api'
-import { formatAdmissionNo } from '../lib/report'
+import { formatRollNo } from '../lib/report'
 import { useSchool } from '../context/SchoolContext'
 import ClassPicker from '../components/ClassPicker'
 import type { Student, StudentReportRow } from '../lib/types'
@@ -91,7 +91,7 @@ export default function Reports() {
           <Link key={s.id} to={`/reports/${s.id}`} className="list-row link">
             <div className="list-main">
               <strong>{s.full_name}</strong>
-              <span className="muted"> {s.student_no}{s.admission_no ? ` · Adm ${formatAdmissionNo(s.admission_no)}` : ''}</span>
+              <span className="muted"> {s.student_no}{(s.roll_no || s.admission_no) ? ` · Roll ${formatRollNo(s.roll_no || s.admission_no)}` : ''}</span>
             </div>
             <span className="btn btn-small">Open report →</span>
           </Link>

@@ -22,7 +22,8 @@ deployed **free on Vercel**.
 
 ## Features
 
-- **Students** — class roster with auto student numbers (per class).
+- **Students** — class roster with auto-assigned plain sequential serial numbers (`1, 2, 3...` per class, immutable after creation) and standardized Roll Numbers (`LIS-001/9P/26`).
+- **Roll Numbers & Semesters** — standardized student Roll No format `LIS-001/9P/26` (with `LIS` constant, 3-digit zero-padded per-class sequence, class code such as `9P` or `9A`, and 2-digit academic year suffix). Terminology is standardized to **Semester** (replacing Term) and **Roll No.** (replacing Admission No.).
 - **Marks** — create a unit test (subject, topic, date, max mark) per class and
   type each student's score; saved automatically as you type. Subject teachers
   only see their own subjects.
@@ -35,7 +36,7 @@ deployed **free on Vercel**.
   you pick** (`Save to folder`, Chrome/Edge desktop).
 - **Classes** — create classes, set homeroom teachers, assign subject teachers.
 - **People** — list staff, assign roles, invite new teachers (Head of School).
-- **Settings** — school details, footer, logos, subject list.
+- **Settings** — school details (Academic Year, Semester, Motto, Contact Footer), logos, subject list.
 - **PWA** — installable on phones/desktops; app shell cached for offline launch.
 - **Demo mode** — when Supabase isn't configured, the app runs fully in the
   browser with sample data and a **role picker** on the login screen.
@@ -168,7 +169,13 @@ docs/
 
 ## Data model
 
-`schools` · `profiles` (role) · `classes` (homeroom teacher) ·
+`schools` (name, academic_year, semester) · `profiles` (role) · `classes` (homeroom teacher) ·
 `class_subject_teachers` (subject-teacher assignments) · `subjects` ·
-`students` (per class) · `unit_tests` (per class) · `scores` — all guarded by
+`students` (per class: immutable numeric `student_no`, standardized `roll_no` `LIS-xxx/CODE/YY`) · `unit_tests` (per class) · `scores` — all guarded by
 Row Level Security derived from the signed-in user's role.
+
+### Migrations
+- `20260917000000_standardize_serial_numbers_plain.sql` — Enforces plain integers (`1, 2, 3...`) for student serial numbers per class, immutable upon update.
+- `20260917010000_standardize_roll_numbers_LIS.sql` — Helper functions (`get_class_code`, `get_year_suffix`, `generate_roll_no`), auto-generating triggers, and re-standardization of existing student admission numbers to `LIS-001/9P/26`.
+- `20260917020000_rename_term_to_semester_and_admission_to_roll.sql` — Renames `schools.term` to `semester` and `students.admission_no` to `roll_no` with updated indexes and trigger bindings.
+

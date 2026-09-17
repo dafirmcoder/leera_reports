@@ -44,33 +44,50 @@ export default function App() {
     )
   }
 
+  const isLeadership = ['director', 'head_of_school', 'curriculum_coordinator'].includes(profile.role)
   const isDirector = profile.role === 'director'
   const isAdmin = profile.role === 'admin'
-  const defaultPath = isDirector ? '/dashboard' : isAdmin ? '/attendance' : '/students'
+  const defaultPath = isLeadership ? '/dashboard' : isAdmin ? '/attendance' : '/students'
 
   return (
     <Routes>
       <Route element={<AppShell />}>
         <Route path="/" element={<Navigate to={defaultPath} replace />} />
+
+        {/* Executive Dashboard & sub-menus for leadership */}
         {can(profile.role, 'viewDirectorDashboard', profile.additional_roles) && (
-          <Route path="/dashboard" element={<Dashboard />} />
+          <>
+            <Route path="/dashboard" element={<Dashboard section="overview" />} />
+            <Route path="/dashboard/population" element={<Dashboard section="population" />} />
+            <Route path="/dashboard/attendance" element={<Dashboard section="attendance" />} />
+            <Route path="/dashboard/marks" element={<Dashboard section="marks" />} />
+            <Route path="/dashboard/teachers" element={<Dashboard section="teachers" />} />
+          </>
         )}
-        {!isAdmin && (
+
+        {/* Marksheet / Score Sheet view: accessible to Director as read-only marksheet, and to teachers/HOS/coordinators */}
+        <Route path="/marks/:classId/:testId" element={<ScoreEntry />} />
+
+        {/* Teacher & Academic routes: hidden from Director and Admin */}
+        {!isAdmin && !isDirector && (
           <>
             <Route path="/students" element={<Students />} />
             <Route path="/marks" element={<Marks />} />
-            <Route path="/marks/:classId/:testId" element={<ScoreEntry />} />
             <Route path="/reports" element={<Reports />} />
             <Route path="/reports/:studentId" element={<ReportView />} />
           </>
         )}
-        {(can(profile.role, 'manageClasses', profile.additional_roles) || can(profile.role, 'assignTeachers', profile.additional_roles)) && (
+
+        {!isDirector && (can(profile.role, 'manageClasses', profile.additional_roles) || can(profile.role, 'assignTeachers', profile.additional_roles)) && (
           <Route path="/classes" element={<Classes />} />
         )}
-        {can(profile.role, 'manageUsers', profile.additional_roles) && (
+        {!isDirector && can(profile.role, 'manageUsers', profile.additional_roles) && (
           <Route path="/people" element={<People />} />
         )}
-        <Route path="/attendance" element={<Attendance />} />
+        {!isDirector && (
+          <Route path="/attendance" element={<Attendance />} />
+        )}
+
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to={defaultPath} replace />} />
       </Route>

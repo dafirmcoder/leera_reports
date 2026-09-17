@@ -5,7 +5,7 @@ import { fmtDate } from '../lib/report'
 import { useAuth } from '../context/AuthContext'
 import { useSchool } from '../context/SchoolContext'
 import { hasRole } from '../lib/permissions'
-import type { ScoreRow, UnitTest } from '../lib/types'
+import type { ScoreRow, Student, UnitTest } from '../lib/types'
 
 export default function ScoreEntry() {
   const { classId, testId } = useParams<{ classId: string; testId: string }>()
@@ -16,7 +16,14 @@ export default function ScoreEntry() {
   const [error, setError] = useState('')
   const [canEdit, setCanEdit] = useState(false)
   const [downloading, setDownloading] = useState(false)
+  const [directorData, setDirectorData] = useState<{
+    students: Student[]
+    subjectTests: UnitTest[]
+    scoresByTest: Record<string, Record<string, number | null>>
+  } | null>(null)
   const timers = useRef<Record<string, number>>({})
+
+  const isDirector = hasRole(profile?.role, 'director', profile?.additional_roles)
 
   useEffect(() => {
     if (!testId) return
@@ -32,22 +39,73 @@ export default function ScoreEntry() {
         const assignments = await api.listAssignments(classId).catch(() => [])
         const isAssignedSubjectTeacher = assignments.some((a) => a.teacher_id === profile.id && a.subject_id === selected.subject_id)
 
-        setCanEdit(isHomeroomOfClass || isAssignedSubjectTeacher || isLeadership)
+        setCanEdit(!isDirector && (isHomeroomOfClass || isAssignedSubjectTeacher || isLeadership))
       }).catch(() => {})
     }
-  }, [testId, classId, profile])
+  }, [testId, classId, profile, isDirector])
+
+  useEffect(() => {
+    if (!isDirector || !classId || !test?.subject_id) return
+    let isCancelled = false
+    async function loadDirectorData() {
+      try {
+        const [allTests, students] = await Promise.all([
+          api.listUnitTests(classId!),
+          api.listStudents(classId!)
+        ])
+        const subjectTests = allTests
+          .filter((t) => t.subject_id === test!.subject_id)
+          .sort((a, b) => a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' }))
+
+        const scoresPerTest = await Promise.all(
+          subjectTests.map((t) => api.listScoresForTest(t.id).catch(() => []))
+        )
+
+        const scoresByTest: Record<string, Record<string, number | null>> = {}
+        subjectTests.forEach((t, idx) => {
+          scoresByTest[t.id] = {}
+          scoresPerTest[idx].forEach((r) => {
+            scoresByTest[t.id][r.student_id] = r.score
+          })
+        })
+
+        if (!isCancelled) {
+          setDirectorData({ students, subjectTests, scoresByTest })
+        }
+      } catch (err: any) {
+        if (!isCancelled) setError(err.message)
+      }
+    }
+    loadDirectorData()
+    return () => { isCancelled = true }
+  }, [isDirector, classId, test?.subject_id])
 
   const maxMark = test?.max_mark ?? 100
 
   const setScore = (studentId: string, value: string) => {
+    if (!canEdit || isDirector) return
     const raw = value.trim()
     const score = raw === '' ? null : Math.max(0, Math.min(Number(raw) || 0, maxMark))
     setRows((prev) => prev.map((r) => (r.student_id === studentId ? { ...r, score } : r)))
     if (timers.current[studentId]) window.clearTimeout(timers.current[studentId])
-    if (!canEdit) return
     timers.current[studentId] = window.setTimeout(() => {
       api.saveScore(testId!, studentId, score).catch((e) => setError(e.message))
     }, 400)
+  }
+
+  const openExamPaper = async (paperTest?: UnitTest | null) => {
+    const t = paperTest || test
+    if (!t) return
+    try {
+      const url = t.exam_paper_url || (t.exam_paper_path && api.getExamPaperUrl ? await api.getExamPaperUrl(t.exam_paper_path) : null)
+      if (url) {
+        window.open(url, '_blank')
+      } else {
+        setError('Exam paper is not available.')
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to open exam paper')
+    }
   }
 
   const downloadMarksheet = async () => {
@@ -59,6 +117,11 @@ export default function ScoreEntry() {
       const subjectTests = allTests
         .filter((t) => t.subject_id === test.subject_id)
         .sort((a, b) => a.test_date.localeCompare(b.test_date))
+
+      if (subjectTests.length === 0) {
+        setError('No unit tests found for this subject in this class.')
+        return
+      }
 
       const students = await api.listStudents(classId)
       if (students.length === 0) {
@@ -112,7 +175,18 @@ export default function ScoreEntry() {
             {test && `${fmtDate(test.test_date)} · Max ${maxMark} · ${entered}/${rows.length} entered`}
           </p>
         </div>
-        <div className="row">
+        <div className="row" style={{ alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          {(test?.exam_paper_url || test?.exam_paper_path) && (
+            <button
+              type="button"
+              className="btn btn-small"
+              onClick={() => openExamPaper(test)}
+              title={test.exam_paper_name ? `View ${test.exam_paper_name}` : 'View Exam Paper'}
+              style={{ background: '#e0e7ff', color: '#3730a3', borderColor: '#c7d2fe' }}
+            >
+              📄 Exam Paper
+            </button>
+          )}
           <button
             className="btn btn-primary"
             disabled={downloading || !test}
@@ -121,43 +195,161 @@ export default function ScoreEntry() {
           >
             {downloading ? 'Preparing Marksheet…' : '⬇ Subject Marksheet (PDF)'}
           </button>
-          <Link to="/marks" className="btn btn-ghost">← Back</Link>
+          <Link to={isDirector ? '/dashboard/marks' : '/marks'} className="btn btn-ghost">
+            ← Back {isDirector ? 'to Marks' : ''}
+          </Link>
         </div>
       </div>
 
       {error && <div className="notice notice-error">{error}</div>}
 
-      <div className="card">
-        <table className="table">
-          <thead>
-            <tr><th>Student</th><th>Student No.</th><th className="num">Score</th><th className="num">Mark %</th></tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.student_id}>
-                <td>{r.student_name}</td>
-                <td className="mono">{r.student_no}</td>
-                <td className="num">
-                      <input
-                    type="number" min={0} max={maxMark} step="any" className="score-input"
-                        disabled={!canEdit}
-                    value={r.score === null ? '' : String(r.score)}
-                    onChange={(e) => setScore(r.student_id, e.target.value)}
-                    inputMode="decimal"
-                  />
-                </td>
-                <td className="num">
-                  {r.score === null ? <span className="muted">—</span> : `${((r.score / maxMark) * 100).toFixed(1)}%`}
-                </td>
-              </tr>
-            ))}
-            {rows.length === 0 && (
-              <tr><td colSpan={4} className="muted center">No students yet — add students first.</td></tr>
+      {isDirector ? (
+        <div className="card stack">
+          <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+            <div>
+              <h3>Subject Marksheet Overview</h3>
+              <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+                Executive view of all student performance across unit tests in {test?.subject_name}
+              </p>
+            </div>
+            {test && (test.exam_paper_url || test.exam_paper_path) && (
+              <button
+                type="button"
+                className="btn btn-small"
+                onClick={() => openExamPaper(test)}
+                style={{ background: '#e0e7ff', color: '#3730a3' }}
+              >
+                📄 View Current Exam Paper
+              </button>
             )}
-          </tbody>
-        </table>
-        <p className="muted">{canEdit ? 'Scores save automatically as you type.' : 'Read-only score sheet. You can edit scores only for an assigned class subject.'}</p>
-      </div>
+          </div>
+
+          <div style={{ overflowX: 'auto' }}>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Student</th>
+                  <th>Student No.</th>
+                  {directorData?.subjectTests.map((t) => (
+                    <th key={t.id} className="num" title={t.title}>
+                      <div>{t.title}</div>
+                      <div className="muted" style={{ fontSize: 11, fontWeight: 'normal' }}>
+                        Max {t.max_mark}
+                        {(t.exam_paper_url || t.exam_paper_path) && (
+                          <button
+                            type="button"
+                            onClick={() => openExamPaper(t)}
+                            title="View Exam Paper"
+                            style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: '0 2px' }}
+                          >
+                            📄
+                          </button>
+                        )}
+                      </div>
+                    </th>
+                  ))}
+                  <th className="num">Total</th>
+                  <th className="num">Avg %</th>
+                </tr>
+              </thead>
+              <tbody>
+                {directorData?.students.map((st) => {
+                  let studentEarned = 0
+                  let studentMax = 0
+                  let testsTaken = 0
+
+                  return (
+                    <tr key={st.id}>
+                      <td><strong>{st.full_name}</strong></td>
+                      <td className="mono">{st.student_no}</td>
+                      {directorData.subjectTests.map((t) => {
+                        const sc = directorData.scoresByTest[t.id]?.[st.id]
+                        const isCurrent = t.id === testId
+                        if (sc !== null && sc !== undefined) {
+                          studentEarned += sc
+                          studentMax += t.max_mark
+                          testsTaken++
+                        }
+                        return (
+                          <td
+                            key={t.id}
+                            className="num"
+                            style={isCurrent ? { background: '#f8fafc', fontWeight: 600 } : undefined}
+                          >
+                            {sc === null || sc === undefined ? (
+                              <span className="muted">—</span>
+                            ) : (
+                              <span>
+                                {sc} <span className="muted" style={{ fontSize: 11 }}>({((sc / t.max_mark) * 100).toFixed(0)}%)</span>
+                              </span>
+                            )}
+                          </td>
+                        )
+                      })}
+                      <td className="num">
+                        {testsTaken > 0 ? (
+                          <strong>{studentEarned} / {studentMax}</strong>
+                        ) : (
+                          <span className="muted">—</span>
+                        )}
+                      </td>
+                      <td className="num">
+                        {testsTaken > 0 && studentMax > 0 ? (
+                          <span className="pill pill-success" style={{ fontWeight: 600 }}>
+                            {((studentEarned / studentMax) * 100).toFixed(1)}%
+                          </span>
+                        ) : (
+                          <span className="muted">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
+                {(!directorData?.students || directorData.students.length === 0) && (
+                  <tr>
+                    <td colSpan={3 + (directorData?.subjectTests.length || 0)} className="muted center">
+                      {directorData ? 'No students found in this class.' : 'Loading marksheet…'}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          <p className="muted">Executive read-only view. Total and average scores are computed across all subject tests.</p>
+        </div>
+      ) : (
+        <div className="card">
+          <table className="table">
+            <thead>
+              <tr><th>Student</th><th>Student No.</th><th className="num">Score</th><th className="num">Mark %</th></tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.student_id}>
+                  <td>{r.student_name}</td>
+                  <td className="mono">{r.student_no}</td>
+                  <td className="num">
+                    <input
+                      type="number" min={0} max={maxMark} step="any" className="score-input"
+                      disabled={!canEdit}
+                      value={r.score === null ? '' : String(r.score)}
+                      onChange={(e) => setScore(r.student_id, e.target.value)}
+                      inputMode="decimal"
+                    />
+                  </td>
+                  <td className="num">
+                    {r.score === null ? <span className="muted">—</span> : `${((r.score / maxMark) * 100).toFixed(1)}%`}
+                  </td>
+                </tr>
+              ))}
+              {rows.length === 0 && (
+                <tr><td colSpan={4} className="muted center">No students yet — add students first.</td></tr>
+              )}
+            </tbody>
+          </table>
+          <p className="muted">{canEdit ? 'Scores save automatically as you type.' : 'Read-only score sheet. You can edit scores only for an assigned class subject.'}</p>
+        </div>
+      )}
     </div>
   )
 }

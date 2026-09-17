@@ -63,32 +63,65 @@ export function formatStudentNo(value: string | number | null | undefined): stri
   if (!digits) return str
   const n = parseInt(digits, 10)
   if (isNaN(n) || n <= 0) return str
-  return `ST-${String(n).padStart(3, '0')}`
+  return String(n)
 }
 
 export function nextStudentNo(existing: string[]): string {
   let max = 0
   for (const s of existing) {
     if (!s) continue
-    const digits = s.trim().replace(/\D/g, '')
+    const digits = String(s).trim().replace(/\D/g, '')
     if (digits) {
       const n = parseInt(digits, 10)
       if (!isNaN(n)) max = Math.max(max, n)
     }
   }
-  return `ST-${String(max + 1).padStart(3, '0')}`
+  return String(max + 1)
+}
+
+export function getClassCode(className: string): string {
+  if (!className) return '0'
+  const yearMatch = className.match(/Year\s*([0-9]+)/i) || className.match(/([0-9]+)/)
+  const year = yearMatch ? yearMatch[1] : '0'
+  const streamMatch = className.match(/(?:Year\s*[0-9]+|[0-9]+)\s*[-–—:]?\s*([A-Za-z]+)/i)
+  if (streamMatch && streamMatch[1]) {
+    return (year + streamMatch[1][0].toUpperCase()).toUpperCase()
+  }
+  if (year === '0') {
+    const letters = className.replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase()
+    return letters || '0'
+  }
+  return year
+}
+
+export function getYearSuffix(academicYear?: string): string {
+  if (!academicYear) return String(new Date().getFullYear()).slice(-2)
+  const m = academicYear.match(/([0-9]{4})/)
+  if (m) return String(parseInt(m[1], 10) % 100).padStart(2, '0')
+  return String(new Date().getFullYear()).slice(-2)
+}
+
+export function buildRollNo(className: string, seq: number, academicYear?: string): string {
+  const code = getClassCode(className)
+  const yy = getYearSuffix(academicYear)
+  return `LIS-${String(seq).padStart(3, '0')}/${code}/${yy}`
 }
 
 /**
- * Formats an admission number so scientific notation (e.g. "2.48923E+13" or "2.48923E+13-1")
- * is expanded and displayed as a real, full numeric string (e.g. "24892300000000" or "24892300000000-1").
+ * Validates and formats Roll No (LIS-001/9P/26).
+ * Also supports expanding legacy scientific notation if present.
  */
-export function formatAdmissionNo(val: string | number | null | undefined): string {
+export function formatRollNo(val: string | number | null | undefined): string {
   if (val === null || val === undefined) return ''
   const str = String(val).trim()
   if (!str) return ''
 
-  // Match scientific notation (e.g. 2.48923E+13, 2.48923e+13, with optional suffix like -1)
+  // If matches new format LIS-001/9P/26, return uppercased
+  if (/^LIS-[0-9]{3}\/[0-9]+[A-Z]?\/[0-9]{2}$/i.test(str)) {
+    return str.toUpperCase()
+  }
+
+  // Legacy scientific notation expansion (keep for backward compatibility)
   const sciMatch = /^([+-]?[0-9]+(?:\.[0-9]+)?)[eE]([+-]?[0-9]+)(.*)$/.exec(str)
   if (!sciMatch) return str
 
@@ -119,4 +152,6 @@ export function formatAdmissionNo(val: string | number | null | undefined): stri
   expanded = expanded.replace(/^0+(?=\d)/, '')
   return (isNegative ? '-' : '') + expanded + suffix
 }
+
+export const formatAdmissionNo = formatRollNo
 

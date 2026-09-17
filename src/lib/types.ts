@@ -24,7 +24,8 @@ export interface School {
   name: string
   motto: string
   academic_year: string
-  term: string
+  semester: string
+  term?: string
   footer_text: string
   footer_color: string
   show_school_logo: boolean
@@ -48,7 +49,8 @@ export interface Student {
   id: string
   class_id: string
   student_no: string
-  admission_no: string
+  roll_no: string
+  admission_no?: string
   full_name: string
   gender: string
 }
@@ -154,6 +156,8 @@ export interface UnitTestSummaryItem {
   average_pct: number | null
   highest_score: number | null
   lowest_score: number | null
+  exam_paper_url?: string | null
+  exam_paper_name?: string | null
 }
 
 export interface SubjectTestSummary {
@@ -166,6 +170,20 @@ export interface SubjectTestSummary {
   teachers: string[]
 }
 
+export interface TeacherTestSummary {
+  teacher_id: string
+  teacher_name: string
+  role: Role
+  class_names: string[]
+  subjects: string[]
+  tests_count: number
+  tests_with_marks_count: number
+  tests_with_marks_pct: number
+  total_marks_entered: number
+  average_score_pct: number | null
+  last_submission_date: string | null
+}
+
 export interface EndOfUnitTestOverview {
   total_tests: number
   total_tests_with_marks: number
@@ -173,6 +191,7 @@ export interface EndOfUnitTestOverview {
   tests_with_marks: UnitTestSummaryItem[]
   all_tests: UnitTestSummaryItem[]
   subject_summaries: SubjectTestSummary[]
+  teacher_summaries: TeacherTestSummary[]
 }
 
 export interface UnitTest {
@@ -183,6 +202,9 @@ export interface UnitTest {
   title: string
   test_date: string // ISO yyyy-mm-dd
   max_mark: number
+  exam_paper_url?: string | null
+  exam_paper_path?: string | null
+  exam_paper_name?: string | null
 }
 
 export interface ScoreRow {
@@ -284,7 +306,8 @@ export interface Api {
   removeAssignment(id: string): Promise<void>
 
   // students
-  nextAdmissionNo(): Promise<string>
+  nextAdmissionNo(classId?: string): Promise<string>
+  nextRollNo(classId?: string): Promise<string>
   listStudents(classId: string): Promise<Student[]>
   getStudent(id: string): Promise<Student | null>
   addStudent(classId: string, s: Omit<Student, 'id' | 'class_id'>): Promise<Student>
@@ -303,9 +326,10 @@ export interface Api {
 
   // unit tests
   listUnitTests(classId: string): Promise<UnitTest[]>
-  createUnitTest(classId: string, input: { subject_id: string; title: string; test_date: string; max_mark: number }): Promise<string>
+  createUnitTest(classId: string, input: { subject_id: string; title: string; test_date: string; max_mark: number; examPaperFile?: File | null }): Promise<string>
   deleteUnitTest(id: string): Promise<void>
   getUnitTestOverview(): Promise<EndOfUnitTestOverview>
+  getExamPaperUrl?(pathOrUrl: string): Promise<string>
 
   // scores
   listScoresForTest(testId: string): Promise<ScoreRow[]>

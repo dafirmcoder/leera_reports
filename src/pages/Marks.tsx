@@ -18,6 +18,7 @@ export default function Marks() {
   const [downloadingSubjectId, setDownloadingSubjectId] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ subject_id: '', title: '', test_date: today(), max_mark: '100' })
+  const [examPaperFile, setExamPaperFile] = useState<File | null>(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -49,6 +50,19 @@ export default function Marks() {
   const canEditTest = (test: UnitTest) => isLeadership
     || (isOwnClass && test.class_id === profile?.class_id)
     || myAssignments.some((a) => a.class_id === test.class_id && a.subject_id === test.subject_id)
+
+  const openExamPaper = async (test: UnitTest) => {
+    try {
+      const url = test.exam_paper_url || (test.exam_paper_path && api.getExamPaperUrl ? await api.getExamPaperUrl(test.exam_paper_path) : null)
+      if (url) {
+        window.open(url, '_blank')
+      } else {
+        setError('Exam paper is not available.')
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to open exam paper')
+    }
+  }
 
   const downloadMarksheet = async (subjectId: string, subjectName: string) => {
     if (!selectedClassId || !school) return
@@ -108,6 +122,10 @@ export default function Marks() {
       setError('Choose a subject and enter a unit/topic.')
       return
     }
+    if (!examPaperFile) {
+      setError('Please upload the sample exam paper (PDF file).')
+      return
+    }
     setError('')
     setBusy(true)
     try {
@@ -115,9 +133,11 @@ export default function Marks() {
         subject_id: form.subject_id,
         title: form.title.trim(),
         test_date: form.test_date,
-        max_mark: Number(form.max_mark) || 100
+        max_mark: Number(form.max_mark) || 100,
+        examPaperFile
       })
       setForm({ subject_id: '', title: '', test_date: today(), max_mark: '100' })
+      setExamPaperFile(null)
       setShowForm(false)
       reload()
       navigate(`/marks/${selectedClassId}/${id}`)
@@ -129,7 +149,7 @@ export default function Marks() {
   }
 
   const remove = async (t: UnitTest) => {
-    if (!confirm(`Delete "${t.subject_name} – ${t.title}"? All its scores will be removed.`)) return
+    if (!confirm(`Delete "${t.subject_name} – ${t.title}"? All its scores and exam paper will be removed.`)) return
     try {
       await api.deleteUnitTest(t.id)
       reload()
@@ -143,12 +163,14 @@ export default function Marks() {
     ? tests.filter((t) => t.subject_id === selectedSubjectId)
     : tests
 
-  // Group tests by subject
+  // Group tests by subject, sorted subject-wise then topic-wise
   const subjectGroups = Array.from(new Set(visibleTests.map((t) => t.subject_id))).map((subjId) => {
     const subjTests = visibleTests.filter((t) => t.subject_id === subjId)
     const subjName = subjTests[0]?.subject_name || subjects.find((s) => s.id === subjId)?.name || 'Subject'
+    subjTests.sort((a, b) => a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' }))
     return { id: subjId, name: subjName, tests: subjTests }
   })
+  subjectGroups.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
 
   return (
     <div className="page">
@@ -223,6 +245,30 @@ export default function Marks() {
               <input type="number" min={1} value={form.max_mark} onChange={(e) => setForm({ ...form, max_mark: e.target.value })} />
             </label>
           </div>
+          <div className="field" style={{ maxWidth: 480 }}>
+            <span>Exam Paper (PDF) *</span>
+            <input
+              type="file"
+              accept="application/pdf,.pdf"
+              required
+              onChange={(e) => {
+                const file = e.target.files?.[0] || null
+                if (file && !file.name.toLowerCase().endsWith('.pdf')) {
+                  setError('Exam paper must be a PDF file (.pdf)')
+                  setExamPaperFile(null)
+                  e.target.value = ''
+                  return
+                }
+                setError('')
+                setExamPaperFile(file)
+              }}
+            />
+            {examPaperFile && (
+              <span style={{ fontSize: 12, color: 'var(--brand)', marginTop: 4 }}>
+                Selected: {examPaperFile.name} ({(examPaperFile.size / 1024).toFixed(0)} KB)
+              </span>
+            )}
+          </div>
           <div className="row">
             <button className="btn btn-primary" disabled={busy}>{busy ? 'Creating…' : 'Create test & enter scores'}</button>
           </div>
@@ -261,6 +307,17 @@ export default function Marks() {
                 <span className="muted"> {fmtDate(t.test_date)} · Max {t.max_mark}</span>
               </div>
               <div className="list-actions">
+                {(t.exam_paper_url || t.exam_paper_path) && (
+                  <button
+                    type="button"
+                    className="btn btn-small"
+                    onClick={() => openExamPaper(t)}
+                    title={t.exam_paper_name ? `View ${t.exam_paper_name}` : 'View Exam Paper'}
+                    style={{ background: '#e0e7ff', color: '#3730a3', borderColor: '#c7d2fe' }}
+                  >
+                    📄 Exam Paper
+                  </button>
+                )}{' '}
                 <Link to={`/marks/${t.class_id}/${t.id}`} className="btn btn-small">Enter scores</Link>{' '}
                 {canEditTest(t) && <button className="btn btn-small btn-danger" onClick={() => remove(t)}>Delete</button>}
               </div>

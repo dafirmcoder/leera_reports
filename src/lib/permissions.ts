@@ -71,6 +71,17 @@ export function navTabs(role: Role | undefined, additionalRoles: Role[] = []): T
     return tabs
   }
 
+  // Director role: only sees Executive Dashboard, Sub-menus, and Settings (no teacher tools)
+  if (role === 'director') {
+    tabs.push({ to: '/dashboard', label: 'Dashboard', icon: '📊' })
+    tabs.push({ to: '/dashboard/population', label: 'Population', icon: '👥' })
+    tabs.push({ to: '/dashboard/attendance', label: 'Attendance', icon: '📅' })
+    tabs.push({ to: '/dashboard/marks', label: 'Marks Summaries', icon: '📝' })
+    tabs.push({ to: '/dashboard/teachers', label: 'Teachers Summary', icon: '🧑‍🏫' })
+    tabs.push({ to: '/settings', label: 'Settings', icon: '⚙️' })
+    return tabs
+  }
+
   if (can(role, 'viewDirectorDashboard', additionalRoles)) {
     tabs.push({ to: '/dashboard', label: 'Dashboard', icon: '📊' })
   }

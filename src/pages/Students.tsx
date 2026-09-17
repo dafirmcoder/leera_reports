@@ -1,19 +1,19 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { api } from '../lib/api'
-import { formatAdmissionNo, nextStudentNo } from '../lib/report'
+import { buildRollNo, formatRollNo, formatStudentNo, nextStudentNo } from '../lib/report'
 import { useSchool } from '../context/SchoolContext'
 import { useAuth } from '../context/AuthContext'
 import { can } from '../lib/permissions'
 import ClassPicker from '../components/ClassPicker'
 import type { Student } from '../lib/types'
 
-const empty = { student_no: '', admission_no: '', full_name: '', gender: '' }
+const empty = { student_no: '', roll_no: '', full_name: '', gender: '' }
 
 export default function Students() {
-  const { selectedClassId, classes } = useSchool()
+  const { selectedClassId, classes, school } = useSchool()
   const { profile } = useAuth()
   const [students, setStudents] = useState<Student[]>([])
-  const [nextAdmissionNo, setNextAdmissionNo] = useState('')
+  const [nextRollNo, setNextRollNo] = useState('')
   const [form, setForm] = useState(empty)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [error, setError] = useState('')
@@ -32,9 +32,15 @@ export default function Students() {
   useEffect(reload, [selectedClassId])
 
   useEffect(() => {
-    if (!canAdd) return
-    api.nextAdmissionNo().then(setNextAdmissionNo).catch(() => setNextAdmissionNo(''))
-  }, [canAdd, editingId, selectedClassId])
+    if (!canAdd || !selectedClassId) {
+      setNextRollNo('')
+      return
+    }
+    api.nextRollNo(selectedClassId).then(setNextRollNo).catch(() => {
+      const seq = students.length + 1
+      setNextRollNo(buildRollNo(className, seq, school?.academic_year))
+    })
+  }, [canAdd, editingId, selectedClassId, className, school?.academic_year, students.length])
 
   const suggestedNo = useMemo(() => nextStudentNo(students.map((s) => s.student_no)), [students])
 
@@ -47,15 +53,22 @@ export default function Students() {
       const studentNo = editingId
         ? (students.find((s) => s.id === editingId)?.student_no || form.student_no)
         : suggestedNo
+      const rawRoll = form.roll_no.trim() || (editingId ? '' : nextRollNo)
+      const rollNo = formatRollNo(rawRoll)
+      if (!rollNo) {
+        setError('A unique roll number is required.')
+        return
+      }
+      if (!/^LIS-[0-9]{3}\/[0-9]+[A-Z]?\/[0-9]{2}$/i.test(rollNo)) {
+        setError('Invalid Roll No format. Expected format like LIS-001/9P/26.')
+        return
+      }
       const payload = {
-        student_no: studentNo,
-        admission_no: formatAdmissionNo(form.admission_no.trim()) || (editingId ? '' : nextAdmissionNo),
+        student_no: formatStudentNo(studentNo),
+        roll_no: rollNo,
+        admission_no: rollNo,
         full_name: form.full_name.trim(),
         gender: form.gender
-      }
-      if (!payload.admission_no) {
-        setError('A unique admission number is required.')
-        return
       }
       if (editingId) {
         await api.updateStudent({ id: editingId, class_id: selectedClassId, ...payload })
@@ -75,8 +88,8 @@ export default function Students() {
   const startEdit = (s: Student) => {
     setEditingId(s.id)
     setForm({
-      student_no: s.student_no,
-      admission_no: formatAdmissionNo(s.admission_no),
+      student_no: formatStudentNo(s.student_no),
+      roll_no: formatRollNo(s.roll_no || s.admission_no),
       full_name: s.full_name,
       gender: s.gender
     })
@@ -118,16 +131,16 @@ export default function Students() {
                 style={{ background: '#f8fafc', cursor: 'not-allowed', color: '#475569', fontWeight: 600 }}
               />
               <small className="muted">
-                {editingId ? 'Serial numbers are permanent and cannot be modified.' : `Auto-assigned sequential serial number.`}
+                {editingId ? 'Serial numbers are permanent and cannot be modified.' : 'Auto-assigned sequential serial number 1,2,3 per class.'}
               </small>
             </label>
-            <label className="field"><span>Admission No. (school-wide)</span>
+            <label className="field"><span>Roll No. (LIS-001/9P/26)</span>
               <input
-                value={form.admission_no}
-                placeholder={nextAdmissionNo}
-                onChange={(e) => setForm({ ...form, admission_no: e.target.value })}
+                value={form.roll_no}
+                placeholder={nextRollNo}
+                onChange={(e) => setForm({ ...form, roll_no: e.target.value })}
               />
-              {nextAdmissionNo && <small className="muted">Next school-wide number: {nextAdmissionNo}</small>}
+              {nextRollNo && <small className="muted">Next roll number: {nextRollNo}</small>}
             </label>
             <label className="field"><span>Full name *</span>
               <input required value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} />
@@ -149,7 +162,7 @@ export default function Students() {
       <div className="card">
         <table className="table">
           <thead>
-            <tr><th>Class S/N</th><th>Admission No.</th><th>Full name</th><th>Gender</th>{canAdd && <th className="right">Actions</th>}</tr>
+            <tr><th>Class S/N</th><th>Roll No.</th><th>Full name</th><th>Gender</th>{canAdd && <th className="right">Actions</th>}</tr>
           </thead>
           <tbody>
             {students.length === 0 && (
@@ -157,8 +170,8 @@ export default function Students() {
             )}
             {students.map((s) => (
               <tr key={s.id}>
-                <td className="mono">{s.student_no}</td>
-                <td className="mono">{formatAdmissionNo(s.admission_no)}</td>
+                <td className="mono">{formatStudentNo(s.student_no)}</td>
+                <td className="mono">{formatRollNo(s.roll_no || s.admission_no)}</td>
                 <td>{s.full_name}</td>
                 <td>{s.gender || '—'}</td>
                 {canAdd && (
