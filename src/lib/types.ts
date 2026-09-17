@@ -194,6 +194,84 @@ export interface EndOfUnitTestOverview {
   teacher_summaries: TeacherTestSummary[]
 }
 
+export interface TeacherAssignmentOverview {
+  id: string
+  class_id: string
+  class_name: string
+  subject_id: string
+  subject_name: string
+  tests_count: number
+  tests_with_marks_count: number
+  pending_marks_count: number
+  average_pct: number | null
+  latest_test_title?: string
+  latest_test_date?: string
+  latest_test_id?: string
+  tests?: {
+    id: string
+    title: string
+    test_date: string
+    max_mark: number
+    marks_entered: boolean
+    marks_entered_count: number
+    total_students: number
+    average_pct: number | null
+  }[]
+}
+
+export interface TeacherDashboardData {
+  homeroomClass?: {
+    id: string
+    name: string
+    student_count: number
+    boys_count: number
+    girls_count: number
+  } | null
+  todayAttendance?: {
+    marked: boolean
+    present_count: number
+    absent_count: number
+    total_count: number
+    rate_pct: number
+  } | null
+  homeroomTestsCount: number
+  homeroomReportsCount: number
+  assignments: TeacherAssignmentOverview[]
+  totalTestsCreated: number
+  totalPendingMarks: number
+  overallSubjectAveragePct: number | null
+}
+
+export interface AdminClassAttendanceSummary {
+  class_id: string
+  class_name: string
+  homeroom_teacher_name: string
+  student_count: number
+  present_count: number
+  absent_count: number
+  rate_pct: number
+  is_marked: boolean
+}
+
+export interface AdminDashboardData {
+  school_info: {
+    name: string
+    academic_year: string
+    semester: string
+    motto?: string
+  }
+  total_students: number
+  total_classes: number
+  today_attendance: {
+    marked_classes_count: number
+    total_classes_count: number
+    overall_rate_pct: number
+    present_count: number
+    absent_count: number
+  }
+  classes_summary: AdminClassAttendanceSummary[]
+}
+
 export interface UnitTest {
   id: string
   class_id: string
@@ -347,4 +425,8 @@ export interface Api {
   // reports
   getStudentReport(studentId: string): Promise<StudentReportRow[]>
   getClassReportRows(classId: string): Promise<Record<string, StudentReportRow[]>>
+
+  // dashboard
+  getTeacherDashboardData(teacherId: string, homeroomClassId?: string | null): Promise<TeacherDashboardData>
+  getAdminDashboardData(): Promise<AdminDashboardData>
 }

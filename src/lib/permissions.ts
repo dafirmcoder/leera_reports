@@ -67,14 +67,15 @@ export function navTabs(role: Role | undefined, additionalRoles: Role[] = []): T
   if (!role || role === 'pending') return []
   const tabs: Tab[] = []
 
-  // Admin role: only sees Attendance and Settings
+  // Admin role: sees Dashboard, Attendance, and Settings
   if (role === 'admin') {
+    tabs.push({ to: '/dashboard', label: 'Dashboard', icon: '📊' })
     tabs.push({ to: '/attendance', label: 'Attendance', icon: '📅' })
     tabs.push({ to: '/settings', label: 'Settings', icon: '⚙️' })
     return tabs
   }
 
-  // Director role: only sees Executive Dashboard, Sub-menus, and Settings (no teacher tools)
+  // Director role: sees Executive Dashboard, Sub-menus, and Settings (no teacher tools)
   if (role === 'director') {
     tabs.push({ to: '/dashboard', label: 'Dashboard', icon: '📊' })
     tabs.push({ to: '/dashboard/population', label: 'Population', icon: '👥' })
@@ -85,9 +86,8 @@ export function navTabs(role: Role | undefined, additionalRoles: Role[] = []): T
     return tabs
   }
 
-  if (can(role, 'viewDirectorDashboard', additionalRoles)) {
-    tabs.push({ to: '/dashboard', label: 'Dashboard', icon: '📊' })
-  }
+  // All other roles (Head of School, Coordinator, Homeroom Teacher, Subject Teacher)
+  tabs.push({ to: '/dashboard', label: 'Dashboard', icon: '📊' })
 
   tabs.push(
     { to: '/students', label: 'Students', icon: '👥' },

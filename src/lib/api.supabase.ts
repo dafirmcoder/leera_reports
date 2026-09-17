@@ -1,11 +1,11 @@
 import { getSupabaseConfigError, supabase } from './supabase'
 import { formatAdmissionNo, formatRollNo, formatStudentNo } from './report'
 import type {
-  Api, Assignment, AttendanceAggregatedSummary, AttendanceRow, AttendanceStatus, AttendanceSummary,
+  AdminClassAttendanceSummary, AdminDashboardData, Api, Assignment, AttendanceAggregatedSummary, AttendanceRow, AttendanceStatus, AttendanceSummary,
   ClassAttendanceExportData, ClassInfo, ClassPopulationSummary, DetailedAttendanceExport,
   EndOfUnitTestOverview, Profile, Role, School,
   SchoolPopulationSummary, ScoreRow, Student, StudentReportRow, Subject,
-  SubjectTestSummary, TeacherTestSummary, UnitTest, UnitTestSummaryItem, UpdateUnitTestInput
+  SubjectTestSummary, TeacherAssignmentOverview, TeacherDashboardData, TeacherTestSummary, UnitTest, UnitTestSummaryItem, UpdateUnitTestInput
 } from './types'
 
 function db() {
@@ -1166,6 +1166,319 @@ export const supabaseApi: Api = {
       ;(out[r.student_id] ??= []).push(row)
     }
     return out
+  },
+
+  async getTeacherDashboardData(teacherId: string, homeroomClassId?: string | null): Promise<TeacherDashboardData> {
+    const today = toLocalIsoDate(new Date())
+    const classes = await this.listClasses()
+
+    // Determine homeroom class
+    let hrClass = classes.find((c) => c.id === homeroomClassId)
+    if (!hrClass && teacherId) {
+      hrClass = classes.find((c) => c.homeroom_teacher_id === teacherId)
+    }
+
+    let homeroomClassInfo: TeacherDashboardData['homeroomClass'] = null
+    let todayAttendanceInfo: TeacherDashboardData['todayAttendance'] = null
+    let homeroomTestsCount = 0
+    let homeroomReportsCount = 0
+
+    if (hrClass) {
+      // Fetch homeroom students
+      const { data: hrStudents, error: sErr } = await db()
+        .from('students')
+        .select('id, full_name, gender')
+        .eq('class_id', hrClass.id)
+
+      if (sErr) throw new Error(sErr.message)
+
+      const students = hrStudents ?? []
+      const isBoy = (g: string) => g?.trim().toUpperCase() === 'M' || g?.trim().toLowerCase().startsWith('m')
+      const isGirl = (g: string) => g?.trim().toUpperCase() === 'F' || g?.trim().toLowerCase().startsWith('f')
+      const boys = students.filter((s: any) => isBoy(s.gender)).length
+      const girls = students.filter((s: any) => isGirl(s.gender)).length
+
+      homeroomClassInfo = {
+        id: hrClass.id,
+        name: hrClass.name,
+        student_count: students.length,
+        boys_count: boys,
+        girls_count: girls
+      }
+
+      // Check today's attendance for homeroom class
+      const { data: attData, error: attErr } = await db()
+        .from('attendance')
+        .select('status')
+        .eq('class_id', hrClass.id)
+        .eq('attendance_date', today)
+
+      if (attErr) throw new Error(attErr.message)
+
+      const attRows = attData ?? []
+      if (attRows.length > 0) {
+        const present = attRows.filter((r: any) => r.status === 'P').length
+        const absent = attRows.filter((r: any) => r.status === 'A' || r.status === 'E').length
+        const total = attRows.length
+        const rate = total > 0 ? Number(((present / total) * 100).toFixed(1)) : 0
+        todayAttendanceInfo = {
+          marked: true,
+          present_count: present,
+          absent_count: absent,
+          total_count: total,
+          rate_pct: rate
+        }
+      } else {
+        todayAttendanceInfo = {
+          marked: false,
+          present_count: 0,
+          absent_count: 0,
+          total_count: students.length,
+          rate_pct: 0
+        }
+      }
+
+      // Count homeroom unit tests
+      const { count: tCount, error: tErr } = await db()
+        .from('unit_tests')
+        .select('id', { count: 'exact', head: true })
+        .eq('class_id', hrClass.id)
+      if (!tErr && tCount !== null) {
+        homeroomTestsCount = tCount
+      }
+
+      // Count students in homeroom class with at least one score
+      if (students.length > 0) {
+        const studentIds = students.map((s: any) => s.id)
+        const { data: scoredStudents, error: repErr } = await db()
+          .from('scores')
+          .select('student_id')
+          .in('student_id', studentIds)
+          .not('score', 'is', null)
+        if (!repErr && scoredStudents) {
+          const distinctScored = new Set(scoredStudents.map((s: any) => s.student_id))
+          homeroomReportsCount = distinctScored.size
+        }
+      }
+    }
+
+    // Fetch teacher's subject assignments from class_subject_teachers
+    const { data: assignmentsData, error: aErr } = await db()
+      .from('class_subject_teachers')
+      .select('id, class_id, subject_id, classes(name), subjects(name)')
+      .eq('teacher_id', teacherId)
+
+    if (aErr) throw new Error(aErr.message)
+
+    const assignedPairs = (assignmentsData ?? []).map((a: any) => ({
+      id: a.id,
+      class_id: a.class_id,
+      class_name: a.classes?.name || 'Unknown Class',
+      subject_id: a.subject_id,
+      subject_name: a.subjects?.name || 'Unknown Subject'
+    }))
+
+    const assignmentsOverview: TeacherAssignmentOverview[] = []
+    let totalTestsCreated = 0
+    let totalPendingMarks = 0
+    const allValidAverages: number[] = []
+
+    // Query students count per class for all assigned classes
+    const assignedClassIds = Array.from(new Set(assignedPairs.map((p) => p.class_id)))
+    const { data: classStudentsCountData } = assignedClassIds.length > 0
+      ? await db().from('students').select('class_id')
+      : { data: [] }
+    const studentsPerClassMap = new Map<string, number>()
+    for (const st of (classStudentsCountData ?? []) as any[]) {
+      studentsPerClassMap.set(st.class_id, (studentsPerClassMap.get(st.class_id) ?? 0) + 1)
+    }
+
+    for (const pair of assignedPairs) {
+      const classStudentCount = studentsPerClassMap.get(pair.class_id) ?? 0
+
+      // Fetch tests for this assignment
+      const { data: testsData, error: utErr } = await db()
+        .from('unit_tests')
+        .select('id, title, test_date, max_mark')
+        .eq('class_id', pair.class_id)
+        .eq('subject_id', pair.subject_id)
+        .order('test_date', { ascending: false })
+
+      if (utErr) throw new Error(utErr.message)
+      const tests = testsData ?? []
+      const testIds = tests.map((t: any) => t.id)
+
+      // Fetch scores for these tests
+      const { data: scoresData } = testIds.length > 0
+        ? await db().from('scores').select('unit_test_id, score').in('unit_test_id', testIds).not('score', 'is', null)
+        : { data: [] }
+
+      const scoresByTest = new Map<string, number[]>()
+      for (const sc of (scoresData ?? []) as any[]) {
+        const arr = scoresByTest.get(sc.unit_test_id) ?? []
+        arr.push(Number(sc.score))
+        scoresByTest.set(sc.unit_test_id, arr)
+      }
+
+      let testsWithMarksCount = 0
+      let pendingCount = 0
+      const assignmentAverages: number[] = []
+
+      const testsOverview = tests.map((t: any) => {
+        const scores = scoresByTest.get(t.id) ?? []
+        const hasScores = scores.length > 0
+        const marksCount = scores.length
+        let avgPct: number | null = null
+        if (hasScores && t.max_mark > 0) {
+          const totalScore = scores.reduce((sum, val) => sum + val, 0)
+          avgPct = Number(((totalScore / (scores.length * Number(t.max_mark))) * 100).toFixed(1))
+          assignmentAverages.push(avgPct)
+          allValidAverages.push(avgPct)
+        }
+
+        const marksEntered = hasScores
+        if (marksEntered) {
+          testsWithMarksCount++
+        } else {
+          pendingCount++
+        }
+
+        return {
+          id: t.id,
+          title: t.title,
+          test_date: t.test_date,
+          max_mark: Number(t.max_mark),
+          marks_entered: marksEntered,
+          marks_entered_count: marksCount,
+          total_students: classStudentCount,
+          average_pct: avgPct
+        }
+      })
+
+      const assignmentAvgPct = assignmentAverages.length > 0
+        ? Number((assignmentAverages.reduce((a, b) => a + b, 0) / assignmentAverages.length).toFixed(1))
+        : null
+
+      totalTestsCreated += tests.length
+      totalPendingMarks += pendingCount
+
+      assignmentsOverview.push({
+        id: pair.id || `${pair.class_id}_${pair.subject_id}`,
+        class_id: pair.class_id,
+        class_name: pair.class_name,
+        subject_id: pair.subject_id,
+        subject_name: pair.subject_name,
+        tests_count: tests.length,
+        tests_with_marks_count: testsWithMarksCount,
+        pending_marks_count: pendingCount,
+        average_pct: assignmentAvgPct,
+        latest_test_title: tests[0]?.title,
+        latest_test_date: tests[0]?.test_date,
+        latest_test_id: tests[0]?.id,
+        tests: testsOverview
+      })
+    }
+
+    const overallSubjectAveragePct = allValidAverages.length > 0
+      ? Number((allValidAverages.reduce((a, b) => a + b, 0) / allValidAverages.length).toFixed(1))
+      : null
+
+    return {
+      homeroomClass: homeroomClassInfo,
+      todayAttendance: todayAttendanceInfo,
+      homeroomTestsCount,
+      homeroomReportsCount,
+      assignments: assignmentsOverview,
+      totalTestsCreated,
+      totalPendingMarks,
+      overallSubjectAveragePct
+    }
+  },
+
+  async getAdminDashboardData(): Promise<AdminDashboardData> {
+    const today = toLocalIsoDate(new Date())
+    const [school, classes, { data: studentsData, error: sErr }, { data: attData, error: aErr }] = await Promise.all([
+      this.getSchool(),
+      this.listClasses(),
+      db().from('students').select('id, class_id'),
+      db().from('attendance').select('class_id, status').eq('attendance_date', today)
+    ])
+
+    if (sErr) throw new Error(sErr.message)
+    if (aErr) throw new Error(aErr.message)
+
+    const allStudents = studentsData ?? []
+    const total_students = allStudents.length
+    const total_classes = classes.length
+
+    const studentsByClass = new Map<string, number>()
+    for (const s of allStudents as any[]) {
+      studentsByClass.set(s.class_id, (studentsByClass.get(s.class_id) ?? 0) + 1)
+    }
+
+    const attByClass = new Map<string, { present: number; absent: number; total: number }>()
+    for (const a of (attData ?? []) as any[]) {
+      const cur = attByClass.get(a.class_id) ?? { present: 0, absent: 0, total: 0 }
+      cur.total++
+      if (a.status === 'P') cur.present++
+      else if (a.status === 'A' || a.status === 'E') cur.absent++
+      attByClass.set(a.class_id, cur)
+    }
+
+    let marked_classes_count = 0
+    let totalPresent = 0
+    let totalAbsent = 0
+    let totalMarkedStudents = 0
+
+    const classes_summary: AdminClassAttendanceSummary[] = classes.map((cls: ClassInfo) => {
+      const count = studentsByClass.get(cls.id) ?? 0
+      const att = attByClass.get(cls.id)
+      const isMarked = Boolean(att && att.total > 0)
+      const present = att ? att.present : 0
+      const absent = att ? att.absent : 0
+      const rate = count > 0 && isMarked ? Number(((present / count) * 100).toFixed(1)) : 0
+
+      if (isMarked) {
+        marked_classes_count++
+        totalPresent += present
+        totalAbsent += absent
+        totalMarkedStudents += count
+      }
+
+      return {
+        class_id: cls.id,
+        class_name: cls.name,
+        homeroom_teacher_name: cls.homeroom_teacher_name || 'Unassigned',
+        student_count: count,
+        present_count: present,
+        absent_count: absent,
+        rate_pct: rate,
+        is_marked: isMarked
+      }
+    })
+
+    const overall_rate_pct = totalMarkedStudents > 0
+      ? Number(((totalPresent / totalMarkedStudents) * 100).toFixed(1))
+      : 0
+
+    return {
+      school_info: {
+        name: school?.name || 'School',
+        academic_year: school?.academic_year || '2026/2027',
+        semester: school?.semester || 'Term 1',
+        motto: school?.motto || ''
+      },
+      total_students,
+      total_classes,
+      today_attendance: {
+        marked_classes_count,
+        total_classes_count: total_classes,
+        overall_rate_pct,
+        present_count: totalPresent,
+        absent_count: totalAbsent
+      },
+      classes_summary
+    }
   }
 }
 

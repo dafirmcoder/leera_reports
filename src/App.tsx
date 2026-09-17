@@ -44,20 +44,21 @@ export default function App() {
     )
   }
 
-  const isLeadership = ['director', 'head_of_school', 'curriculum_coordinator'].includes(profile.role)
   const isDirector = profile.role === 'director'
   const isAdmin = profile.role === 'admin'
-  const defaultPath = isLeadership ? '/dashboard' : isAdmin ? '/attendance' : '/students'
+  const defaultPath = '/dashboard'
 
   return (
     <Routes>
       <Route element={<AppShell />}>
         <Route path="/" element={<Navigate to={defaultPath} replace />} />
 
-        {/* Executive Dashboard & sub-menus for leadership */}
+        {/* Dashboard landing page for all user roles */}
+        <Route path="/dashboard" element={<Dashboard section="overview" />} />
+
+        {/* Executive sub-sections for leadership */}
         {can(profile.role, 'viewDirectorDashboard', profile.additional_roles) && (
           <>
-            <Route path="/dashboard" element={<Dashboard section="overview" />} />
             <Route path="/dashboard/population" element={<Dashboard section="population" />} />
             <Route path="/dashboard/attendance" element={<Dashboard section="attendance" />} />
             <Route path="/dashboard/marks" element={<Dashboard section="marks" />} />
