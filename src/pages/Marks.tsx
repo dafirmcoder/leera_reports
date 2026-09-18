@@ -1,16 +1,18 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '../lib/api'
 import { fmtDate } from '../lib/report'
 import { useSchool } from '../context/SchoolContext'
 import { useAuth } from '../context/AuthContext'
 import { can, hasRole } from '../lib/permissions'
 import ClassPicker from '../components/ClassPicker'
+import CoordinatorMarksOverview from '../components/CoordinatorMarksOverview'
 import type { Assignment, UnitTest } from '../lib/types'
 
 export default function Marks() {
   const navigate = useNavigate()
-  const { selectedClassId, classes, subjects, school } = useSchool()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const { selectedClassId, classes, subjects, school, setSelectedClassId } = useSchool()
   const { profile } = useAuth()
   const [tests, setTests] = useState<UnitTest[]>([])
   const [assignments, setAssignments] = useState<Assignment[]>([])
@@ -25,6 +27,42 @@ export default function Marks() {
   const [editBusy, setEditBusy] = useState(false)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+
+  const urlClassId = searchParams.get('classId')
+  const urlSubjectId = searchParams.get('subjectId')
+  const urlAction = searchParams.get('action')
+  const isCoordinator = hasRole(profile?.role, 'curriculum_coordinator', profile?.additional_roles)
+
+  const [coordinatorView, setCoordinatorView] = useState<'class_tests' | 'school_overview'>(() => {
+    if (searchParams.get('tab') === 'overview' && !searchParams.get('classId')) return 'school_overview'
+    return 'class_tests'
+  })
+
+  // Synchronize classId from URL param (e.g. clicked from teacher dashboard card)
+  useEffect(() => {
+    if (urlClassId && urlClassId !== selectedClassId && classes.some((c) => c.id === urlClassId)) {
+      setSelectedClassId(urlClassId)
+      setCoordinatorView('class_tests')
+    }
+  }, [urlClassId, classes, selectedClassId, setSelectedClassId])
+
+  // Synchronize subjectId from URL param
+  useEffect(() => {
+    if (urlSubjectId && subjects.some((s) => s.id === urlSubjectId)) {
+      setSelectedSubjectId(urlSubjectId)
+      setCoordinatorView('class_tests')
+    }
+  }, [urlSubjectId, subjects])
+
+  // Open creation modal if action=new
+  useEffect(() => {
+    if (urlAction === 'new') {
+      setShowForm(true)
+      if (urlSubjectId) {
+        setForm((prev) => ({ ...prev, subject_id: urlSubjectId }))
+      }
+    }
+  }, [urlAction, urlSubjectId])
 
   const roleCanAdd = can(profile?.role, 'addMarks', profile?.additional_roles)
   const className = classes.find((c) => c.id === selectedClassId)?.name ?? ''
@@ -225,7 +263,106 @@ export default function Marks() {
 
   return (
     <div className="page">
-      <div className="page-head">
+      {/* Curriculum Coordinator Banner & View Switcher */}
+      {isCoordinator && (
+        <div style={{
+          background: 'linear-gradient(135deg, #1e1b4b 0%, #312e81 100%)',
+          color: '#ffffff',
+          padding: '16px 20px',
+          borderRadius: '12px',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: '12px',
+          marginBottom: '20px',
+          boxShadow: '0 2px 8px rgba(30, 27, 75, 0.2)'
+        }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontSize: '18px' }}>👑</span>
+              <span style={{
+                background: 'rgba(255,255,255,0.18)',
+                padding: '3px 10px',
+                borderRadius: '12px',
+                fontSize: '11px',
+                fontWeight: 700,
+                letterSpacing: '0.5px'
+              }}>
+                CURRICULUM COORDINATOR ASSESSMENT CENTER
+              </span>
+            </div>
+            <p style={{ margin: '4px 0 0', fontSize: '13px', color: '#c7d2fe' }}>
+              Coordinator oversight: review school-wide marks summaries or manage class-level unit tests and scores.
+            </p>
+          </div>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button
+              type="button"
+              className="btn btn-sm"
+              style={{
+                background: coordinatorView === 'class_tests' ? '#ffffff' : 'rgba(255,255,255,0.15)',
+                color: coordinatorView === 'class_tests' ? '#1e1b4b' : '#ffffff',
+                fontWeight: coordinatorView === 'class_tests' ? 700 : 500,
+                border: 'none',
+                cursor: 'pointer'
+              }}
+              onClick={() => {
+                setCoordinatorView('class_tests')
+                setSearchParams((prev) => {
+                  const p = new URLSearchParams(prev)
+                  p.delete('tab')
+                  return p
+                })
+              }}
+            >
+              📋 Class Unit Tests
+            </button>
+            <button
+              type="button"
+              className="btn btn-sm"
+              style={{
+                background: coordinatorView === 'school_overview' ? '#ffffff' : 'rgba(255,255,255,0.15)',
+                color: coordinatorView === 'school_overview' ? '#1e1b4b' : '#ffffff',
+                fontWeight: coordinatorView === 'school_overview' ? 700 : 500,
+                border: 'none',
+                cursor: 'pointer'
+              }}
+              onClick={() => {
+                setCoordinatorView('school_overview')
+                setSearchParams((prev) => {
+                  const p = new URLSearchParams(prev)
+                  p.set('tab', 'overview')
+                  return p
+                })
+              }}
+            >
+              📊 School-Wide Marks Overview
+            </button>
+          </div>
+        </div>
+      )}
+
+      {isCoordinator && coordinatorView === 'school_overview' ? (
+        <CoordinatorMarksOverview
+          classes={classes}
+          subjects={subjects}
+          onSelectClassAndSubject={(cId, sId) => {
+            setSelectedClassId(cId)
+            if (sId) setSelectedSubjectId(sId)
+            setCoordinatorView('class_tests')
+            setSearchParams((prev) => {
+              const p = new URLSearchParams(prev)
+              p.set('classId', cId)
+              if (sId) p.set('subjectId', sId)
+              p.delete('tab')
+              return p
+            })
+          }}
+        />
+      ) : (
+        <>
+          <div className="page-head">
         <div>
           <h2>Unit Tests{className ? ` — ${className}` : ''}</h2>
           <p className="muted">{canAdd ? 'Every end-of-unit test you record, with its score sheet.' : 'Read-only view of recorded unit tests.'}</p>
@@ -376,7 +513,7 @@ export default function Marks() {
                     ⚠️ Missing PDF
                   </span>
                 )}{' '}
-                <Link to={`/marks/${t.class_id}/${t.id}`} className="btn btn-small">Enter scores</Link>{' '}
+                <Link to={`/marks/${t.class_id}/${t.id}?view=entry`} className="btn btn-small btn-primary">Enter scores</Link>{' '}
                 {canEditTest(t) && (
                   <button
                     type="button"
@@ -495,6 +632,8 @@ export default function Marks() {
             </div>
           </form>
         </div>
+      )}
+        </>
       )}
     </div>
   )

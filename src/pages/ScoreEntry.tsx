@@ -35,7 +35,7 @@ export default function ScoreEntry() {
   const [activeTab, setActiveTab] = useState<'marksheet' | 'entry'>(() => {
     if (viewParam === 'marksheet') return 'marksheet'
     if (viewParam === 'entry') return 'entry'
-    if (isLeadership) return 'marksheet'
+    if (isDirector) return 'marksheet'
     return 'entry'
   })
 
@@ -44,10 +44,10 @@ export default function ScoreEntry() {
       setActiveTab('marksheet')
     } else if (viewParam === 'entry') {
       setActiveTab('entry')
-    } else if (isLeadership && !viewParam) {
+    } else if (isDirector && !viewParam) {
       setActiveTab('marksheet')
     }
-  }, [viewParam, isLeadership])
+  }, [viewParam, isDirector])
 
   useEffect(() => {
     if (!testId) return
@@ -224,7 +224,7 @@ export default function ScoreEntry() {
             {downloading ? 'Preparing Marksheet…' : '⬇ Subject Marksheet (PDF)'}
           </button>
           <Link
-            to={isDirector || viewParam === 'marksheet' ? '/dashboard/marks' : '/marks'}
+            to={isDirector || viewParam === 'marksheet' ? '/dashboard/marks' : `/marks?classId=${classId}&subjectId=${test?.subject_id || ''}`}
             className="btn btn-ghost"
           >
             ← Back to {isDirector || viewParam === 'marksheet' ? 'Marks Summaries' : 'Tests'}

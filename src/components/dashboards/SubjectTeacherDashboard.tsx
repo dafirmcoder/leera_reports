@@ -1,11 +1,13 @@
-﻿import { useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../../lib/api'
 import { useAuth } from '../../context/AuthContext'
+import { useSchool } from '../../context/SchoolContext'
 import type { TeacherDashboardData } from '../../lib/types'
 
 export default function SubjectTeacherDashboard() {
   const { profile } = useAuth()
+  const { setSelectedClassId } = useSchool()
   const [data, setData] = useState<TeacherDashboardData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -281,14 +283,14 @@ export default function SubjectTeacherDashboard() {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
           <div>
             <h2 style={{ margin: 0, fontSize: '18px', fontWeight: 700, color: '#0f172a' }}>
-              Your Teaching Classes & Tests
+              📚 Subjects You Teach
             </h2>
             <p style={{ margin: '4px 0 0', color: '#64748b', fontSize: '13px' }}>
-              Select a class below to view tests, upload exam papers, or enter marks
+              Subject assignments, End of Unit tests, and marks entry progress
             </p>
           </div>
-          <Link to="/marks" className="btn btn-secondary btn-sm" style={{ textDecoration: 'none' }}>
-            Open Assessment Center →
+          <Link to="/marks?action=new" className="btn btn-secondary btn-sm" style={{ textDecoration: 'none' }}>
+            + Create Unit Test
           </Link>
         </div>
 
@@ -483,18 +485,20 @@ export default function SubjectTeacherDashboard() {
                   {/* Actions */}
                   <div style={{ display: 'flex', gap: '8px', paddingTop: '12px', borderTop: '1px solid #f1f5f9' }}>
                     <Link
-                      to="/marks"
+                      to={`/marks?classId=${asgn.class_id}&subjectId=${asgn.subject_id}`}
                       className="btn btn-secondary btn-sm"
                       style={{ flex: 1, textAlign: 'center', textDecoration: 'none' }}
+                      onClick={() => setSelectedClassId(asgn.class_id)}
                     >
-                      + New Test
+                      View Tests
                     </Link>
                     <Link
-                      to="/marks"
+                      to={`/marks?classId=${asgn.class_id}&subjectId=${asgn.subject_id}`}
                       className="btn btn-primary btn-sm"
                       style={{ flex: 1, textAlign: 'center', textDecoration: 'none' }}
+                      onClick={() => setSelectedClassId(asgn.class_id)}
                     >
-                      All Marksheets →
+                      Enter Marks
                     </Link>
                   </div>
                 </div>

@@ -1,11 +1,13 @@
-﻿import { useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../../lib/api'
 import { useAuth } from '../../context/AuthContext'
+import { useSchool } from '../../context/SchoolContext'
 import type { TeacherDashboardData } from '../../lib/types'
 
 export default function HomeroomTeacherDashboard() {
   const { profile } = useAuth()
+  const { setSelectedClassId } = useSchool()
   const [data, setData] = useState<TeacherDashboardData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -331,7 +333,7 @@ export default function HomeroomTeacherDashboard() {
             </p>
           </div>
           <Link
-            to="/marks"
+            to="/marks?action=new"
             className="btn btn-secondary btn-sm"
             style={{ textDecoration: 'none' }}
           >
@@ -444,16 +446,18 @@ export default function HomeroomTeacherDashboard() {
 
                   <div style={{ display: 'flex', gap: '8px', paddingTop: '10px', borderTop: '1px solid #f1f5f9' }}>
                     <Link
-                      to="/marks"
+                      to={`/marks?classId=${asgn.class_id}&subjectId=${asgn.subject_id}`}
                       className="btn btn-secondary btn-sm"
                       style={{ flex: 1, textAlign: 'center', textDecoration: 'none' }}
+                      onClick={() => setSelectedClassId(asgn.class_id)}
                     >
                       View Tests
                     </Link>
                     <Link
-                      to="/marks"
+                      to={`/marks?classId=${asgn.class_id}&subjectId=${asgn.subject_id}`}
                       className="btn btn-primary btn-sm"
                       style={{ flex: 1, textAlign: 'center', textDecoration: 'none' }}
+                      onClick={() => setSelectedClassId(asgn.class_id)}
                     >
                       Enter Marks
                     </Link>
