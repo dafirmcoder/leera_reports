@@ -1,4 +1,6 @@
-﻿import { useAuth } from '../context/AuthContext'
+import { useAuth } from '../context/AuthContext'
+import { useSchool } from '../context/SchoolContext'
+import { isHomeroomTeacher } from '../lib/permissions'
 import ExecutiveDashboard from '../components/dashboards/ExecutiveDashboard'
 import AdminDashboard from '../components/dashboards/AdminDashboard'
 import HomeroomTeacherDashboard from '../components/dashboards/HomeroomTeacherDashboard'
@@ -10,6 +12,8 @@ interface DashboardProps {
 
 export default function Dashboard({ section = 'overview' }: DashboardProps) {
   const { profile } = useAuth()
+  const { classes } = useSchool()
+  const isHomeroom = isHomeroomTeacher(profile, classes)
 
   // If navigating to an executive sub-section (population, attendance, marks, teachers), render Executive Dashboard
   if (section !== 'overview') {
@@ -25,7 +29,7 @@ export default function Dashboard({ section = 'overview' }: DashboardProps) {
       return <HomeroomTeacherDashboard />
 
     case 'subject_teacher':
-      return <SubjectTeacherDashboard />
+      return isHomeroom ? <HomeroomTeacherDashboard /> : <SubjectTeacherDashboard />
 
     case 'director':
     case 'head_of_school':

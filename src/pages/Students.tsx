@@ -4,7 +4,7 @@ import { api } from '../lib/api'
 import { buildRollNo, formatRollNo, formatStudentNo, nextStudentNo } from '../lib/report'
 import { useSchool } from '../context/SchoolContext'
 import { useAuth } from '../context/AuthContext'
-import { can, hasRole } from '../lib/permissions'
+import { can, hasRole, isHomeroomTeacher } from '../lib/permissions'
 import ClassPicker from '../components/ClassPicker'
 import type { Student } from '../lib/types'
 
@@ -20,34 +20,47 @@ export default function Students() {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
-  const isHomeroomTeacher = hasRole(profile?.role, 'homeroom_teacher', profile?.additional_roles)
-  const isLeadership = can(profile?.role, 'manageUsers', profile?.additional_roles) ||
-    hasRole(profile?.role, 'head_of_school', profile?.additional_roles) ||
-    hasRole(profile?.role, 'curriculum_coordinator', profile?.additional_roles)
+  const isHos = hasRole(profile?.role, 'head_of_school', profile?.additional_roles)
+  const isCoordinator = hasRole(profile?.role, 'curriculum_coordinator', profile?.additional_roles)
+  const isLeadership = isHos || isCoordinator
+  const isHomeroom = isHomeroomTeacher(profile, classes)
 
-  // Find homeroom class for homeroom teachers
-  const homeroomClass = classes.find(
+  // Find all homeroom classes for this teacher
+  const myHomeroomClasses = classes.filter(
     (c) => c.id === profile?.class_id || (profile?.id && c.homeroom_teacher_id === profile?.id)
   )
 
-  // Homeroom teachers can ONLY see their designated homeroom class. Leadership can select any class.
-  const activeClassId = isLeadership
-    ? selectedClassId
-    : (homeroomClass?.id ?? profile?.class_id ?? null)
+  // Homeroom teachers can ONLY see their designated homeroom class.
+  // Leadership (HOS & Coordinators who are not homeroom teachers) can select any class.
+  let activeClassId: string | null = null
+  if (isHomeroom) {
+    if (myHomeroomClasses.length === 1) {
+      activeClassId = myHomeroomClasses[0].id
+    } else if (myHomeroomClasses.length > 1) {
+      activeClassId = myHomeroomClasses.some((c) => c.id === selectedClassId)
+        ? selectedClassId
+        : myHomeroomClasses[0].id
+    } else {
+      activeClassId = profile?.class_id ?? null
+    }
+  } else if (isLeadership) {
+    activeClassId = selectedClassId
+  }
 
   const activeClass = classes.find((c) => c.id === activeClassId)
   const className = activeClass?.name ?? ''
 
-  // Sync selectedClassId with homeroom class for homeroom teachers
+  // Sync selectedClassId with homeroom class for homeroom teachers so app context stays aligned
   useEffect(() => {
-    if (!isLeadership && homeroomClass?.id && selectedClassId !== homeroomClass.id) {
-      setSelectedClassId(homeroomClass.id)
+    if (isHomeroom && activeClassId && selectedClassId !== activeClassId) {
+      setSelectedClassId(activeClassId)
     }
-  }, [isLeadership, homeroomClass?.id, selectedClassId, setSelectedClassId])
+  }, [isHomeroom, activeClassId, selectedClassId, setSelectedClassId])
 
-  // Homeroom teachers manage only their own roster
-  const canAdd = can(profile?.role, 'addStudents', profile?.additional_roles)
-    && !!activeClassId && (activeClassId === profile?.class_id || activeClassId === homeroomClass?.id)
+  // Homeroom teachers manage their own roster; HOS can also manage
+  const canAdd = (isHomeroom && !!activeClassId && myHomeroomClasses.some((c) => c.id === activeClassId))
+    || can(profile?.role, 'addStudents', profile?.additional_roles)
+    || isHos
 
   const reload = () => {
     if (!activeClassId) return
@@ -133,13 +146,22 @@ export default function Students() {
     }
   }
 
-  // Pure subject teachers should not access the students page
-  if (!isLeadership && !isHomeroomTeacher) {
+  // Pure subject teachers (who are not homeroom teachers and not leadership) must never access the students page
+  if (!isLeadership && !isHomeroom) {
     return <Navigate to="/dashboard" replace />
   }
 
+  // Waiting for classes to load
+  if (classes.length === 0) {
+    return (
+      <div className="page">
+        <p className="muted center" style={{ padding: '40px' }}>Loading students…</p>
+      </div>
+    )
+  }
+
   // Homeroom teacher without a class assigned yet
-  if (!isLeadership && !activeClassId) {
+  if (isHomeroom && myHomeroomClasses.length === 0) {
     return (
       <div className="page">
         <div className="card alert-box" style={{ background: '#fffbeb', borderColor: '#fde68a', padding: '28px', textAlign: 'center' }}>
@@ -153,13 +175,27 @@ export default function Students() {
     )
   }
 
+  // Fallback if no active class resolved
+  if (!activeClassId) {
+    return (
+      <div className="page">
+        <div className="card alert-box" style={{ background: '#fffbeb', borderColor: '#fde68a', padding: '28px', textAlign: 'center' }}>
+          <h3 style={{ color: '#92400e', margin: '0 0 8px' }}>No Class Selected</h3>
+          <p style={{ color: '#b45309', margin: 0 }}>
+            Please select a class to view its student roster.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="page">
       <div className="page-head">
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <h2>Students{className ? ` — ${className}` : ''}</h2>
-            {!isLeadership && (
+            {isHomeroom && (
               <span className="chip" style={{ background: '#e0f2fe', color: '#0369a1', fontWeight: 600, fontSize: '12px' }}>
                 Your Homeroom Class
               </span>
@@ -173,7 +209,23 @@ export default function Students() {
               : 'Read-only view of the class roster.'}
           </p>
         </div>
-        {isLeadership && <ClassPicker />}
+        {isHomeroom ? (
+          myHomeroomClasses.length > 1 && (
+            <label className="field inline classpicker">
+              <span>Class</span>
+              <select
+                value={activeClassId ?? ''}
+                onChange={(e) => setSelectedClassId(e.target.value)}
+              >
+                {myHomeroomClasses.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            </label>
+          )
+        ) : (
+          isLeadership && <ClassPicker />
+        )}
       </div>
 
       {canAdd && (

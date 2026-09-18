@@ -23,6 +23,18 @@ export function hasRole(role: Role | undefined, requiredRole: Role, additionalRo
   return role === requiredRole || additionalRoles.includes(requiredRole)
 }
 
+export function isHomeroomTeacher(
+  profile?: { id?: string; role?: Role; additional_roles?: Role[]; class_id?: string | null } | null,
+  classes: Array<{ id: string; homeroom_teacher_id?: string | null }> = []
+): boolean {
+  if (!profile) return false
+  if (profile.role === 'homeroom_teacher') return true
+  if (Array.isArray(profile.additional_roles) && profile.additional_roles.includes('homeroom_teacher')) return true
+  if (profile.class_id) return true
+  if (profile.id && classes.some((c) => c.homeroom_teacher_id === profile.id)) return true
+  return false
+}
+
 export function can(role: Role | undefined, cap: Capability, additionalRoles: Role[] = []): boolean {
   const roles = new Set<Role>(role ? [role, ...additionalRoles] : [])
   switch (cap) {
@@ -66,7 +78,11 @@ export interface Tab {
   icon: string
 }
 
-export function navTabs(role: Role | undefined, additionalRoles: Role[] = []): Tab[] {
+export function navTabs(
+  role: Role | undefined,
+  additionalRoles: Role[] = [],
+  options?: { isHomeroom?: boolean }
+): Tab[] {
   if (!role || role === 'pending') return []
   const tabs: Tab[] = []
 
@@ -92,7 +108,10 @@ export function navTabs(role: Role | undefined, additionalRoles: Role[] = []): T
   // All other roles (Head of School, Coordinator, Homeroom Teacher, Subject Teacher)
   tabs.push({ to: '/dashboard', label: 'Dashboard', icon: '📊' })
 
-  if (can(role, 'viewStudents', additionalRoles)) {
+  // Students page: only accessible to homeroom teachers, coordinators, and head of school.
+  // Pure subject teachers who are not homeroom teachers are excluded.
+  const canSeeStudents = options?.isHomeroom || can(role, 'viewStudents', additionalRoles)
+  if (canSeeStudents) {
     tabs.push({ to: '/students', label: 'Students', icon: '👥' })
   }
 

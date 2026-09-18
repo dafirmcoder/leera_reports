@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { navTabs, ROLE_LABEL } from '../lib/permissions'
+import { useSchool } from '../context/SchoolContext'
+import { isHomeroomTeacher, navTabs, ROLE_LABEL } from '../lib/permissions'
 import {
   getNotificationPermission,
   registerDevicePushSubscription,
@@ -12,8 +13,11 @@ import {
 
 export default function AppShell() {
   const { user, profile, signOut } = useAuth()
+  const { classes } = useSchool()
   const navigate = useNavigate()
   const [showNotifPrompt, setShowNotifPrompt] = useState(false)
+
+  const isHomeroom = isHomeroomTeacher(profile, classes)
 
   const handleSignOut = async () => {
     stopAttendanceReminderWatcher()
@@ -111,7 +115,7 @@ export default function AppShell() {
 
       <nav className="bottomnav">
         <div className="bottomnav-inner">
-          {navTabs(profile?.role, profile?.additional_roles).map((t) => (
+          {navTabs(profile?.role, profile?.additional_roles, { isHomeroom }).map((t) => (
             <NavLink
               key={t.to}
               to={t.to}

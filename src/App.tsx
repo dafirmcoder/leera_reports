@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { useAuth } from './context/AuthContext'
-import { can } from './lib/permissions'
+import { useSchool } from './context/SchoolContext'
+import { can, isHomeroomTeacher } from './lib/permissions'
 import AppShell from './components/AppShell'
 import Login from './pages/Login'
 import PendingApproval from './pages/PendingApproval'
@@ -17,6 +18,7 @@ import Attendance from './pages/Attendance'
 
 export default function App() {
   const { user, profile, loading } = useAuth()
+  const { classes } = useSchool()
 
   if (loading) {
     return (
@@ -72,7 +74,7 @@ export default function App() {
         {/* Teacher & Academic routes: hidden from Director and Admin */}
         {!isAdmin && !isDirector && (
           <>
-            {can(profile.role, 'viewStudents', profile.additional_roles) && (
+            {(isHomeroomTeacher(profile, classes) || can(profile.role, 'viewStudents', profile.additional_roles)) && (
               <Route path="/students" element={<Students />} />
             )}
             <Route path="/marks" element={<Marks />} />
