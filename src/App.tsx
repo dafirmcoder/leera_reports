@@ -15,6 +15,7 @@ import SettingsPage from './pages/Settings'
 import People from './pages/People'
 import Classes from './pages/Classes'
 import Attendance from './pages/Attendance'
+import ClassMarksheetPage from './pages/ClassMarksheetPage'
 
 export default function App() {
   const { user, profile, loading } = useAuth()
@@ -65,6 +66,9 @@ export default function App() {
             <Route path="/dashboard/attendance" element={<Dashboard section="attendance" />} />
             <Route path="/dashboard/marks" element={<Dashboard section="marks" />} />
             <Route path="/dashboard/teachers" element={<Dashboard section="teachers" />} />
+            {isDirector && (
+              <Route path="/dashboard/marks/class/:classId" element={<ClassMarksheetPage />} />
+            )}
           </>
         )}
 

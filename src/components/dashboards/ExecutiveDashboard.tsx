@@ -10,7 +10,8 @@ import type {
   AttendanceAggregatedSummary,
   EndOfUnitTestOverview,
   SchoolPopulationSummary,
-  TeacherTestSummary
+  TeacherTestSummary,
+  Assignment
 } from '../../lib/types'
 
 const today = () => new Date().toISOString().slice(0, 10)
@@ -63,6 +64,7 @@ export default function ExecutiveDashboard({ section = 'overview' }: DashboardPr
 
   // End of Unit Tests & Teachers
   const [testOverview, setTestOverview] = useState<EndOfUnitTestOverview | null>(null)
+  const [assignments, setAssignments] = useState<Assignment[]>([])
   const [onlyWithMarks, setOnlyWithMarks] = useState(false)
   const [filterClassId, setFilterClassId] = useState<string>('all')
   const [filterSubjectId, setFilterSubjectId] = useState<string>('all')
@@ -74,12 +76,14 @@ export default function ExecutiveDashboard({ section = 'overview' }: DashboardPr
     setLoading(true)
     setError('')
     try {
-      const [popData, testsData] = await Promise.all([
+      const [popData, testsData, assignmentsData] = await Promise.all([
         api.getPopulationSummary(),
-        api.getUnitTestOverview()
+        api.getUnitTestOverview(),
+        api.listAssignments().catch(() => [] as Assignment[])
       ])
       setPopulation(popData)
       setTestOverview(testsData)
+      setAssignments(assignmentsData)
     } catch (err: any) {
       setError(err?.message ?? 'Failed to load executive summary data.')
     } finally {
@@ -136,32 +140,120 @@ export default function ExecutiveDashboard({ section = 'overview' }: DashboardPr
     return "Executive Dashboard"
   }, [profile?.role])
 
-  // Filtered unit tests, sorted strictly Class-wise -> Subject-wise -> Topic-wise
-  const filteredTests = useMemo(() => {
-    if (!testOverview) return []
-    const source = onlyWithMarks ? testOverview.tests_with_marks : testOverview.all_tests
-    const filtered = source.filter((t) => {
-      if (filterClassId !== 'all' && t.class_id !== filterClassId) return false
-      if (filterSubjectId !== 'all' && t.subject_id !== filterSubjectId) return false
+  // Group tests and assignments by Class and Subject for the End of Unit Tests Summary
+  const classUnitTestsSummary = useMemo(() => {
+    const allTests = testOverview?.all_tests || []
+
+    return classes.map((c) => {
+      const classAssignments = assignments.filter((a) => a.class_id === c.id)
+      const classTests = allTests.filter((t) => t.class_id === c.id)
+
+      // Map of subjectId -> { subjectId, subjectName, teacherName, testsCount, testsWithMarksCount, latestDate }
+      const subjectMap = new Map<string, {
+        subjectId: string
+        subjectName: string
+        teacherName: string
+        testsCount: number
+        testsWithMarksCount: number
+        latestDate: string | null
+      }>()
+
+      // 1. Seed from assignments
+      classAssignments.forEach((a) => {
+        if (!subjectMap.has(a.subject_id)) {
+          subjectMap.set(a.subject_id, {
+            subjectId: a.subject_id,
+            subjectName: a.subject_name || subjects.find((s) => s.id === a.subject_id)?.name || 'Subject',
+            teacherName: a.teacher_name || '',
+            testsCount: 0,
+            testsWithMarksCount: 0,
+            latestDate: null
+          })
+        }
+      })
+
+      // 2. Add or update from tests
+      classTests.forEach((t) => {
+        let entry = subjectMap.get(t.subject_id)
+        if (!entry) {
+          entry = {
+            subjectId: t.subject_id,
+            subjectName: t.subject_name || subjects.find((s) => s.id === t.subject_id)?.name || 'Subject',
+            teacherName: t.teacher_name || '',
+            testsCount: 0,
+            testsWithMarksCount: 0,
+            latestDate: null
+          }
+          subjectMap.set(t.subject_id, entry)
+        }
+        entry.testsCount += 1
+        if (t.has_marks_entered) {
+          entry.testsWithMarksCount += 1
+        }
+        if (!entry.teacherName && t.teacher_name) {
+          entry.teacherName = t.teacher_name
+        }
+        if (t.test_date) {
+          if (!entry.latestDate || t.test_date > entry.latestDate) {
+            entry.latestDate = t.test_date
+          }
+        }
+      })
+
+      const classSubjects = Array.from(subjectMap.values()).sort((a, b) =>
+        a.subjectName.localeCompare(b.subjectName, undefined, { numeric: true, sensitivity: 'base' })
+      )
+
+      const totalTestsCount = classSubjects.reduce((sum, s) => sum + s.testsCount, 0)
+      const totalTestsWithMarksCount = classSubjects.reduce((sum, s) => sum + s.testsWithMarksCount, 0)
+
+      let latestClassDate: string | null = null
+      classSubjects.forEach((s) => {
+        if (s.latestDate && (!latestClassDate || s.latestDate > latestClassDate)) {
+          latestClassDate = s.latestDate
+        }
+      })
+
+      return {
+        classId: c.id,
+        className: c.name,
+        subjects: classSubjects,
+        totalTestsCount,
+        totalTestsWithMarksCount,
+        latestClassDate
+      }
+    }).sort((a, b) => a.className.localeCompare(b.className, undefined, { numeric: true, sensitivity: 'base' }))
+  }, [classes, assignments, testOverview, subjects])
+
+  // Filtered classes summary for Section 3
+  const filteredClassSummaries = useMemo(() => {
+    return classUnitTestsSummary.filter((item) => {
+      if (filterClassId !== 'all' && item.classId !== filterClassId) {
+        return false
+      }
+
+      if (filterSubjectId !== 'all') {
+        const hasSubj = item.subjects.some((s) => s.subjectId === filterSubjectId)
+        if (!hasSubj) return false
+      }
+
+      if (onlyWithMarks && item.totalTestsWithMarksCount === 0) {
+        return false
+      }
+
       if (testSearch.trim()) {
         const q = testSearch.toLowerCase()
-        const matchTitle = t.title.toLowerCase().includes(q)
-        const matchSubj = t.subject_name.toLowerCase().includes(q)
-        const matchTeacher = t.teacher_name.toLowerCase().includes(q)
-        const matchClass = t.class_name.toLowerCase().includes(q)
-        if (!matchTitle && !matchSubj && !matchTeacher && !matchClass) return false
+        const matchClass = item.className.toLowerCase().includes(q)
+        const matchSubj = item.subjects.some((s) => s.subjectName.toLowerCase().includes(q))
+        const matchTeacher = item.subjects.some((s) => s.teacherName.toLowerCase().includes(q))
+        if (!matchClass && !matchSubj && !matchTeacher) {
+          return false
+        }
       }
+
       return true
     })
-
-    return filtered.sort((a, b) => {
-      const classComp = a.class_name.localeCompare(b.class_name, undefined, { numeric: true, sensitivity: 'base' })
-      if (classComp !== 0) return classComp
-      const subjectComp = a.subject_name.localeCompare(b.subject_name, undefined, { numeric: true, sensitivity: 'base' })
-      if (subjectComp !== 0) return subjectComp
-      return a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' })
-    })
-  }, [testOverview, onlyWithMarks, filterClassId, filterSubjectId, testSearch])
+  }, [classUnitTestsSummary, filterClassId, filterSubjectId, onlyWithMarks, testSearch])
 
   // Filtered teachers summary
   const filteredTeachers = useMemo(() => {
@@ -651,97 +743,182 @@ export default function ExecutiveDashboard({ section = 'overview' }: DashboardPr
             </label>
 
             <span className="muted" style={{ marginLeft: 'auto', fontSize: '13px' }}>
-              Showing {filteredTests.length} test{filteredTests.length === 1 ? '' : 's'} (Sorted Class → Subject → Topic)
+              Showing {filteredClassSummaries.length} class{filteredClassSummaries.length === 1 ? '' : 'es'}
             </span>
           </div>
 
-          {/* Detailed Tests Table */}
+          {/* Detailed Tests Table: Exact 6 Columns Requested */}
           <div className="table-wrap">
             <table className="table">
               <thead>
                 <tr>
-                  <th>Class</th>
-                  <th>Subject</th>
-                  <th>Teacher</th>
-                  <th>Unit / Topic</th>
-                  <th>Exam Paper</th>
-                  <th>Date</th>
-                  <th className="num">Marks Entered</th>
-                  <th className="num">Class Avg (%)</th>
-                  <th className="num">Score Range</th>
-                  <th className="right">Action</th>
+                  <th style={{ minWidth: '130px' }}>Class</th>
+                  <th style={{ minWidth: '180px' }}>Subjects</th>
+                  <th style={{ minWidth: '180px' }}>Teacher</th>
+                  <th style={{ minWidth: '150px', textAlign: 'center' }}>Number of Unit Tests</th>
+                  <th style={{ minWidth: '110px' }}>Date</th>
+                  <th style={{ minWidth: '120px', textAlign: 'right' }}>Action</th>
                 </tr>
               </thead>
               <tbody>
-                {filteredTests.length === 0 ? (
+                {filteredClassSummaries.length === 0 ? (
                   <tr>
-                    <td colSpan={10} className="muted center" style={{ padding: '24px' }}>
+                    <td colSpan={6} className="muted center" style={{ padding: '32px' }}>
                       {onlyWithMarks
-                        ? 'No unit tests with marks entered match your filters.'
-                        : 'No unit tests found.'}
+                        ? 'No classes with marks entered match your filters.'
+                        : 'No classes or unit tests found matching your filters.'}
                     </td>
                   </tr>
                 ) : (
-                  filteredTests.map((t) => (
-                    <tr key={t.test_id}>
-                      <td><strong>{t.class_name}</strong></td>
-                      <td><span className="role-tag" style={{ background: '#e0f2fe', color: '#0369a1' }}>{t.subject_name}</span></td>
-                      <td>{t.teacher_name}</td>
-                      <td><strong>{t.title}</strong></td>
-                      <td>
-                        {t.exam_paper_url ? (
-                          <a
-                            href={t.exam_paper_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="chip"
-                            style={{
-                              background: '#e0e7ff',
-                              color: '#3730a3',
-                              borderColor: '#c7d2fe',
-                              textDecoration: 'none',
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: 4
-                            }}
-                            title={t.exam_paper_name ? `View ${t.exam_paper_name}` : 'Open Exam Paper PDF'}
-                          >
-                            📄 PDF
-                          </a>
-                        ) : (
-                          <span className="muted" style={{ fontSize: '12px' }}>—</span>
-                        )}
-                      </td>
-                      <td className="mono">{fmtDate(t.test_date)}</td>
-                      <td className="num">
-                        <span className="chip" style={{
-                          background: t.marks_entered_count === t.total_students && t.total_students > 0 ? '#dcfce7' : t.has_marks_entered ? '#fef3c7' : '#f1f5f9',
-                          color: t.marks_entered_count === t.total_students && t.total_students > 0 ? '#166534' : t.has_marks_entered ? '#92400e' : '#64748b'
-                        }}>
-                          {t.marks_entered_count} / {t.total_students} ({t.marks_entered_pct}%)
-                        </span>
-                      </td>
-                      <td className="num">
-                        {t.average_pct !== null ? (
-                          <span style={{ fontWeight: 700, color: t.average_pct >= 70 ? '#1f8a5f' : t.average_pct >= 50 ? '#d97706' : '#dc2626' }}>
-                            {t.average_pct}% <small className="muted">({t.average_score}/{t.max_mark})</small>
-                          </span>
-                        ) : (
-                          <span className="muted">—</span>
-                        )}
-                      </td>
-                      <td className="num mono" style={{ fontSize: '12px' }}>
-                        {t.lowest_score !== null && t.highest_score !== null
-                          ? `${t.lowest_score} – ${t.highest_score}`
-                          : '—'}
-                      </td>
-                      <td className="right">
-                        <Link to={`/marks/${t.class_id}/${t.test_id}?view=marksheet`} className="btn btn-small">
-                          View Sheet →
-                        </Link>
-                      </td>
-                    </tr>
-                  ))
+                  filteredClassSummaries.map((item) => {
+                    const displaySubjects = filterSubjectId === 'all'
+                      ? item.subjects
+                      : item.subjects.filter((s) => s.subjectId === filterSubjectId)
+
+                    const rowCount = Math.max(1, displaySubjects.length)
+
+                    if (displaySubjects.length === 0) {
+                      return (
+                        <tr key={item.classId} style={{ borderBottom: '2px solid #cbd5e1' }}>
+                          <td style={{ verticalAlign: 'middle', padding: '12px', background: '#f8fafc', fontWeight: 700 }}>
+                            <div style={{ fontSize: '15px', color: '#0f172a' }}>{item.className}</div>
+                            <div className="muted" style={{ fontSize: '11px', marginTop: '2px', fontWeight: 500 }}>
+                              Total Tests: 0
+                            </div>
+                          </td>
+                          <td className="muted" style={{ fontStyle: 'italic', verticalAlign: 'middle' }}>
+                            No subjects assigned
+                          </td>
+                          <td className="muted" style={{ verticalAlign: 'middle' }}>—</td>
+                          <td style={{ textAlign: 'center', verticalAlign: 'middle' }}>
+                            <span className="chip" style={{ background: '#f1f5f9', color: '#64748b' }}>0 tests</span>
+                          </td>
+                          <td className="muted" style={{ verticalAlign: 'middle' }}>—</td>
+                          <td className="right" style={{ verticalAlign: 'middle' }}>
+                            <Link
+                              to={`/dashboard/marks/class/${item.classId}`}
+                              className="btn btn-small"
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' }}
+                            >
+                              <span>View Sheet</span>
+                              <span>→</span>
+                            </Link>
+                          </td>
+                        </tr>
+                      )
+                    }
+
+                    return displaySubjects.map((s, idx) => {
+                      const isLastSubject = idx === displaySubjects.length - 1
+                      return (
+                        <tr
+                          key={`${item.classId}_${s.subjectId}`}
+                          style={{
+                            borderBottom: isLastSubject ? '2px solid #94a3b8' : '1px solid #f1f5f9',
+                            background: idx % 2 === 0 ? '#ffffff' : '#fafafa'
+                          }}
+                        >
+                          {/* 1. Class (spans all subjects of this class) */}
+                          {idx === 0 && (
+                            <td
+                              rowSpan={rowCount}
+                              style={{
+                                verticalAlign: 'top',
+                                padding: '14px 12px',
+                                background: '#f8fafc',
+                                borderRight: '1px solid var(--line)',
+                                borderBottom: '2px solid #94a3b8',
+                                fontWeight: 700
+                              }}
+                            >
+                              <div style={{ fontSize: '15px', color: '#0f172a', fontWeight: 800 }}>{item.className}</div>
+                              <div style={{ marginTop: '6px' }}>
+                                <span className="chip" style={{
+                                  background: item.totalTestsCount > 0 ? '#e0e7ff' : '#f1f5f9',
+                                  color: item.totalTestsCount > 0 ? '#3730a3' : '#64748b',
+                                  fontSize: '11px',
+                                  fontWeight: 700
+                                }}>
+                                  {item.totalTestsCount} Total Test{item.totalTestsCount === 1 ? '' : 's'}
+                                </span>
+                              </div>
+                            </td>
+                          )}
+
+                          {/* 2. Subjects (lists the subjects in each class) */}
+                          <td style={{ verticalAlign: 'middle', padding: '10px 12px' }}>
+                            <span
+                              className="role-tag"
+                              style={{ background: '#e0f2fe', color: '#0369a1', fontWeight: 700, fontSize: '12px' }}
+                            >
+                              {s.subjectName}
+                            </span>
+                          </td>
+
+                          {/* 3. Teacher (aligns a teacher to a subject in that class) */}
+                          <td style={{ verticalAlign: 'middle', padding: '10px 12px' }}>
+                            {s.teacherName ? (
+                              <span style={{ fontWeight: 600, color: '#334155' }}>{s.teacherName}</span>
+                            ) : (
+                              <span className="muted" style={{ fontStyle: 'italic' }}>Unassigned</span>
+                            )}
+                          </td>
+
+                          {/* 4. Number of unit tests */}
+                          <td style={{ verticalAlign: 'middle', textAlign: 'center', padding: '10px 12px' }}>
+                            <span
+                              className="chip"
+                              style={{
+                                background: s.testsCount > 0 ? '#dcfce7' : '#f1f5f9',
+                                color: s.testsCount > 0 ? '#166534' : '#64748b',
+                                fontWeight: 700
+                              }}
+                            >
+                              {s.testsCount} {s.testsCount === 1 ? 'unit test' : 'unit tests'}
+                            </span>
+                          </td>
+
+                          {/* 5. Date */}
+                          <td className="mono" style={{ verticalAlign: 'middle', padding: '10px 12px', fontSize: '12px' }}>
+                            {s.latestDate ? (
+                              <span>{fmtDate(s.latestDate)}</span>
+                            ) : (
+                              <span className="muted">—</span>
+                            )}
+                          </td>
+
+                          {/* 6. Action (View Sheet directs to the entire class sheet) */}
+                          {idx === 0 && (
+                            <td
+                              rowSpan={rowCount}
+                              style={{
+                                verticalAlign: 'middle',
+                                textAlign: 'right',
+                                padding: '14px 12px',
+                                borderLeft: '1px solid var(--line)',
+                                borderBottom: '2px solid #94a3b8'
+                              }}
+                            >
+                              <Link
+                                to={`/dashboard/marks/class/${item.classId}`}
+                                className="btn btn-small"
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '6px',
+                                  whiteSpace: 'nowrap',
+                                  fontWeight: 700
+                                }}
+                              >
+                                <span>View Sheet</span>
+                                <span>→</span>
+                              </Link>
+                            </td>
+                          )}
+                        </tr>
+                      )
+                    })
+                  })
                 )}
               </tbody>
             </table>

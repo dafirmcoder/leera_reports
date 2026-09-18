@@ -387,7 +387,7 @@ export interface Api {
   deleteTeacher(userId: string): Promise<void>
 
   // subject-teacher assignments
-  listAssignments(classId: string): Promise<Assignment[]>
+  listAssignments(classId?: string): Promise<Assignment[]>
   assignTeacher(classId: string, subjectId: string, teacherId: string): Promise<void>
   removeAssignment(id: string): Promise<void>
 

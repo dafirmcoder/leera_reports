@@ -282,11 +282,14 @@ export const supabaseApi: Api = {
     return '1'
   },
 
-  async listAssignments(classId: string): Promise<Assignment[]> {
-    const { data, error } = await db()
+  async listAssignments(classId?: string): Promise<Assignment[]> {
+    let query = db()
       .from('class_subject_teachers')
       .select('id, class_id, subject_id, teacher_id, subjects(name), profiles!class_subject_teachers_teacher_id_fkey(full_name), classes(name)')
-      .eq('class_id', classId)
+    if (classId) {
+      query = query.eq('class_id', classId)
+    }
+    const { data, error } = await query
     if (error) throw new Error(error.message)
     return (data ?? []).map((r: any) => ({
       id: r.id,
