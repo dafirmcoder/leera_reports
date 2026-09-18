@@ -223,7 +223,7 @@ export default function ClassMarksheetPage() {
   }, [tests, students, subjectsWithTests, scoresMap, studentMetrics])
 
   return (
-    <div className="page stack" style={{ gap: '20px' }}>
+    <div className="page stack class-marksheet-page" style={{ gap: '20px' }}>
       {/* Header & Navigation */}
       <div className="page-head" style={{ marginBottom: 0 }}>
         <div>
@@ -349,12 +349,16 @@ export default function ClassMarksheetPage() {
         </div>
       ) : (
         /* Entire Class Sheet Table */
-        <div className="card" style={{ padding: '0', overflow: 'hidden', borderRadius: '12px', border: '1px solid var(--line)' }}>
-          <div className="table-wrap" style={{ maxHeight: '75vh', overflowX: 'auto', overflowY: 'auto' }}>
+        <div className="card" style={{ padding: '0', overflow: 'hidden', borderRadius: '12px', border: '1px solid var(--line)', minWidth: 0, maxWidth: '100%' }}>
+          <div className="mobile-scroll-hint">
+            <span>👈 Swipe horizontally to view all subjects and unit scores 👉</span>
+          </div>
+          <div className="table-wrap class-marksheet-table-wrap" style={{ maxHeight: '75vh', overflowX: 'auto', overflowY: 'auto', WebkitOverflowScrolling: 'touch', touchAction: 'pan-x pan-y', minWidth: 0, maxWidth: '100%' }}>
             <table
-              className="table"
+              className="table class-marksheet-table"
               style={{
                 width: '100%',
+                minWidth: 'max-content',
                 borderCollapse: 'separate',
                 borderSpacing: 0,
                 fontSize: '12px',
@@ -366,10 +370,8 @@ export default function ClassMarksheetPage() {
                 <tr style={{ background: '#f8fafc', borderBottom: '1px solid var(--line)' }}>
                   <th
                     rowSpan={2}
+                    className="col-sticky col-sticky-sn"
                     style={{
-                      position: 'sticky',
-                      left: 0,
-                      zIndex: 3,
                       background: '#f8fafc',
                       width: '45px',
                       minWidth: '45px',
@@ -382,10 +384,8 @@ export default function ClassMarksheetPage() {
                   </th>
                   <th
                     rowSpan={2}
+                    className="col-sticky col-sticky-roll"
                     style={{
-                      position: 'sticky',
-                      left: '45px',
-                      zIndex: 3,
                       background: '#f8fafc',
                       minWidth: '95px',
                       padding: '8px',
@@ -397,10 +397,8 @@ export default function ClassMarksheetPage() {
                   </th>
                   <th
                     rowSpan={2}
+                    className="col-sticky col-sticky-name"
                     style={{
-                      position: 'sticky',
-                      left: '140px',
-                      zIndex: 3,
                       background: '#f8fafc',
                       minWidth: '180px',
                       textAlign: 'left',
@@ -442,10 +440,8 @@ export default function ClassMarksheetPage() {
                   {/* Last Column: Aggregate View */}
                   <th
                     rowSpan={2}
+                    className="col-sticky col-sticky-agg"
                     style={{
-                      position: 'sticky',
-                      right: 0,
-                      zIndex: 3,
                       background: '#e0e7ff',
                       color: '#3730a3',
                       minWidth: '110px',
@@ -547,10 +543,8 @@ export default function ClassMarksheetPage() {
                       >
                         {/* S/N */}
                         <td
+                          className="col-sticky col-sticky-sn"
                           style={{
-                            position: 'sticky',
-                            left: 0,
-                            zIndex: 2,
                             background: sIndex % 2 === 0 ? '#ffffff' : '#fcfdfe',
                             padding: '6px 8px',
                             fontWeight: 600,
@@ -563,11 +557,8 @@ export default function ClassMarksheetPage() {
 
                         {/* Roll No */}
                         <td
-                          className="mono"
+                          className="mono col-sticky col-sticky-roll"
                           style={{
-                            position: 'sticky',
-                            left: '45px',
-                            zIndex: 2,
                             background: sIndex % 2 === 0 ? '#ffffff' : '#fcfdfe',
                             padding: '6px 8px',
                             fontSize: '11px',
@@ -580,10 +571,8 @@ export default function ClassMarksheetPage() {
 
                         {/* Student Name */}
                         <td
+                          className="col-sticky col-sticky-name"
                           style={{
-                            position: 'sticky',
-                            left: '140px',
-                            zIndex: 2,
                             background: sIndex % 2 === 0 ? '#ffffff' : '#fcfdfe',
                             textAlign: 'left',
                             padding: '6px 12px',
@@ -665,10 +654,8 @@ export default function ClassMarksheetPage() {
 
                         {/* Last Column: Aggregate View Per Student */}
                         <td
+                          className="col-sticky col-sticky-agg"
                           style={{
-                            position: 'sticky',
-                            right: 0,
-                            zIndex: 2,
                             background: sIndex % 2 === 0 ? '#f0f4ff' : '#ebf0ff',
                             padding: '6px 8px',
                             fontSize: '12px',
@@ -693,10 +680,8 @@ export default function ClassMarksheetPage() {
                 <tr style={{ background: '#f1f5f9', borderTop: '2px solid #94a3b8', fontWeight: 800 }}>
                   <td
                     colSpan={3}
+                    className="col-sticky col-sticky-foot"
                     style={{
-                      position: 'sticky',
-                      left: 0,
-                      zIndex: 3,
                       background: '#f1f5f9',
                       textAlign: 'right',
                       padding: '8px 12px',
@@ -762,10 +747,8 @@ export default function ClassMarksheetPage() {
 
                   {/* Aggregate Class Average */}
                   <td
+                    className="col-sticky col-sticky-agg"
                     style={{
-                      position: 'sticky',
-                      right: 0,
-                      zIndex: 3,
                       background: '#c7d2fe',
                       color: '#1e1b4b',
                       padding: '8px',

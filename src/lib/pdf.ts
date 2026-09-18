@@ -298,16 +298,47 @@ export async function generateStudentPdf(ctx: PdfContext): Promise<jsPDF> {
         data.cell.styles.cellPadding = { top: 1.0, bottom: 1.0, left: 0, right: 0 }
         data.cell.text = ['']
       }
-    },
-    didDrawPage: () => drawFooter(doc, school)
+    }
   })
+
+  // Footer placement:
+  // If the table extends near the very bottom margin (or fills the page), the footer becomes fixed
+  // at the bottom on the first page, while following pages resume our prior styling (immediately after the table).
+  const pageCount = doc.getNumberOfPages()
+  const finalY = (doc as any).lastAutoTable?.finalY ?? (PAGE_H - MARGIN - 12)
+  const fh = 8.5
+  const fixedBottomY = PAGE_H - MARGIN - fh
+  const bottomThreshold = 245 // near bottom margin threshold (mm)
+
+  if (pageCount > 1) {
+    // 1. First page (and intermediate full pages): table extended to bottom margin -> footer is fixed at bottom
+    for (let p = 1; p < pageCount; p++) {
+      doc.setPage(p)
+      drawFooterAtY(doc, school, fixedBottomY)
+    }
+    // 2. Following/last page: resume prior styling immediately after the table
+    doc.setPage(pageCount)
+    let followingPageY = finalY + 5
+    if (followingPageY > fixedBottomY) {
+      followingPageY = fixedBottomY
+    }
+    drawFooterAtY(doc, school, followingPageY)
+  } else {
+    // Single page
+    if (finalY >= bottomThreshold) {
+      // Table extends near the very bottom margin -> fixed at the bottom of the first page
+      drawFooterAtY(doc, school, fixedBottomY)
+    } else {
+      // Prior styling: immediately after the table and pushed downwards as table grows
+      drawFooterAtY(doc, school, finalY + 5)
+    }
+  }
 
   return doc
 }
 
-function drawFooter(doc: jsPDF, school: School): void {
+function drawFooterAtY(doc: jsPDF, school: School, fy: number): void {
   const fh = 8.5
-  const fy = PAGE_H - MARGIN - fh
   const [fr, fg, fb] = hexToRgb(school.footer_color || '#1F8A5F')
   doc.setFillColor(fr, fg, fb)
   doc.roundedRect(MARGIN, fy, PAGE_W - 2 * MARGIN, fh, 1.2, 1.2, 'F')
@@ -548,26 +579,50 @@ export async function generateSubjectMarksheetPdf(ctx: SubjectMarksheetContext):
       0: { cellWidth: 8, halign: 'center' },
       1: { cellWidth: 18, halign: 'center' },
       2: { cellWidth: 48, halign: 'left' }
-    },
-    didDrawPage: () => drawFooterLandscape(doc, school)
+    }
   })
+
+  // Footer placement:
+  // If the table extends near the very bottom margin (or fills the page), the footer becomes fixed
+  // at the bottom on the first page, while following pages resume our prior styling (immediately after the table).
+  const pageCount = doc.getNumberOfPages()
+  const finalY = (doc as any).lastAutoTable?.finalY ?? (PAGE_H - MARGIN - 10)
+  const fh = 7.5
+  const fixedBottomY = PAGE_H - MARGIN - fh
+  const bottomThreshold = 170 // near bottom margin threshold for landscape (mm)
+
+  if (pageCount > 1) {
+    for (let p = 1; p < pageCount; p++) {
+      doc.setPage(p)
+      drawFooterLandscapeAtY(doc, school, fixedBottomY)
+    }
+    doc.setPage(pageCount)
+    let followingPageY = finalY + 5
+    if (followingPageY > fixedBottomY) {
+      followingPageY = fixedBottomY
+    }
+    drawFooterLandscapeAtY(doc, school, followingPageY)
+  } else {
+    if (finalY >= bottomThreshold) {
+      drawFooterLandscapeAtY(doc, school, fixedBottomY)
+    } else {
+      drawFooterLandscapeAtY(doc, school, finalY + 5)
+    }
+  }
 
   return doc
 }
 
-function drawFooterLandscape(doc: jsPDF, school: School): void {
+function drawFooterLandscapeAtY(doc: jsPDF, school: School, fy: number): void {
   const PAGE_W = 297
-  const PAGE_H = 210
-  const MARGIN = 12
-  const fh = 7
-  const fy = PAGE_H - MARGIN - fh
+  const fh = 7.5
   const [fr, fg, fb] = hexToRgb(school.footer_color || '#1F8A5F')
   doc.setFillColor(fr, fg, fb)
-  doc.rect(MARGIN, fy, PAGE_W - 2 * MARGIN, fh, 'F')
+  doc.roundedRect(MARGIN, fy, PAGE_W - 2 * MARGIN, fh, 1.2, 1.2, 'F')
   doc.setTextColor(255, 255, 255)
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(8.5)
-  doc.text(school.footer_text || '', PAGE_W / 2, fy + fh / 2, { align: 'center', baseline: 'middle' })
+  doc.text(school.footer_text || '', PAGE_W / 2, fy + fh / 2 + 0.2, { align: 'center', baseline: 'middle' })
 }
 
 export async function downloadSubjectMarksheetPdf(ctx: SubjectMarksheetContext): Promise<void> {

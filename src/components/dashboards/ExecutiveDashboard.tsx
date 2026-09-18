@@ -752,6 +752,9 @@ export default function ExecutiveDashboard({ section = 'overview' }: DashboardPr
           </div>
 
           {/* Detailed Tests Table: Exact 6 Columns Requested */}
+          <div className="mobile-scroll-hint" style={{ borderRadius: '8px 8px 0 0', margin: '0' }}>
+            <span>👈 Swipe horizontally to view all summary columns & sheets 👉</span>
+          </div>
           <div className="table-wrap">
             <table className="table">
               <thead>
