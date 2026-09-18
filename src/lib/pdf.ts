@@ -50,15 +50,16 @@ export async function generateStudentPdf(ctx: PdfContext): Promise<jsPDF> {
   const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' })
 
   // ---- header ---------------------------------------------------------------
-  const schoolLogoW = 24.5
-  const schoolLogoH = 21 // Preserves ~1.17 aspect ratio of 400x342
+  // Exact layout matching .report-sheet and .report-header in styles.css
+  const schoolLogoW = 25.74
+  const schoolLogoH = 22 // Height matches .logo-left { height: 22mm }
   const schoolLogoX = MARGIN
   const schoolLogoY = 10
 
-  const cambridgeLogoW = 44
-  const cambridgeLogoH = 7.4 // Preserves ~5.95 aspect ratio of 1000x168
+  const cambridgeLogoW = 44.05
+  const cambridgeLogoH = 7.4 // Height matches .logo-right { height: 7.4mm }
   const cambridgeLogoX = PAGE_W - MARGIN - cambridgeLogoW
-  const cambridgeLogoY = 11.5
+  const cambridgeLogoY = 12 // Matches .logo-right { top: 2mm } relative to content top (10mm)
 
   if (school.show_school_logo) {
     if (!schoolLogoData) schoolLogoData = await loadImageDataUrl('/logos/school-logo.png')
@@ -74,86 +75,118 @@ export async function generateStudentPdf(ctx: PdfContext): Promise<jsPDF> {
   const leftBound = school.show_school_logo ? schoolLogoX + schoolLogoW + logoGap : MARGIN
   const rightBound = school.show_cambridge_logo ? cambridgeLogoX - logoGap : PAGE_W - MARGIN
 
-  // Keep title centered on page, capped to available safe clearance on both sides
+  // Keep title centered on page, capped to available safe clearance and max 96mm (as in .report-title-block)
   const centerX = PAGE_W / 2
   const maxAllowedHalfW = Math.min(centerX - leftBound, rightBound - centerX)
-  const maxBandW = Math.max(50, maxAllowedHalfW * 2)
+  const maxBandW = Math.min(96, Math.max(50, maxAllowedHalfW * 2))
 
-  // School name — auto-fit font size so it fits inside maxBandW without overlapping logos
+  // School name — uppercase, auto-scaled bold font
   const name = school.name.toUpperCase()
-  let fontSize = 16
+  let fontSize = 13.5
   doc.setFont('helvetica', 'bold')
   while (fontSize > 8.5) {
     doc.setFontSize(fontSize)
-    if (doc.getTextWidth(name) + 10 <= maxBandW) break
+    if (doc.getTextWidth(name) + 8 <= maxBandW) break
     fontSize -= 0.5
   }
 
   const nameW = doc.getTextWidth(name)
-  const bandW = Math.min(nameW + 10, maxBandW)
-  const bandH = 10
+  const bandW = Math.min(nameW + 8, maxBandW)
+  const bandH = 7.5
   const bandX = (PAGE_W - bandW) / 2
-  const bandY = 11.5
+  const bandY = 12.5
   const [rr, rg, rb] = hexToRgb('#C00000')
   doc.setFillColor(rr, rg, rb)
-  doc.roundedRect(bandX, bandY, bandW, bandH, 1.5, 1.5, 'F')
+  doc.roundedRect(bandX, bandY, bandW, bandH, 1.2, 1.2, 'F')
   doc.setTextColor(255, 255, 255)
-  doc.text(name, PAGE_W / 2, bandY + bandH / 2, { align: 'center', baseline: 'middle' })
+  doc.text(name, PAGE_W / 2, bandY + bandH / 2 + 0.3, { align: 'center', baseline: 'middle' })
 
-  let titleBottom = bandY + bandH
+  let headerContentBottom = bandY + bandH
   if (school.motto) {
-    const mottoY = titleBottom + 3.5
+    const mottoY = headerContentBottom + 3.8
     doc.setFont('helvetica', 'italic')
     doc.setFontSize(9)
     doc.setTextColor(107, 127, 138)
     doc.text(school.motto, PAGE_W / 2, mottoY, { align: 'center' })
-    titleBottom = mottoY + 2
+    headerContentBottom = mottoY + 1.5
   }
 
   // Calculate bottom of all header content so the report band never slices through the logos
-  let headerBottom = titleBottom
-  if (school.show_school_logo) {
-    headerBottom = Math.max(headerBottom, schoolLogoY + schoolLogoH)
-  }
+  let headerBottom = Math.max(headerContentBottom, schoolLogoY + schoolLogoH)
   if (school.show_cambridge_logo) {
     headerBottom = Math.max(headerBottom, cambridgeLogoY + cambridgeLogoH)
   }
 
-  // "END OF UNIT TEST REPORT" band — placed strictly below ALL header elements with clean spacing
+  // "END OF UNIT TEST REPORT" band — placed strictly below header with 4mm spacing
   let y = headerBottom + 4
-  const band2H = 7
-  doc.setFillColor(31, 78, 95)
-  doc.rect(MARGIN, y, PAGE_W - 2 * MARGIN, band2H, 'F')
+  const band2H = 7.5
+  doc.setFillColor(31, 78, 95) // var(--teal) #1F4E5F
+  doc.roundedRect(MARGIN, y, PAGE_W - 2 * MARGIN, band2H, 1.2, 1.2, 'F')
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(11)
   doc.setTextColor(255, 255, 255)
-  doc.text('END OF UNIT TEST REPORT', PAGE_W / 2, y + band2H / 2, { align: 'center', baseline: 'middle' })
-  y += band2H + 4
+  doc.text('END OF UNIT TEST REPORT', PAGE_W / 2, y + band2H / 2 + 0.3, { align: 'center', baseline: 'middle' })
+  y += band2H + 4.5
 
   // ---- info block ------------------------------------------------------------
   const printed = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })
-  const infoLines: Array<Array<[string, boolean]>> = [
-    [['Student: ', true], [student.full_name, false]],
-    [['Roll No.: ', true], [formatRollNo(student.roll_no || student.admission_no) || '—', false], ['   ·   ', false], ['Class: ', true], [className || '—', false]],
-    [['Semester: ', true], [school.semester || school.term || '—', false], ['   ·   ', false], ['Academic Year: ', true], [school.academic_year, false]],
-    [['Teacher: ', true], [teacherName || '—', false], ['   ·   ', false], ['Printed: ', true], [printed, false]]
+  const infoLines: Array<Array<{ text: string; type: 'lbl' | 'val' | 'sep' }>> = [
+    [
+      { text: 'Student: ', type: 'lbl' },
+      { text: student.full_name, type: 'val' }
+    ],
+    [
+      { text: 'Roll No.: ', type: 'lbl' },
+      { text: formatRollNo(student.roll_no || student.admission_no) || '—', type: 'val' },
+      { text: '   ·   ', type: 'sep' },
+      { text: 'Class: ', type: 'lbl' },
+      { text: className || '—', type: 'val' }
+    ],
+    [
+      { text: 'Semester: ', type: 'lbl' },
+      { text: school.semester || school.term || '—', type: 'val' },
+      { text: '   ·   ', type: 'sep' },
+      { text: 'Academic Year: ', type: 'lbl' },
+      { text: school.academic_year, type: 'val' }
+    ],
+    [
+      { text: 'Teacher: ', type: 'lbl' },
+      { text: teacherName || '—', type: 'val' },
+      { text: '   ·   ', type: 'sep' },
+      { text: 'Printed: ', type: 'lbl' },
+      { text: printed, type: 'val' }
+    ]
   ]
-  doc.setFontSize(10)
-  for (const segs of infoLines) {
+
+  doc.setFontSize(9.8)
+  for (const line of infoLines) {
     let x = MARGIN
-    for (const [txt, bold] of segs) {
-      doc.setFont('helvetica', bold ? 'bold' : 'normal')
-      doc.setTextColor(bold ? 31 : 28, bold ? 78 : 43, bold ? 95 : 51)
-      doc.text(txt, x, y)
-      x += doc.getTextWidth(txt)
+    for (const seg of line) {
+      if (seg.type === 'lbl') {
+        doc.setFont('helvetica', 'bold')
+        doc.setTextColor(31, 78, 95) // var(--teal)
+      } else if (seg.type === 'sep') {
+        doc.setFont('helvetica', 'normal')
+        doc.setTextColor(195, 211, 220) // var(--line)
+      } else {
+        doc.setFont('helvetica', 'normal')
+        doc.setTextColor(28, 43, 51) // var(--text)
+      }
+      doc.text(seg.text, x, y)
+      x += doc.getTextWidth(seg.text)
     }
-    y += 5.3
+    y += 5.2
   }
-  const startY = y + 3
+  const startY = y + 2.5
 
   // ---- table -----------------------------------------------------------------
   const report = buildReport(rows)
-  const avgStyle = { fillColor: [221, 235, 241] as [number, number, number], fontStyle: 'bold' as const, textColor: [31, 78, 95] as [number, number, number], halign: 'center' as const }
+  const avgStyle = {
+    fillColor: [221, 235, 241] as [number, number, number], // #ddebf1
+    fontStyle: 'bold' as const,
+    textColor: [31, 78, 95] as [number, number, number],
+    halign: 'center' as const
+  }
 
   const body: any[] = []
   report.subjects.forEach((s, idx) => {
@@ -165,16 +198,23 @@ export async function generateStudentPdf(ctx: PdfContext): Promise<jsPDF> {
           content: s.name,
           rowSpan,
           styles: {
-            fillColor: [234, 243, 248] as [number, number, number],
+            fillColor: [234, 243, 248] as [number, number, number], // #eaf3f8
             textColor: [31, 78, 95] as [number, number, number],
             fontStyle: 'bold',
             halign: 'center',
-            valign: 'middle'
+            valign: 'middle',
+            lineWidth: 0.25,
+            lineColor: [195, 211, 220] as [number, number, number]
           }
         })
       }
-      // rows covered by the subject rowSpan omit the subject column
-      cells.push(r.title, fmtDate(r.test_date), String(r.score), String(r.max_mark), pct(r.score, r.max_mark))
+      cells.push(
+        r.title,
+        fmtDate(r.test_date),
+        String(r.score),
+        String(r.max_mark),
+        fmtPct((r.score / (r.max_mark || 1)) * 100)
+      )
       body.push(cells)
     })
     if (s.count > 1) {
@@ -185,66 +225,96 @@ export async function generateStudentPdf(ctx: PdfContext): Promise<jsPDF> {
         { content: fmtPct(s.average), styles: avgStyle }
       ])
     }
-    if (idx < report.subjects.length - 1) body.push(['__SPACER__', '', '', '', '', ''])
+    if (idx < report.subjects.length - 1) {
+      body.push(['__SPACER__', '', '', '', '', ''])
+    }
   })
+
   if (report.subjects.length > 0) {
     body.push([
-      { content: `Overall Average: ${fmtPct(report.overall)}`, colSpan: 6, styles: { ...avgStyle } }
+      {
+        content: `Overall Average: ${fmtPct(report.overall)}`,
+        colSpan: 6,
+        styles: { ...avgStyle, cellPadding: 2.8, halign: 'center' }
+      }
     ])
   } else {
-    body.push([{ content: 'No end-of-unit tests recorded yet for this student.', colSpan: 6, styles: { textColor: [107, 127, 138], halign: 'center' } }])
+    body.push([
+      {
+        content: 'No end-of-unit tests recorded yet for this student.',
+        colSpan: 6,
+        styles: { textColor: [107, 127, 138], halign: 'center', cellPadding: 6 }
+      }
+    ])
   }
 
   autoTable(doc, {
     startY,
-    margin: { left: MARGIN, right: MARGIN, top: startY, bottom: 30 },
+    margin: { left: MARGIN, right: MARGIN, top: 20, bottom: 26 },
     head: [['Subject', 'Unit / Topic', 'Date', 'Score', 'Out of (Max)', 'Mark %']],
     body,
     theme: 'grid',
     styles: {
       font: 'helvetica',
       fontSize: 9.5,
-      cellPadding: 1.8,
+      cellPadding: { top: 2.2, bottom: 2.2, left: 2.5, right: 2.5 },
       textColor: [28, 43, 51],
-      lineColor: [212, 222, 228],
-      lineWidth: 0.25
+      lineColor: [212, 221, 227], // matches #d4dde3
+      lineWidth: 0.22,
+      valign: 'middle'
     },
-    headStyles: { fillColor: [31, 78, 95], textColor: 255, fontStyle: 'bold', halign: 'center' },
+    headStyles: {
+      fillColor: [31, 78, 95], // var(--teal)
+      textColor: 255,
+      fontStyle: 'bold',
+      fontSize: 9.5,
+      cellPadding: { top: 2.4, bottom: 2.4, left: 2.5, right: 2.5 }
+    },
     columnStyles: {
-      0: { cellWidth: 28, halign: 'center' },
-      1: { cellWidth: 60 },
+      0: { cellWidth: 38, halign: 'center' },
+      1: { cellWidth: 64, halign: 'left' },
       2: { cellWidth: 22, halign: 'center' },
-      3: { cellWidth: 16, halign: 'center' },
-      4: { cellWidth: 26, halign: 'center' },
-      5: { cellWidth: 34, halign: 'center' }
+      3: { cellWidth: 18, halign: 'center' },
+      4: { cellWidth: 22, halign: 'center' },
+      5: { cellWidth: 22, halign: 'center' }
     },
     didParseCell: (data) => {
+      // Align headers exactly like onscreen: columns 0 and 1 left aligned, 2-5 centered
+      if (data.section === 'head') {
+        if (data.column.index === 0 || data.column.index === 1) {
+          data.cell.styles.halign = 'left'
+        } else {
+          data.cell.styles.halign = 'center'
+        }
+      }
+
+      // Format spacer rows between subjects
       const raw = data.row.raw as any[]
       if (data.section === 'body' && Array.isArray(raw) && raw[0] === '__SPACER__') {
         data.cell.styles.fillColor = [255, 255, 255]
         data.cell.styles.textColor = [255, 255, 255]
         data.cell.styles.lineColor = [255, 255, 255]
         data.cell.styles.lineWidth = 0
+        data.cell.styles.cellPadding = { top: 1.0, bottom: 1.0, left: 0, right: 0 }
         data.cell.text = ['']
       }
     },
     didDrawPage: () => drawFooter(doc, school)
   })
 
-  // if the table ended on the last page, the footer is already drawn there
   return doc
 }
 
 function drawFooter(doc: jsPDF, school: School): void {
-  const fh = 8
+  const fh = 8.5
   const fy = PAGE_H - MARGIN - fh
   const [fr, fg, fb] = hexToRgb(school.footer_color || '#1F8A5F')
   doc.setFillColor(fr, fg, fb)
-  doc.rect(MARGIN, fy, PAGE_W - 2 * MARGIN, fh, 'F')
+  doc.roundedRect(MARGIN, fy, PAGE_W - 2 * MARGIN, fh, 1.2, 1.2, 'F')
   doc.setTextColor(255, 255, 255)
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(9.5)
-  doc.text(school.footer_text || '', PAGE_W / 2, fy + fh / 2, { align: 'center', baseline: 'middle' })
+  doc.text(school.footer_text || '', PAGE_W / 2, fy + fh / 2 + 0.3, { align: 'center', baseline: 'middle' })
 }
 
 // ---------------------------------------------------------------------------
