@@ -160,10 +160,12 @@ export default function ExecutiveDashboard({ section = 'overview' }: DashboardPr
 
       // 1. Seed from assignments
       classAssignments.forEach((a) => {
+        const sName = a.subject_name || subjects.find((s) => s.id === a.subject_id)?.name
+        if (!sName || sName.toLowerCase().includes('unknown')) return
         if (!subjectMap.has(a.subject_id)) {
           subjectMap.set(a.subject_id, {
             subjectId: a.subject_id,
-            subjectName: a.subject_name || subjects.find((s) => s.id === a.subject_id)?.name || 'Subject',
+            subjectName: sName,
             teacherName: a.teacher_name || '',
             testsCount: 0,
             testsWithMarksCount: 0,
@@ -174,11 +176,13 @@ export default function ExecutiveDashboard({ section = 'overview' }: DashboardPr
 
       // 2. Add or update from tests
       classTests.forEach((t) => {
+        const sName = t.subject_name || subjects.find((s) => s.id === t.subject_id)?.name
+        if (!sName || sName.toLowerCase().includes('unknown')) return
         let entry = subjectMap.get(t.subject_id)
         if (!entry) {
           entry = {
             subjectId: t.subject_id,
-            subjectName: t.subject_name || subjects.find((s) => s.id === t.subject_id)?.name || 'Subject',
+            subjectName: sName,
             teacherName: t.teacher_name || '',
             testsCount: 0,
             testsWithMarksCount: 0,

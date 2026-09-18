@@ -919,7 +919,7 @@ export const supabaseApi: Api = {
       this.listSubjects(),
       this.listProfiles().catch(() => [] as Profile[]),
       db().from('class_subject_teachers').select('id, class_id, subject_id, teacher_id, profiles!class_subject_teachers_teacher_id_fkey(id, full_name)'),
-      db().from('unit_tests').select('id, class_id, subject_id, title, test_date, max_mark, exam_paper_url, exam_paper_path, exam_paper_name, subjects(name), classes(name)'),
+      db().from('unit_tests').select('id, class_id, subject_id, created_by, title, test_date, max_mark, exam_paper_url, exam_paper_path, exam_paper_name, subjects(name), classes(name)'),
       db().from('scores').select('unit_test_id, student_id, score'),
       db().from('students').select('id, class_id')
     ])
@@ -961,7 +961,9 @@ export const supabaseApi: Api = {
       }
     }
 
-    const all_tests: UnitTestSummaryItem[] = (testsData ?? []).map((t: any) => {
+    const all_tests: UnitTestSummaryItem[] = (testsData ?? [])
+      .filter((t: any) => t.subjects?.name && !t.subjects.name.toLowerCase().includes('unknown'))
+      .map((t: any) => {
       const maxMark = Number(t.max_mark) || 100
       const enteredMarks = scoresByTest.get(t.id) ?? []
       const marksCount = enteredMarks.length
@@ -971,7 +973,14 @@ export const supabaseApi: Api = {
       const avgPct = avgScore !== null && maxMark > 0 ? Number(((avgScore / maxMark) * 100).toFixed(1)) : null
       const highest = hasMarks ? Math.max(...enteredMarks) : null
       const lowest = hasMarks ? Math.min(...enteredMarks) : null
-      const teacherName = assignmentMap.get(`${t.class_id}_${t.subject_id}`) || classHomeroomMap.get(t.class_id) || 'Unassigned'
+      const creator = profiles.find((pr) => pr.id === t.created_by)
+      const assignedTeacherId = assignmentIdMap.get(`${t.class_id}_${t.subject_id}`)
+      const assignedTeacherName = assignmentMap.get(`${t.class_id}_${t.subject_id}`)
+      const teacherId = assignedTeacherId || t.created_by || classHomeroomIdMap.get(t.class_id)
+      const teacherName = assignedTeacherName
+        || (creator?.full_name ? creator.full_name : null)
+        || classHomeroomMap.get(t.class_id)
+        || 'Unassigned'
 
       return {
         test_id: t.id,
@@ -979,6 +988,8 @@ export const supabaseApi: Api = {
         class_name: t.classes?.name ?? classMap.get(t.class_id) ?? 'Class',
         subject_id: t.subject_id,
         subject_name: t.subjects?.name ?? 'Subject',
+        teacher_id: teacherId,
+        created_by: t.created_by,
         teacher_name: teacherName,
         title: t.title,
         test_date: t.test_date,
@@ -1090,6 +1101,8 @@ export const supabaseApi: Api = {
       }
 
       const teacherTests = all_tests.filter((t) => {
+        if (t.created_by === p.id) return true
+        if (t.teacher_id === p.id) return true
         const key = `${t.class_id}_${t.subject_id}`
         const assignedTeacherId = assignmentIdMap.get(key)
         if (assignedTeacherId) return assignedTeacherId === p.id
@@ -1273,13 +1286,35 @@ export const supabaseApi: Api = {
 
     if (aErr) throw new Error(aErr.message)
 
-    const assignedPairs = (assignmentsData ?? []).map((a: any) => ({
-      id: a.id,
-      class_id: a.class_id,
-      class_name: a.classes?.name || 'Unknown Class',
-      subject_id: a.subject_id,
-      subject_name: a.subjects?.name || 'Unknown Subject'
-    }))
+    const assignedPairs = (assignmentsData ?? [])
+      .filter((a: any) => a.subjects?.name && !a.subjects.name.toLowerCase().includes('unknown'))
+      .map((a: any) => ({
+        id: a.id,
+        class_id: a.class_id,
+        class_name: a.classes?.name || 'Class',
+        subject_id: a.subject_id,
+        subject_name: a.subjects.name
+      }))
+
+    // Also include any courses where this teacher has created unit tests directly
+    const { data: createdTestsData } = await db()
+      .from('unit_tests')
+      .select('id, class_id, subject_id, classes(name), subjects(name)')
+      .eq('created_by', teacherId)
+
+    for (const ct of (createdTestsData ?? []) as any[]) {
+      const sName = ct.subjects?.name
+      if (!sName || sName.toLowerCase().includes('unknown')) continue
+      if (!assignedPairs.some((p) => p.class_id === ct.class_id && p.subject_id === ct.subject_id)) {
+        assignedPairs.push({
+          id: `${ct.class_id}_${ct.subject_id}`,
+          class_id: ct.class_id,
+          class_name: ct.classes?.name || 'Class',
+          subject_id: ct.subject_id,
+          subject_name: sName
+        })
+      }
+    }
 
     const assignmentsOverview: TeacherAssignmentOverview[] = []
     let totalTestsCreated = 0

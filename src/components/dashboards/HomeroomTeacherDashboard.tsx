@@ -238,7 +238,7 @@ export default function HomeroomTeacherDashboard() {
           </Link>
         </div>
 
-        {/* Homeroom Unit Tests */}
+        {/* Unit Tests */}
         <div className="card" style={{ padding: '20px', borderRadius: '12px', borderLeft: '4px solid #8b5cf6' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
             <span style={{ fontSize: '13px', color: '#64748b', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
@@ -247,10 +247,12 @@ export default function HomeroomTeacherDashboard() {
             <span style={{ fontSize: '20px' }}>📝</span>
           </div>
           <div style={{ fontSize: '28px', fontWeight: 800, color: '#0f172a' }}>
-            {data?.homeroomTestsCount ?? 0}
+            {(data?.totalTestsCreated && data.totalTestsCreated > 0) ? data.totalTestsCreated : (data?.homeroomTestsCount ?? 0)}
           </div>
           <p style={{ margin: '6px 0 10px', fontSize: '12px', color: '#64748b' }}>
-            Across all class subjects
+            {data?.totalTestsCreated && data.totalTestsCreated > 0
+              ? `${data.totalTestsCreated} created in subjects you teach`
+              : 'Across all class subjects'}
           </p>
           <Link to="/marks" style={{ fontSize: '12px', fontWeight: 600, color: '#8b5cf6', textDecoration: 'none' }}>
             View Class Marksheets →
@@ -354,7 +356,9 @@ export default function HomeroomTeacherDashboard() {
               gap: '16px'
             }}
           >
-            {data.assignments.map((asgn) => {
+            {data.assignments
+              .filter((asgn) => asgn.subject_name && !asgn.subject_name.toLowerCase().includes('unknown'))
+              .map((asgn) => {
               const hasPending = asgn.pending_marks_count > 0
 
               return (
