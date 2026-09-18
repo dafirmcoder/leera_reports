@@ -9,6 +9,7 @@ export type Capability =
   | 'manageClasses'      // create classes / set homeroom teacher (HOS only)
   | 'assignTeachers'     // assign subject teachers (HOS + coordinators + homeroom teacher)
   | 'addStudents'        // homeroom teacher only
+  | 'viewStudents'       // homeroom teacher, HOS, curriculum coordinator (hidden from pure subject teachers)
   | 'addMarks'           // homeroom + subject teachers + coordinators
   | 'deleteTests'        // coordinators + HOS + admin only (regular teachers cannot delete)
   | 'viewAllClasses'     // sees the whole school (director/HOS/coordinator/admin)
@@ -37,6 +38,8 @@ export function can(role: Role | undefined, cap: Capability, additionalRoles: Ro
       return roles.has('head_of_school') || roles.has('curriculum_coordinator') || roles.has('homeroom_teacher')
     case 'addStudents':
       return roles.has('homeroom_teacher')
+    case 'viewStudents':
+      return roles.has('homeroom_teacher') || roles.has('head_of_school') || roles.has('curriculum_coordinator')
     case 'addMarks':
       return roles.has('homeroom_teacher') || roles.has('subject_teacher') || roles.has('curriculum_coordinator') || roles.has('head_of_school')
     case 'deleteTests':
@@ -89,8 +92,11 @@ export function navTabs(role: Role | undefined, additionalRoles: Role[] = []): T
   // All other roles (Head of School, Coordinator, Homeroom Teacher, Subject Teacher)
   tabs.push({ to: '/dashboard', label: 'Dashboard', icon: '📊' })
 
+  if (can(role, 'viewStudents', additionalRoles)) {
+    tabs.push({ to: '/students', label: 'Students', icon: '👥' })
+  }
+
   tabs.push(
-    { to: '/students', label: 'Students', icon: '👥' },
     { to: '/marks', label: 'Marks', icon: '📝' },
     { to: '/reports', label: 'Reports', icon: '📄' }
   )

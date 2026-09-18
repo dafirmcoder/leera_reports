@@ -72,7 +72,9 @@ export default function App() {
         {/* Teacher & Academic routes: hidden from Director and Admin */}
         {!isAdmin && !isDirector && (
           <>
-            <Route path="/students" element={<Students />} />
+            {can(profile.role, 'viewStudents', profile.additional_roles) && (
+              <Route path="/students" element={<Students />} />
+            )}
             <Route path="/marks" element={<Marks />} />
             <Route path="/reports" element={<Reports />} />
             <Route path="/reports/:studentId" element={<ReportView />} />

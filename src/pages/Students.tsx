@@ -1,16 +1,17 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { Navigate } from 'react-router-dom'
 import { api } from '../lib/api'
 import { buildRollNo, formatRollNo, formatStudentNo, nextStudentNo } from '../lib/report'
 import { useSchool } from '../context/SchoolContext'
 import { useAuth } from '../context/AuthContext'
-import { can } from '../lib/permissions'
+import { can, hasRole } from '../lib/permissions'
 import ClassPicker from '../components/ClassPicker'
 import type { Student } from '../lib/types'
 
 const empty = { student_no: '', roll_no: '', full_name: '', gender: '' }
 
 export default function Students() {
-  const { selectedClassId, classes, school } = useSchool()
+  const { selectedClassId, setSelectedClassId, classes, school } = useSchool()
   const { profile } = useAuth()
   const [students, setStudents] = useState<Student[]>([])
   const [nextRollNo, setNextRollNo] = useState('')
@@ -19,34 +20,58 @@ export default function Students() {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
-  // Homeroom teachers manage only their own roster, not other assigned classes.
+  const isHomeroomTeacher = hasRole(profile?.role, 'homeroom_teacher', profile?.additional_roles)
+  const isLeadership = can(profile?.role, 'manageUsers', profile?.additional_roles) ||
+    hasRole(profile?.role, 'head_of_school', profile?.additional_roles) ||
+    hasRole(profile?.role, 'curriculum_coordinator', profile?.additional_roles)
+
+  // Find homeroom class for homeroom teachers
+  const homeroomClass = classes.find(
+    (c) => c.id === profile?.class_id || (profile?.id && c.homeroom_teacher_id === profile?.id)
+  )
+
+  // Homeroom teachers can ONLY see their designated homeroom class. Leadership can select any class.
+  const activeClassId = isLeadership
+    ? selectedClassId
+    : (homeroomClass?.id ?? profile?.class_id ?? null)
+
+  const activeClass = classes.find((c) => c.id === activeClassId)
+  const className = activeClass?.name ?? ''
+
+  // Sync selectedClassId with homeroom class for homeroom teachers
+  useEffect(() => {
+    if (!isLeadership && homeroomClass?.id && selectedClassId !== homeroomClass.id) {
+      setSelectedClassId(homeroomClass.id)
+    }
+  }, [isLeadership, homeroomClass?.id, selectedClassId, setSelectedClassId])
+
+  // Homeroom teachers manage only their own roster
   const canAdd = can(profile?.role, 'addStudents', profile?.additional_roles)
-    && !!selectedClassId && selectedClassId === profile?.class_id
-  const className = classes.find((c) => c.id === selectedClassId)?.name ?? ''
+    && !!activeClassId && (activeClassId === profile?.class_id || activeClassId === homeroomClass?.id)
 
   const reload = () => {
-    if (!selectedClassId) return
-    api.listStudents(selectedClassId).then(setStudents).catch((e) => setError(e.message))
+    if (!activeClassId) return
+    api.listStudents(activeClassId).then(setStudents).catch((e) => setError(e.message))
   }
 
-  useEffect(reload, [selectedClassId])
+  useEffect(reload, [activeClassId])
 
   useEffect(() => {
-    if (!canAdd || !selectedClassId) {
+    if (!canAdd || !activeClassId) {
       setNextRollNo('')
       return
     }
-    api.nextRollNo(selectedClassId).then(setNextRollNo).catch(() => {
+    api.nextRollNo(activeClassId).then(setNextRollNo).catch(() => {
       const seq = students.length + 1
       setNextRollNo(buildRollNo(className, seq, school?.academic_year))
     })
-  }, [canAdd, editingId, selectedClassId, className, school?.academic_year, students.length])
+  }, [canAdd, editingId, activeClassId, className, school?.academic_year, students.length])
 
   const suggestedNo = useMemo(() => nextStudentNo(students.map((s) => s.student_no)), [students])
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
-    if (!selectedClassId || !form.full_name.trim()) return
+    if (!activeClassId || !form.full_name.trim()) return
     setError('')
     setBusy(true)
     try {
@@ -71,9 +96,9 @@ export default function Students() {
         gender: form.gender
       }
       if (editingId) {
-        await api.updateStudent({ id: editingId, class_id: selectedClassId, ...payload })
+        await api.updateStudent({ id: editingId, class_id: activeClassId, ...payload })
       } else {
-        await api.addStudent(selectedClassId, payload)
+        await api.addStudent(activeClassId, payload)
       }
       setForm(empty)
       setEditingId(null)
@@ -108,14 +133,47 @@ export default function Students() {
     }
   }
 
+  // Pure subject teachers should not access the students page
+  if (!isLeadership && !isHomeroomTeacher) {
+    return <Navigate to="/dashboard" replace />
+  }
+
+  // Homeroom teacher without a class assigned yet
+  if (!isLeadership && !activeClassId) {
+    return (
+      <div className="page">
+        <div className="card alert-box" style={{ background: '#fffbeb', borderColor: '#fde68a', padding: '28px', textAlign: 'center' }}>
+          <h3 style={{ color: '#92400e', margin: '0 0 8px' }}>No Homeroom Class Assigned</h3>
+          <p style={{ color: '#b45309', margin: 0 }}>
+            You are registered as a homeroom teacher, but you haven't been assigned to a specific class yet.
+            Please contact the Head of School to assign your homeroom class.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="page">
       <div className="page-head">
         <div>
-          <h2>Students{className ? ` — ${className}` : ''}</h2>
-          <p className="muted">{canAdd ? 'Your class roster. Add students here before entering marks.' : 'Read-only view of the class roster.'}</p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <h2>Students{className ? ` — ${className}` : ''}</h2>
+            {!isLeadership && (
+              <span className="chip" style={{ background: '#e0f2fe', color: '#0369a1', fontWeight: 600, fontSize: '12px' }}>
+                Your Homeroom Class
+              </span>
+            )}
+          </div>
+          <p className="muted">
+            {canAdd
+              ? 'Your homeroom class roster. Add and manage students here.'
+              : isLeadership
+              ? 'Class roster management (administrative view).'
+              : 'Read-only view of the class roster.'}
+          </p>
         </div>
-        <ClassPicker />
+        {isLeadership && <ClassPicker />}
       </div>
 
       {canAdd && (

@@ -7,7 +7,12 @@ import { AuthProvider } from './context/AuthContext'
 import { SchoolProvider } from './context/SchoolContext'
 import './styles.css'
 
-registerSW({ immediate: true })
+const updateSW = registerSW({
+  immediate: true,
+  onNeedRefresh() {
+    updateSW(true)
+  }
+})
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
