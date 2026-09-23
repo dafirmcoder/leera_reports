@@ -22,6 +22,14 @@ function readableSupabaseError(error: unknown): Error {
   return error instanceof Error ? error : new Error('The Supabase request failed. Please try again.')
 }
 
+// In-memory cache for fast teacher dashboard navigation
+const teacherDashboardCache = new Map<string, { data: TeacherDashboardData; timestamp: number }>()
+const TEACHER_DASHBOARD_CACHE_TTL = 20000 // 20 seconds
+
+export function invalidateTeacherDashboardCache() {
+  teacherDashboardCache.clear()
+}
+
 async function uid(): Promise<string> {
   const { data } = await supabase.auth.getUser()
   if (!data.user) throw new Error('Not signed in')
@@ -420,6 +428,7 @@ export const supabaseApi: Api = {
       if (!data || data.length !== rows.length) {
         throw new Error('Attendance was not saved for every student. Please try again.')
       }
+      invalidateTeacherDashboardCache()
     } catch (error) {
       throw readableSupabaseError(error)
     }
@@ -474,7 +483,7 @@ export const supabaseApi: Api = {
   async listUnitTests(classId: string): Promise<UnitTest[]> {
     const { data, error } = await db()
       .from('unit_tests')
-      .select('id, class_id, subject_id, title, test_date, max_mark, created_by, exam_paper_url, exam_paper_path, exam_paper_name, subjects(name)')
+      .select('id, class_id, subject_id, title, test_date, max_mark, created_by, created_at, exam_paper_url, exam_paper_path, exam_paper_name, subjects(name)')
       .eq('class_id', classId)
     if (error) throw new Error(error.message)
     const list = (data ?? []).map((r: any) => ({
@@ -482,6 +491,7 @@ export const supabaseApi: Api = {
       subject_name: r.subjects?.name ?? '—', title: r.title,
       test_date: r.test_date, max_mark: Number(r.max_mark),
       created_by: r.created_by ?? null,
+      created_at: r.created_at ?? undefined,
       exam_paper_url: r.exam_paper_url ?? null,
       exam_paper_path: r.exam_paper_path ?? null,
       exam_paper_name: r.exam_paper_name ?? null
@@ -611,6 +621,7 @@ export const supabaseApi: Api = {
     }
     const { error } = await d.from('unit_tests').delete().eq('id', id)
     if (error) throw new Error(error.message)
+    invalidateTeacherDashboardCache()
   },
 
   async getExamPaperUrl(pathOrUrl: string): Promise<string> {
@@ -638,21 +649,60 @@ export const supabaseApi: Api = {
     }))
   },
 
+  async listScoresForTests(testIds: string[]): Promise<ScoreRow[]> {
+    if (!testIds || testIds.length === 0) return []
+    const chunkSize = 50
+    if (testIds.length <= chunkSize) {
+      const { data, error } = await db()
+        .from('scores')
+        .select('id, unit_test_id, student_id, score, students(full_name, student_no)')
+        .in('unit_test_id', testIds)
+      if (error) throw new Error(error.message)
+      return (data ?? []).map((r: any) => ({
+        id: r.id, unit_test_id: r.unit_test_id, student_id: r.student_id,
+        student_name: r.students?.full_name ?? '—', student_no: r.students?.student_no ?? '',
+        score: r.score === null || r.score === undefined ? null : Number(r.score)
+      }))
+    }
+    const chunks: string[][] = []
+    for (let i = 0; i < testIds.length; i += chunkSize) {
+      chunks.push(testIds.slice(i, i + chunkSize))
+    }
+    const results = await Promise.all(
+      chunks.map(async (chunk) => {
+        const { data, error } = await db()
+          .from('scores')
+          .select('id, unit_test_id, student_id, score, students(full_name, student_no)')
+          .in('unit_test_id', chunk)
+        if (error) throw new Error(error.message)
+        return (data ?? []).map((r: any) => ({
+          id: r.id, unit_test_id: r.unit_test_id, student_id: r.student_id,
+          student_name: r.students?.full_name ?? '—', student_no: r.students?.student_no ?? '',
+          score: r.score === null || r.score === undefined ? null : Number(r.score)
+        }))
+      })
+    )
+    return results.flat()
+  },
+
   async saveScore(unit_test_id: string, student_id: string, score: number | null): Promise<void> {
     const { error } = await db()
       .from('scores')
       .upsert({ unit_test_id, student_id, score }, { onConflict: 'unit_test_id,student_id' })
     if (error) throw new Error(error.message)
+    invalidateTeacherDashboardCache()
   },
 
   async getStudentReport(studentId: string): Promise<StudentReportRow[]> {
     const { data, error } = await db()
       .from('scores')
-      .select('score, unit_tests!inner(id, title, test_date, max_mark, subjects!inner(name))')
+      .select('score, unit_tests!inner(id, title, test_date, created_at, max_mark, subjects!inner(name))')
       .eq('student_id', studentId)
       .not('score', 'is', null)
     if (error) throw new Error(error.message)
     return (data ?? []).map((r: any) => ({
+      test_id: r.unit_tests.id,
+      created_at: r.unit_tests.created_at,
       subject: r.unit_tests.subjects.name,
       title: r.unit_tests.title,
       test_date: r.unit_tests.test_date,
@@ -1166,13 +1216,15 @@ export const supabaseApi: Api = {
     if (ids.length === 0) return {}
     const { data, error } = await db()
       .from('scores')
-      .select('student_id, score, unit_tests!inner(id, title, test_date, max_mark, subjects!inner(name))')
+      .select('student_id, score, unit_tests!inner(id, title, test_date, created_at, max_mark, subjects!inner(name))')
       .in('student_id', ids)
       .not('score', 'is', null)
     if (error) throw new Error(error.message)
     const out: Record<string, StudentReportRow[]> = {}
     for (const r of (data ?? []) as any[]) {
       const row: StudentReportRow = {
+        test_id: r.unit_tests.id,
+        created_at: r.unit_tests.created_at,
         subject: r.unit_tests.subjects.name,
         title: r.unit_tests.title,
         test_date: r.unit_tests.test_date,
@@ -1185,8 +1237,34 @@ export const supabaseApi: Api = {
   },
 
   async getTeacherDashboardData(teacherId: string, homeroomClassId?: string | null): Promise<TeacherDashboardData> {
+    const cacheKey = `${teacherId}_${homeroomClassId || ''}`
+    const cached = teacherDashboardCache.get(cacheKey)
+    if (cached && Date.now() - cached.timestamp < TEACHER_DASHBOARD_CACHE_TTL) {
+      return cached.data
+    }
+
     const today = toLocalIsoDate(new Date())
-    const classes = await this.listClasses()
+
+    // Phase 1: Parallel fetch of initial resources in one concurrent batch
+    const [
+      classes,
+      assignmentsRes,
+      createdTestsRes,
+      studentsCountRes
+    ] = await Promise.all([
+      this.listClasses(),
+      db()
+        .from('class_subject_teachers')
+        .select('id, class_id, subject_id, classes(name), subjects(name)')
+        .eq('teacher_id', teacherId),
+      db()
+        .from('unit_tests')
+        .select('id, class_id, subject_id, classes(name), subjects(name)')
+        .eq('created_by', teacherId),
+      db().from('students').select('class_id')
+    ])
+
+    if (assignmentsRes.error) throw new Error(assignmentsRes.error.message)
 
     // Determine homeroom class
     let hrClass = classes.find((c) => c.id === homeroomClassId)
@@ -1194,21 +1272,82 @@ export const supabaseApi: Api = {
       hrClass = classes.find((c) => c.homeroom_teacher_id === teacherId)
     }
 
+    // Build assignment pairs
+    const assignedPairs = (assignmentsRes.data ?? [])
+      .filter((a: any) => a.subjects?.name && !a.subjects.name.toLowerCase().includes('unknown'))
+      .map((a: any) => ({
+        id: a.id,
+        class_id: a.class_id,
+        class_name: a.classes?.name || 'Class',
+        subject_id: a.subject_id,
+        subject_name: a.subjects.name
+      }))
+
+    for (const ct of (createdTestsRes.data ?? []) as any[]) {
+      const sName = ct.subjects?.name
+      if (!sName || sName.toLowerCase().includes('unknown')) continue
+      if (!assignedPairs.some((p) => p.class_id === ct.class_id && p.subject_id === ct.subject_id)) {
+        assignedPairs.push({
+          id: `${ct.class_id}_${ct.subject_id}`,
+          class_id: ct.class_id,
+          class_name: ct.classes?.name || 'Class',
+          subject_id: ct.subject_id,
+          subject_name: sName
+        })
+      }
+    }
+
+    // Map student counts per class in memory
+    const studentsPerClassMap = new Map<string, number>()
+    for (const st of (studentsCountRes.data ?? []) as any[]) {
+      studentsPerClassMap.set(st.class_id, (studentsPerClassMap.get(st.class_id) ?? 0) + 1)
+    }
+
+    const assignedClassIds = Array.from(new Set(assignedPairs.map((p) => p.class_id)))
+    const assignedSubjectIds = Array.from(new Set(assignedPairs.map((p) => p.subject_id)))
+
+    // Phase 2: Parallel fetch of Homeroom data AND All Unit Tests in ONE batch
+    const homeroomPromise = hrClass
+      ? Promise.all([
+          db().from('students').select('id, full_name, gender').eq('class_id', hrClass.id),
+          db().from('attendance').select('status').eq('class_id', hrClass.id).eq('attendance_date', today),
+          db().from('unit_tests').select('id', { count: 'exact', head: true }).eq('class_id', hrClass.id),
+          db().from('scores').select('student_id, unit_tests!inner(class_id)').eq('unit_tests.class_id', hrClass.id).not('score', 'is', null)
+        ])
+      : Promise.resolve([
+          { data: [] as any[], error: null },
+          { data: [] as any[], error: null },
+          { count: 0, error: null },
+          { data: [] as any[], error: null }
+        ])
+
+    const testsPromise = (assignedClassIds.length > 0 && assignedSubjectIds.length > 0)
+      ? db()
+          .from('unit_tests')
+          .select('id, class_id, subject_id, title, test_date, max_mark')
+          .in('class_id', assignedClassIds)
+          .in('subject_id', assignedSubjectIds)
+          .order('test_date', { ascending: false })
+      : Promise.resolve({ data: [] as any[], error: null })
+
+    const [
+      [hrStudentsRes, attRes, tCountRes, scoredStudentsRes],
+      allTestsRes
+    ] = await Promise.all([
+      homeroomPromise,
+      testsPromise
+    ])
+
+    if (allTestsRes.error) throw new Error(allTestsRes.error.message)
+
+    // Process Homeroom Data
     let homeroomClassInfo: TeacherDashboardData['homeroomClass'] = null
     let todayAttendanceInfo: TeacherDashboardData['todayAttendance'] = null
     let homeroomTestsCount = 0
     let homeroomReportsCount = 0
 
     if (hrClass) {
-      // Fetch homeroom students
-      const { data: hrStudents, error: sErr } = await db()
-        .from('students')
-        .select('id, full_name, gender')
-        .eq('class_id', hrClass.id)
-
-      if (sErr) throw new Error(sErr.message)
-
-      const students = hrStudents ?? []
+      const students = hrStudentsRes.data ?? []
       const isBoy = (g: string) => g?.trim().toUpperCase() === 'M' || g?.trim().toLowerCase().startsWith('m')
       const isGirl = (g: string) => g?.trim().toUpperCase() === 'F' || g?.trim().toLowerCase().startsWith('f')
       const boys = students.filter((s: any) => isBoy(s.gender)).length
@@ -1222,16 +1361,7 @@ export const supabaseApi: Api = {
         girls_count: girls
       }
 
-      // Check today's attendance for homeroom class
-      const { data: attData, error: attErr } = await db()
-        .from('attendance')
-        .select('status')
-        .eq('class_id', hrClass.id)
-        .eq('attendance_date', today)
-
-      if (attErr) throw new Error(attErr.message)
-
-      const attRows = attData ?? []
+      const attRows = attRes.data ?? []
       if (attRows.length > 0) {
         const present = attRows.filter((r: any) => r.status === 'P').length
         const absent = attRows.filter((r: any) => r.status === 'A' || r.status === 'E').length
@@ -1254,109 +1384,51 @@ export const supabaseApi: Api = {
         }
       }
 
-      // Count homeroom unit tests
-      const { count: tCount, error: tErr } = await db()
-        .from('unit_tests')
-        .select('id', { count: 'exact', head: true })
-        .eq('class_id', hrClass.id)
-      if (!tErr && tCount !== null) {
-        homeroomTestsCount = tCount
-      }
+      homeroomTestsCount = tCountRes.count ?? 0
 
-      // Count students in homeroom class with at least one score
-      if (students.length > 0) {
-        const studentIds = students.map((s: any) => s.id)
-        const { data: scoredStudents, error: repErr } = await db()
-          .from('scores')
-          .select('student_id')
-          .in('student_id', studentIds)
-          .not('score', 'is', null)
-        if (!repErr && scoredStudents) {
-          const distinctScored = new Set(scoredStudents.map((s: any) => s.student_id))
-          homeroomReportsCount = distinctScored.size
-        }
+      if (scoredStudentsRes.data) {
+        const distinctScored = new Set(scoredStudentsRes.data.map((s: any) => s.student_id))
+        homeroomReportsCount = distinctScored.size
       }
     }
 
-    // Fetch teacher's subject assignments from class_subject_teachers
-    const { data: assignmentsData, error: aErr } = await db()
-      .from('class_subject_teachers')
-      .select('id, class_id, subject_id, classes(name), subjects(name)')
-      .eq('teacher_id', teacherId)
+    // Phase 3: Fetch all scores for matching tests in ONE bulk query
+    const retrievedTests = (allTestsRes.data ?? []) as any[]
+    const pairKeys = new Set(assignedPairs.map((p) => `${p.class_id}__${p.subject_id}`))
+    const matchingTests = retrievedTests.filter((t) => pairKeys.has(`${t.class_id}__${t.subject_id}`))
+    const allTestIds = matchingTests.map((t) => t.id)
 
-    if (aErr) throw new Error(aErr.message)
+    const allScoresRes = allTestIds.length > 0
+      ? await db().from('scores').select('unit_test_id, score').in('unit_test_id', allTestIds).not('score', 'is', null)
+      : { data: [] }
 
-    const assignedPairs = (assignmentsData ?? [])
-      .filter((a: any) => a.subjects?.name && !a.subjects.name.toLowerCase().includes('unknown'))
-      .map((a: any) => ({
-        id: a.id,
-        class_id: a.class_id,
-        class_name: a.classes?.name || 'Class',
-        subject_id: a.subject_id,
-        subject_name: a.subjects.name
-      }))
-
-    // Also include any courses where this teacher has created unit tests directly
-    const { data: createdTestsData } = await db()
-      .from('unit_tests')
-      .select('id, class_id, subject_id, classes(name), subjects(name)')
-      .eq('created_by', teacherId)
-
-    for (const ct of (createdTestsData ?? []) as any[]) {
-      const sName = ct.subjects?.name
-      if (!sName || sName.toLowerCase().includes('unknown')) continue
-      if (!assignedPairs.some((p) => p.class_id === ct.class_id && p.subject_id === ct.subject_id)) {
-        assignedPairs.push({
-          id: `${ct.class_id}_${ct.subject_id}`,
-          class_id: ct.class_id,
-          class_name: ct.classes?.name || 'Class',
-          subject_id: ct.subject_id,
-          subject_name: sName
-        })
-      }
+    // Index scores by unit_test_id in memory
+    const scoresByTest = new Map<string, number[]>()
+    for (const sc of (allScoresRes.data ?? []) as any[]) {
+      const arr = scoresByTest.get(sc.unit_test_id) ?? []
+      arr.push(Number(sc.score))
+      scoresByTest.set(sc.unit_test_id, arr)
     }
 
+    // Index tests by pair key
+    const testsByPair = new Map<string, any[]>()
+    for (const t of matchingTests) {
+      const key = `${t.class_id}__${t.subject_id}`
+      const arr = testsByPair.get(key) ?? []
+      arr.push(t)
+      testsByPair.set(key, arr)
+    }
+
+    // Build Assignment Overviews in-memory
     const assignmentsOverview: TeacherAssignmentOverview[] = []
     let totalTestsCreated = 0
     let totalPendingMarks = 0
     const allValidAverages: number[] = []
 
-    // Query students count per class for all assigned classes
-    const assignedClassIds = Array.from(new Set(assignedPairs.map((p) => p.class_id)))
-    const { data: classStudentsCountData } = assignedClassIds.length > 0
-      ? await db().from('students').select('class_id')
-      : { data: [] }
-    const studentsPerClassMap = new Map<string, number>()
-    for (const st of (classStudentsCountData ?? []) as any[]) {
-      studentsPerClassMap.set(st.class_id, (studentsPerClassMap.get(st.class_id) ?? 0) + 1)
-    }
-
     for (const pair of assignedPairs) {
       const classStudentCount = studentsPerClassMap.get(pair.class_id) ?? 0
-
-      // Fetch tests for this assignment
-      const { data: testsData, error: utErr } = await db()
-        .from('unit_tests')
-        .select('id, title, test_date, max_mark')
-        .eq('class_id', pair.class_id)
-        .eq('subject_id', pair.subject_id)
-        .order('test_date', { ascending: false })
-
-      if (utErr) throw new Error(utErr.message)
-      const tests = testsData ?? []
-      const testIds = tests.map((t: any) => t.id)
-
-      // Fetch scores for these tests
-      const { data: scoresData } = testIds.length > 0
-        ? await db().from('scores').select('unit_test_id, score').in('unit_test_id', testIds).not('score', 'is', null)
-        : { data: [] }
-
-      const scoresByTest = new Map<string, number[]>()
-      for (const sc of (scoresData ?? []) as any[]) {
-        const arr = scoresByTest.get(sc.unit_test_id) ?? []
-        arr.push(Number(sc.score))
-        scoresByTest.set(sc.unit_test_id, arr)
-      }
+      const pairKey = `${pair.class_id}__${pair.subject_id}`
+      const tests = testsByPair.get(pairKey) ?? []
 
       let testsWithMarksCount = 0
       let pendingCount = 0
@@ -1421,7 +1493,7 @@ export const supabaseApi: Api = {
       ? Number((allValidAverages.reduce((a, b) => a + b, 0) / allValidAverages.length).toFixed(1))
       : null
 
-    return {
+    const result: TeacherDashboardData = {
       homeroomClass: homeroomClassInfo,
       todayAttendance: todayAttendanceInfo,
       homeroomTestsCount,
@@ -1431,6 +1503,9 @@ export const supabaseApi: Api = {
       totalPendingMarks,
       overallSubjectAveragePct
     }
+
+    teacherDashboardCache.set(cacheKey, { data: result, timestamp: Date.now() })
+    return result
   },
 
   async getAdminDashboardData(): Promise<AdminDashboardData> {

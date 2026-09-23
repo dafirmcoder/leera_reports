@@ -1,8 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
 import { api } from '../lib/api'
 import { useSchool } from '../context/SchoolContext'
 import { useAuth } from '../context/AuthContext'
+import { can, getTeacherHomeroomClasses, isHomeroomTeacher } from '../lib/permissions'
+import LeeraLoader from '../components/LeeraLoader'
+import { downloadMarksheetExcel, downloadMarksheetCsv } from '../lib/marksheetExport'
 import type { Assignment, Student, UnitTest } from '../lib/types'
 
 export default function ClassMarksheetPage() {
@@ -11,13 +14,48 @@ export default function ClassMarksheetPage() {
   const { classes, school } = useSchool()
   const { profile } = useAuth()
 
-  // This class marksheet broadsheet style is strictly for the Director
-  if (profile && profile.role !== 'director') {
+  // Marksheet broadsheet is accessible to Director, Admin, Head of School, Curriculum Coordinator, and Homeroom Teachers (for their class only)
+  const canViewAllClasses =
+    profile?.role === 'director' ||
+    profile?.role === 'admin' ||
+    Boolean(
+      profile && (
+        can(profile.role, 'viewDirectorDashboard', profile.additional_roles) ||
+        can(profile.role, 'viewAllClasses', profile.additional_roles)
+      )
+    )
+
+  const isHomeroom = isHomeroomTeacher(profile, classes)
+  const myHomeroomClasses = getTeacherHomeroomClasses(profile, classes)
+  const isHomeroomOnly = !canViewAllClasses && isHomeroom
+
+  // Access check: Only leadership and homeroom teachers can access this tabulated sheet
+  if (profile && !canViewAllClasses && !isHomeroom) {
     return <Navigate to="/dashboard" replace />
   }
 
-  const currentClassId = classId || classes[0]?.id || ''
+  // Determine target class ID
+  let targetClassId = ''
+  if (isHomeroomOnly) {
+    if (myHomeroomClasses.length > 0) {
+      const match = myHomeroomClasses.find((c) => c.id === classId)
+      targetClassId = match ? match.id : myHomeroomClasses[0].id
+    } else if (profile?.class_id) {
+      targetClassId = profile.class_id
+    }
+  } else {
+    targetClassId = classId || classes[0]?.id || ''
+  }
+
+  const currentClassId = targetClassId
   const currentClass = classes.find((c) => c.id === currentClassId)
+
+  // Redirect homeroom teachers if they try to access a class outside their homeroom assignment
+  useEffect(() => {
+    if (isHomeroomOnly && targetClassId && classId !== targetClassId) {
+      navigate(`/marks/class/${targetClassId}`, { replace: true })
+    }
+  }, [isHomeroomOnly, targetClassId, classId, navigate])
 
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -26,6 +64,8 @@ export default function ClassMarksheetPage() {
   const [assignments, setAssignments] = useState<Assignment[]>([])
   const [scoresMap, setScoresMap] = useState<Record<string, Record<string, number | null>>>({})
   const [studentSearch, setStudentSearch] = useState('')
+  const [displayMode, setDisplayMode] = useState<'pct' | 'raw' | 'both'>('pct')
+  const [exporting, setExporting] = useState<'excel' | 'csv' | null>(null)
 
   const isDirector = profile?.role === 'director'
 
@@ -45,19 +85,18 @@ export default function ClassMarksheetPage() {
         a.test_date.localeCompare(b.test_date) || a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' })
       )
 
-      // Fetch scores for all tests in this class
-      const allScores = await Promise.all(
-        sortedTests.map((t) => api.listScoresForTest(t.id).catch(() => []))
-      )
+      // Fetch scores for all tests in this class using optimized batch query
+      const testIds = sortedTests.map((t) => t.id)
+      const allScores = testIds.length > 0 ? await api.listScoresForTests(testIds) : []
 
       const scoreLookup: Record<string, Record<string, number | null>> = {}
-      sortedTests.forEach((t, idx) => {
+      sortedTests.forEach((t) => {
         scoreLookup[t.id] = {}
-        allScores[idx].forEach((sc) => {
-          if (sc.score !== null && sc.score !== undefined) {
-            scoreLookup[t.id][sc.student_id] = Number(sc.score)
-          }
-        })
+      })
+      allScores.forEach((sc) => {
+        if (sc.score !== null && sc.score !== undefined && scoreLookup[sc.unit_test_id]) {
+          scoreLookup[sc.unit_test_id][sc.student_id] = Number(sc.score)
+        }
       })
 
       // Sort students naturally by Roll No or Name
@@ -222,66 +261,212 @@ export default function ClassMarksheetPage() {
     return { unitAverages, subjectAverages, classOverall }
   }, [tests, students, subjectsWithTests, scoresMap, studentMetrics])
 
+  const handleExportExcel = async () => {
+    try {
+      setExporting('excel')
+      await downloadMarksheetExcel({
+        className: currentClass?.name || 'Class',
+        schoolName: school?.name || 'Leera International School',
+        academicYear: school?.academic_year || '2026/2027',
+        semester: school?.semester || '1',
+        students,
+        subjectsWithTests,
+        scoresMap,
+        studentMetrics,
+        classAverages,
+        displayMode
+      })
+    } catch (err: any) {
+      console.error('Failed to export Excel marksheet:', err)
+      setError(err?.message || 'Failed to generate Excel export.')
+    } finally {
+      setExporting(null)
+    }
+  }
+
+  const handleExportCsv = () => {
+    try {
+      setExporting('csv')
+      downloadMarksheetCsv({
+        className: currentClass?.name || 'Class',
+        schoolName: school?.name || 'Leera International School',
+        academicYear: school?.academic_year || '2026/2027',
+        semester: school?.semester || '1',
+        students,
+        subjectsWithTests,
+        scoresMap,
+        studentMetrics,
+        classAverages,
+        displayMode
+      })
+    } catch (err: any) {
+      console.error('Failed to export CSV marksheet:', err)
+      setError(err?.message || 'Failed to generate CSV export.')
+    } finally {
+      setExporting(null)
+    }
+  }
+
+  if (isHomeroomOnly && !targetClassId && classes.length > 0) {
+    return (
+      <div className="page stack" style={{ padding: '24px' }}>
+        <div className="card alert-box" style={{ background: '#fffbeb', borderColor: '#fde68a', padding: '24px' }}>
+          <h3 style={{ color: '#92400e', margin: '0 0 8px' }}>No Homeroom Class Assigned</h3>
+          <p style={{ color: '#b45309', margin: '0 0 16px' }}>
+            You are logged in as a homeroom teacher, but you have not yet been assigned to a homeroom class in the system. Please contact the Head of School.
+          </p>
+          <Link to="/dashboard" className="btn btn-secondary">
+            Return to Dashboard
+          </Link>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="page stack class-marksheet-page" style={{ gap: '20px' }}>
       {/* Header & Navigation */}
       <div className="page-head" style={{ marginBottom: 0 }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-            <span style={{ fontSize: '20px' }}>📋</span>
+            <span style={{ fontSize: '20px' }}>{isHomeroomOnly ? '🏫' : '📋'}</span>
             <span style={{
-              background: '#e0e7ff',
-              color: '#3730a3',
+              background: isHomeroomOnly ? '#dcfce7' : '#e0e7ff',
+              color: isHomeroomOnly ? '#166534' : '#3730a3',
               padding: '3px 10px',
               borderRadius: '20px',
               fontSize: '11px',
               fontWeight: 700,
               letterSpacing: '0.5px'
             }}>
-              DIRECTOR'S CLASS MARKSHEET BROADSHEET
+              {isHomeroomOnly ? 'HOMEROOM TABULATED CLASS SHEET' : 'EXECUTIVE CLASS MARKSHEET BROADSHEET'}
             </span>
           </div>
           <h2 style={{ margin: 0, fontSize: '22px', fontWeight: 800 }}>
-            {currentClass?.name || 'Class'} — End of Unit Marksheet (Director View)
+            {currentClass?.name || 'Class'} — {isHomeroomOnly ? 'Tabulated Marksheet (All Learners & Scores)' : 'End of Unit Marksheet (Leadership View)'}
           </h2>
           <p className="muted" style={{ margin: '4px 0 0', fontSize: '13px' }}>
-            {school?.name || 'Leera International School'} · Academic Year {school?.academic_year || '2026/2027'} · Semester {school?.semester || '1'}
+            {isHomeroomOnly
+              ? `Homeroom: ${currentClass?.name || 'Your Class'} · ${school?.name || 'Leera International School'} · Academic Year ${school?.academic_year || '2026/2027'} · Semester ${school?.semester || '1'}`
+              : `${school?.name || 'Leera International School'} · Academic Year ${school?.academic_year || '2026/2027'} · Semester ${school?.semester || '1'}`
+            }
           </p>
         </div>
 
-        <div className="row" style={{ gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-          {/* Class Switcher */}
-          <label className="field inline" style={{ margin: 0 }}>
-            <span style={{ fontWeight: 600, fontSize: '13px' }}>Class:</span>
-            <select
-              value={currentClassId}
-              onChange={(e) => navigate(`/dashboard/marks/class/${e.target.value}`)}
-              style={{ padding: '6px 12px', borderRadius: '8px', fontWeight: 600 }}
+        <div className="class-marksheet-toolbar row" style={{ gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+          {/* Class Switcher for Leadership / Locked Badge for Homeroom Teachers */}
+          {canViewAllClasses ? (
+            <label className="field inline" style={{ margin: 0 }}>
+              <span style={{ fontWeight: 600, fontSize: '13px' }}>Class:</span>
+              <select
+                value={currentClassId}
+                onChange={(e) => navigate(`/dashboard/marks/class/${e.target.value}`)}
+                style={{ padding: '6px 12px', borderRadius: '8px', fontWeight: 600 }}
+              >
+                {classes.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : myHomeroomClasses.length > 1 ? (
+            <label className="field inline" style={{ margin: 0 }}>
+              <span style={{ fontWeight: 600, fontSize: '13px' }}>My Class:</span>
+              <select
+                value={currentClassId}
+                onChange={(e) => navigate(`/marks/class/${e.target.value}`)}
+                style={{ padding: '6px 12px', borderRadius: '8px', fontWeight: 600 }}
+              >
+                {myHomeroomClasses.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : (
+            <div
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                background: '#f1f5f9',
+                border: '1px solid #cbd5e1',
+                padding: '5px 12px',
+                borderRadius: '8px',
+                fontSize: '13px',
+                fontWeight: 700,
+                color: '#1e293b'
+              }}
             >
-              {classes.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </label>
+              <span>🏫</span>
+              <span>Class: {currentClass?.name || 'My Class'}</span>
+            </div>
+          )}
 
+          {/* Export to Excel */}
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            disabled={exporting !== null || loading || subjectsWithTests.length === 0}
+            onClick={handleExportExcel}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+            title="Download full formatted Excel spreadsheet (.xlsx)"
+          >
+            <span>📊</span>
+            <span>{exporting === 'excel' ? 'Exporting…' : 'Export Excel (.xlsx)'}</span>
+          </button>
+
+          {/* Export to CSV */}
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            disabled={exporting !== null || loading || subjectsWithTests.length === 0}
+            onClick={handleExportCsv}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+            title="Download CSV spreadsheet (.csv)"
+          >
+            <span>📄</span>
+            <span>{exporting === 'csv' ? 'Exporting…' : 'Export CSV'}</span>
+          </button>
+
+          {/* Print Sheet */}
           <button
             type="button"
             className="btn btn-secondary btn-sm"
             onClick={() => window.print()}
             style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+            title="Print sheet or save as PDF"
           >
             <span>🖨️</span>
             <span>Print Sheet</span>
           </button>
 
-          <Link
-            to="/dashboard/marks"
-            className="btn btn-ghost btn-sm"
-          >
-            ← Back to Executive Dashboard
-          </Link>
+          {isHomeroomOnly ? (
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <Link
+                to="/reports"
+                className="btn btn-ghost btn-sm"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+              >
+                ← Back to Reports
+              </Link>
+              <Link
+                to="/dashboard"
+                className="btn btn-ghost btn-sm"
+              >
+                Teacher Dashboard
+              </Link>
+            </div>
+          ) : (
+            <Link
+              to="/dashboard/marks"
+              className="btn btn-ghost btn-sm"
+            >
+              ← Back to Executive Dashboard
+            </Link>
+          )}
         </div>
       </div>
 
@@ -323,7 +508,7 @@ export default function ClassMarksheetPage() {
       </div>
 
       {/* Search and Table Filter bar */}
-      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
         <input
           className="search"
           style={{ maxWidth: '280px', margin: 0 }}
@@ -331,15 +516,51 @@ export default function ClassMarksheetPage() {
           value={studentSearch}
           onChange={(e) => setStudentSearch(e.target.value)}
         />
-        <div className="muted" style={{ fontSize: '12px' }}>
-          Showing {filteredStudents.length} of {students.length} students · Unit sub-columns show student percentage scores (%)
+
+        <div className="row" style={{ alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+          {/* Display Mode Toggle */}
+          <div className="display-mode-selector" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--muted)' }}>Marks View:</span>
+            <div className="btn-group" style={{ display: 'inline-flex', background: '#f1f5f9', padding: '2px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+              <button
+                type="button"
+                className={`btn btn-sm ${displayMode === 'pct' ? 'btn-primary' : 'btn-ghost'}`}
+                style={{ padding: '3px 9px', fontSize: '11.5px', borderRadius: '6px', fontWeight: 600 }}
+                onClick={() => setDisplayMode('pct')}
+              >
+                % Percentage
+              </button>
+              <button
+                type="button"
+                className={`btn btn-sm ${displayMode === 'raw' ? 'btn-primary' : 'btn-ghost'}`}
+                style={{ padding: '3px 9px', fontSize: '11.5px', borderRadius: '6px', fontWeight: 600 }}
+                onClick={() => setDisplayMode('raw')}
+              >
+                Raw Marks
+              </button>
+              <button
+                type="button"
+                className={`btn btn-sm ${displayMode === 'both' ? 'btn-primary' : 'btn-ghost'}`}
+                style={{ padding: '3px 9px', fontSize: '11.5px', borderRadius: '6px', fontWeight: 600 }}
+                onClick={() => setDisplayMode('both')}
+              >
+                Both (% & Raw)
+              </button>
+            </div>
+          </div>
+
+          <div className="muted" style={{ fontSize: '12px' }}>
+            Showing {filteredStudents.length} of {students.length} students
+          </div>
         </div>
       </div>
 
       {loading ? (
-        <div className="card" style={{ padding: '40px', textAlign: 'center' }}>
-          <p className="muted" style={{ fontSize: '14px' }}>Loading class marksheet broadsheet...</p>
-        </div>
+        <LeeraLoader
+          message="Loading class marksheet broadsheet…"
+          subMessage={`Preparing student marks and subject averages for ${currentClass?.name || 'this class'}`}
+          variant="card"
+        />
       ) : subjectsWithTests.length === 0 ? (
         <div className="card" style={{ padding: '32px', textAlign: 'center' }}>
           <h3 style={{ margin: '0 0 8px', color: '#475569' }}>No Subjects or Tests Found</h3>
@@ -460,7 +681,7 @@ export default function ClassMarksheetPage() {
                 {/* Level 2 Sub Headers: Unit numbers (1, 2, 3...) and Subject Average per subject */}
                 <tr style={{ background: '#ffffff', borderBottom: '2px solid #cbd5e1' }}>
                   {subjectsWithTests.map((sub) => (
-                    <>
+                    <React.Fragment key={sub.subject_id}>
                       {sub.tests.length === 0 ? (
                         <th
                           key={`${sub.subject_id}_no_tests`}
@@ -485,7 +706,7 @@ export default function ClassMarksheetPage() {
                               padding: '6px 4px',
                               fontSize: '11px',
                               fontWeight: 700,
-                              minWidth: '46px',
+                              minWidth: displayMode === 'both' ? '64px' : displayMode === 'raw' ? '54px' : '46px',
                               color: '#334155',
                               borderRight: '1px solid #e2e8f0',
                               borderBottom: '2px solid #cbd5e1',
@@ -493,7 +714,10 @@ export default function ClassMarksheetPage() {
                               cursor: 'help'
                             }}
                           >
-                            {idx + 1}
+                            <div>{idx + 1}</div>
+                            {displayMode !== 'pct' && (
+                              <div style={{ fontSize: '9px', fontWeight: 600, color: '#64748b' }}>/{t.max_mark}</div>
+                            )}
                           </th>
                         ))
                       )}
@@ -513,7 +737,7 @@ export default function ClassMarksheetPage() {
                       >
                         Avg (%)
                       </th>
-                    </>
+                    </React.Fragment>
                   ))}
                 </tr>
               </thead>
@@ -590,7 +814,7 @@ export default function ClassMarksheetPage() {
                           const subAvg = metrics?.subjectAverages[sub.subject_id] ?? null
 
                           return (
-                            <>
+                            <React.Fragment key={sub.subject_id}>
                               {sub.tests.length === 0 ? (
                                 <td
                                   key={`${st.id}_${sub.subject_id}_none`}
@@ -626,7 +850,22 @@ export default function ClassMarksheetPage() {
                                       }}
                                       title={hasScore ? `Raw: ${rawScore}/${t.max_mark} (${pct}%)` : 'No score entered'}
                                     >
-                                      {hasScore ? `${pct}%` : '—'}
+                                      {hasScore ? (
+                                        displayMode === 'raw' ? (
+                                          <span style={{ fontWeight: 600 }}>{rawScore}/{t.max_mark}</span>
+                                        ) : displayMode === 'both' ? (
+                                          <div>
+                                            <span style={{ fontWeight: 700 }}>{pct}%</span>
+                                            <span style={{ display: 'block', fontSize: '9px', color: '#64748b', fontWeight: 500 }}>
+                                              {rawScore}/{t.max_mark}
+                                            </span>
+                                          </div>
+                                        ) : (
+                                          `${pct}%`
+                                        )
+                                      ) : (
+                                        '—'
+                                      )}
                                     </td>
                                   )
                                 })
@@ -648,7 +887,7 @@ export default function ClassMarksheetPage() {
                               >
                                 {subAvg !== null ? `${subAvg}%` : '—'}
                               </td>
-                            </>
+                            </React.Fragment>
                           )
                         })}
 
@@ -698,7 +937,7 @@ export default function ClassMarksheetPage() {
                     const subClassAvg = classAverages.subjectAverages[sub.subject_id] ?? null
 
                     return (
-                      <>
+                      <React.Fragment key={sub.subject_id}>
                         {sub.tests.length === 0 ? (
                           <td
                             key={`foot_${sub.subject_id}_none`}
@@ -741,7 +980,7 @@ export default function ClassMarksheetPage() {
                         >
                           {subClassAvg !== null ? `${subClassAvg}%` : '—'}
                         </td>
-                      </>
+                      </React.Fragment>
                     )
                   })}
 

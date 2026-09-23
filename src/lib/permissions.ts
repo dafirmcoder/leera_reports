@@ -35,6 +35,17 @@ export function isHomeroomTeacher(
   return false
 }
 
+export function getTeacherHomeroomClasses<T extends { id: string; homeroom_teacher_id?: string | null }>(
+  profile?: { id?: string; class_id?: string | null } | null,
+  classes: T[] = []
+): T[] {
+  if (!profile) return []
+  return classes.filter(
+    (c) => c.id === profile.class_id || (profile.id && c.homeroom_teacher_id === profile.id)
+  )
+}
+
+
 export function can(role: Role | undefined, cap: Capability, additionalRoles: Role[] = []): boolean {
   const roles = new Set<Role>(role ? [role, ...additionalRoles] : [])
   switch (cap) {

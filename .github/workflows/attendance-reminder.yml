@@ -1,0 +1,23 @@
+name: Trigger Attendance Reminders
+
+on:
+  schedule:
+    # 05:00 UTC = 08:00 AM East Africa Time (EAT), Monday to Friday
+    - cron: '0 5 * * 1-5'
+    # 07:00 UTC = 10:00 AM EAT (follow-up for teachers who haven't marked)
+    - cron: '0 7 * * 1-5'
+    # 09:00 UTC = 12:00 PM EAT (midday follow-up)
+    - cron: '0 9 * * 1-5'
+  workflow_dispatch: # Allows manual trigger from GitHub Actions tab
+
+jobs:
+  send-reminder:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Supabase Attendance Reminder Edge Function
+        run: |
+          echo "Dispatching attendance reminder push..."
+          curl -s -f -X POST "https://vkceztpdfyvnvsfxzyuc.supabase.co/functions/v1/attendance-reminder" \
+            -H "Content-Type: application/json" \
+            -d '{}'
+          echo "Reminder dispatched successfully."

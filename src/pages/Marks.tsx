@@ -367,7 +367,18 @@ export default function Marks() {
           <h2>Unit Tests{className ? ` — ${className}` : ''}</h2>
           <p className="muted">{canAdd ? 'Every end-of-unit test you record, with its score sheet.' : 'Read-only view of recorded unit tests.'}</p>
         </div>
-        <div className="row">
+        <div className="row" style={{ alignItems: 'center', gap: '8px' }}>
+          {selectedClassId && (
+            <Link
+              to={`/marks/class/${selectedClassId}`}
+              className="btn btn-secondary btn-sm"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontWeight: 600 }}
+              title="View full tabulated scoresheet for this class"
+            >
+              <span>📊</span>
+              <span>Tabulated Sheet</span>
+            </Link>
+          )}
           <ClassPicker />
           {canAdd && (
             <button className="btn btn-primary" onClick={() => setShowForm((v) => !v)}>

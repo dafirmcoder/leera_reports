@@ -9,9 +9,9 @@ const cors = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type'
 }
 
-const VAPID_PUBLIC_KEY = Deno.env.get('VAPID_PUBLIC_KEY') || 'BKd_9F-f3qZ_p2d6s5U5Q0Wp_0s9M4Y6A1v7H2X3k8N9L4P7q2R5t8V1w4Z7C0b3E6g9J2m5P8s1V4y7B0d3'
-const VAPID_PRIVATE_KEY = Deno.env.get('VAPID_PRIVATE_KEY') || 'd_5F-x8Z_q2r6s5U5Q0Wp_0s9M4Y6A1v7H2X3k8N9L4'
-const VAPID_SUBJECT = Deno.env.get('VAPID_SUBJECT') || 'mailto:info@leeraschool.ac.tz'
+const VAPID_PUBLIC_KEY = Deno.env.get('VAPID_PUBLIC_KEY') || 'BIdY_x0ofg0Ani-vbOnuuIcd4Y88gTLynWJoUZzqq-ftqRCGv8Y-EkmgGHLaSiPsC5f_0X91eWfBKeg-0imMIlo'
+const VAPID_PRIVATE_KEY = Deno.env.get('VAPID_PRIVATE_KEY') || '-ftJPnNMuKix3fP-ugq4kQm2HdZqYigsDp9hBJpne8g'
+const VAPID_SUBJECT = Deno.env.get('VAPID_SUBJECT') || 'mailto:admin@leeraschool.ac.tz'
 
 try {
   webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY)
@@ -29,7 +29,7 @@ Deno.serve(async (req: Request) => {
     const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     const admin = createClient(url, serviceKey, { auth: { autoRefreshToken: false, persistSession: false } })
 
-    const { targetRoles, targetUserIds, title, body, url: targetUrl, icon } = await req.json()
+    const { targetRoles, targetUserIds, title, body, url: targetUrl, icon, tag } = await req.json()
 
     let userIds: string[] = targetUserIds || []
 
@@ -66,6 +66,8 @@ Deno.serve(async (req: Request) => {
       body: body || 'You have an update from Leera Reports.',
       icon: icon || '/icons/icon-192.png',
       badge: '/icons/icon-192.png',
+      vibrate: [250, 100, 250, 100, 250],
+      tag: tag || 'leera-notification',
       data: { url: targetUrl || '/' }
     })
 
@@ -78,7 +80,15 @@ Deno.serve(async (req: Request) => {
             auth: sub.auth
           }
         }
-        return webpush.sendNotification(pushSubscription, payload)
+        try {
+          return await webpush.sendNotification(pushSubscription, payload)
+        } catch (err: any) {
+          // If subscription has expired or unsubscribed (404/410), clean up from database
+          if (err.statusCode === 404 || err.statusCode === 410) {
+            await admin.from('push_subscriptions').delete().eq('endpoint', sub.endpoint)
+          }
+          throw err
+        }
       })
     )
 

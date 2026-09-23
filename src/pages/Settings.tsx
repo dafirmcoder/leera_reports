@@ -10,6 +10,7 @@ import {
   showSystemNotification,
   unregisterDevicePushSubscription
 } from '../lib/notifications'
+import { supabase } from '../lib/supabase'
 import type { School } from '../lib/types'
 
 export default function SettingsPage() {
@@ -79,11 +80,44 @@ export default function SettingsPage() {
 
   const sendTestNotification = async () => {
     setNotifError('')
-    setNotifMessage('Test notification sent.')
-    showSystemNotification('🔔 Test Notification', {
-      body: 'Notifications are working perfectly on this phone/device!',
-      data: { url: '/dashboard' }
-    })
+    setNotifBusy(true)
+    try {
+      showSystemNotification('🔔 Test Notification', {
+        body: 'Notifications are working on this device!',
+        data: { url: '/dashboard' }
+      })
+
+      // Also trigger a real server-side push notification to test background channel
+      if (profile?.id) {
+        const { data: { session } } = await supabase.auth.getSession()
+        const token = session?.access_token
+        if (token) {
+          const url = (import.meta as any).env.VITE_SUPABASE_URL as string
+          const res = await fetch(`${url}/functions/v1/send-push`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`
+            },
+            body: JSON.stringify({
+              targetUserIds: [profile.id],
+              title: '🔔 Cloud Push Test',
+              body: 'Native background push is active and connected to this device!',
+              url: '/dashboard'
+            })
+          })
+          if (res.ok) {
+            setNotifMessage('Cloud push test dispatched! Close the app or lock your screen to test background delivery.')
+          } else {
+            setNotifMessage('Local notification sent. (Note: Deploy the send-push Edge Function to test background cloud push.)')
+          }
+        }
+      }
+    } catch {
+      setNotifMessage('Local notification sent.')
+    } finally {
+      setNotifBusy(false)
+    }
   }
 
 

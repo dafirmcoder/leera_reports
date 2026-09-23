@@ -2,7 +2,7 @@ import { supabase } from './supabase'
 import type { Profile } from './types'
 
 const VAPID_PUBLIC_KEY = (import.meta as any).env?.VITE_VAPID_PUBLIC_KEY
-  || 'BKd_9F-f3qZ_p2d6s5U5Q0Wp_0s9M4Y6A1v7H2X3k8N9L4P7q2R5t8V1w4Z7C0b3E6g9J2m5P8s1V4y7B0d3'
+  || 'BIdY_x0ofg0Ani-vbOnuuIcd4Y88gTLynWJoUZzqq-ftqRCGv8Y-EkmgGHLaSiPsC5f_0X91eWfBKeg-0imMIlo'
 
 function urlBase64ToUint8Array(base64String: string) {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4)
@@ -45,23 +45,50 @@ export async function registerDevicePushSubscription(userId: string): Promise<bo
   if (!reg || !('pushManager' in reg)) return false
 
   try {
+    const convertedVapidKey = urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
     let sub = await reg.pushManager.getSubscription()
+
+    // If an existing subscription has an outdated/mismatched key, unsubscribe first
+    if (sub) {
+      try {
+        const rawAppKey = sub.options.applicationServerKey
+        const existingKeyBytes = rawAppKey ? new Uint8Array(rawAppKey) : null
+        let keysMatch = false
+        if (existingKeyBytes && existingKeyBytes.length === convertedVapidKey.length) {
+          keysMatch = existingKeyBytes.every((val, i) => val === convertedVapidKey[i])
+        }
+        if (!keysMatch) {
+          await sub.unsubscribe()
+          sub = null
+        }
+      } catch {
+        if (sub) {
+          await sub.unsubscribe().catch(() => {})
+        }
+        sub = null
+      }
+    }
+
     if (!sub) {
-      const convertedVapidKey = urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
       sub = await reg.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: convertedVapidKey
       })
     }
 
+    if (!sub) return false
+
     const subJson = sub.toJSON()
     const endpoint = subJson.endpoint ?? sub.endpoint
     const p256dh = subJson.keys?.p256dh ?? ''
     const auth = subJson.keys?.auth ?? ''
 
-    if (!endpoint) return false
+    if (!endpoint || !p256dh || !auth) {
+      console.warn('Incomplete push keys from browser PushManager')
+      return false
+    }
 
-    // Save to Supabase
+    // Save to Supabase push_subscriptions
     const { error } = await supabase.from('push_subscriptions').upsert({
       user_id: userId,
       endpoint,
@@ -73,6 +100,7 @@ export async function registerDevicePushSubscription(userId: string): Promise<bo
 
     if (error) {
       console.warn('Failed to save push subscription to database:', error.message)
+      return false
     }
     return true
   } catch (err) {
@@ -142,15 +170,15 @@ export async function notifyLeadershipOnAttendance(className: string, teacherNam
           Authorization: `Bearer ${token}`
         },
         body: JSON.stringify({
-          targetRoles: ['director', 'head_of_school', 'curriculum_coordinator'],
+          targetRoles: ['director', 'head_of_school', 'curriculum_coordinator', 'admin'],
           title,
           body,
           url: '/dashboard'
         })
-      }).catch(() => {})
+      }).catch((e) => console.warn('Push broadcast error:', e))
     }
-  } catch {
-    // Non-blocking
+  } catch (e) {
+    console.warn('Push dispatch error:', e)
   }
 }
 

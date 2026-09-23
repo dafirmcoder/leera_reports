@@ -16,18 +16,14 @@ import People from './pages/People'
 import Classes from './pages/Classes'
 import Attendance from './pages/Attendance'
 import ClassMarksheetPage from './pages/ClassMarksheetPage'
+import LeeraLoader from './components/LeeraLoader'
 
 export default function App() {
   const { user, profile, loading } = useAuth()
   const { classes } = useSchool()
 
   if (loading) {
-    return (
-      <div className="splash">
-        <img src="/icons/icon-192.png" alt="Leera" width="64" height="64" />
-        <p>Loading…</p>
-      </div>
-    )
+    return <LeeraLoader variant="fullscreen" message="Starting Leera Reports…" />
   }
 
   if (!user) {
@@ -60,15 +56,21 @@ export default function App() {
         <Route path="/dashboard" element={<Dashboard section="overview" />} />
 
         {/* Executive sub-sections for leadership */}
-        {can(profile.role, 'viewDirectorDashboard', profile.additional_roles) && (
+        {(can(profile.role, 'viewDirectorDashboard', profile.additional_roles) || isAdmin || isDirector) && (
           <>
             <Route path="/dashboard/population" element={<Dashboard section="population" />} />
             <Route path="/dashboard/attendance" element={<Dashboard section="attendance" />} />
             <Route path="/dashboard/marks" element={<Dashboard section="marks" />} />
             <Route path="/dashboard/teachers" element={<Dashboard section="teachers" />} />
-            {isDirector && (
-              <Route path="/dashboard/marks/class/:classId" element={<ClassMarksheetPage />} />
-            )}
+          </>
+        )}
+
+        {/* Tabulated Class Marksheet / Broadsheet: accessible to leadership (any class) and homeroom teachers (their class only) */}
+        {(can(profile.role, 'viewDirectorDashboard', profile.additional_roles) || isAdmin || isDirector || isHomeroomTeacher(profile, classes)) && (
+          <>
+            <Route path="/dashboard/marks/class/:classId" element={<ClassMarksheetPage />} />
+            <Route path="/marks/class/:classId" element={<ClassMarksheetPage />} />
+            <Route path="/marks/class" element={<ClassMarksheetPage />} />
           </>
         )}
 

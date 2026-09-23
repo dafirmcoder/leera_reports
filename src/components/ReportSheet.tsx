@@ -8,9 +8,10 @@ interface Props {
   className: string
   teacherName: string
   rows: StudentReportRow[]
+  filterNotice?: string
 }
 
-export default function ReportSheet({ student, school, className, teacherName, rows }: Props) {
+export default function ReportSheet({ student, school, className, teacherName, rows, filterNotice }: Props) {
   const report = buildReport(rows)
   const printedDate = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })
 
@@ -43,6 +44,12 @@ export default function ReportSheet({ student, school, className, teacherName, r
           <span className="lbl">Teacher:</span> {teacherName || '—'}
           <span className="sep">·</span>
           <span className="lbl">Printed:</span> {printedDate}
+          {filterNotice && (
+            <>
+              <span className="sep">·</span>
+              <span className="lbl">Scope:</span> {filterNotice}
+            </>
+          )}
         </div>
       </div>
 

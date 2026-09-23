@@ -3,3 +3,10 @@ project_id = "vkceztpdfyvnvsfxzyuc"
 
 [functions.invite-user]
 verify_jwt = true
+
+[functions.send-push]
+verify_jwt = true
+
+[functions.attendance-reminder]
+verify_jwt = false
+

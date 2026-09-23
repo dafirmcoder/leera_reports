@@ -43,6 +43,7 @@ export interface PdfContext {
   className: string
   teacherName: string
   rows: StudentReportRow[]
+  filterNotice?: string
 }
 
 export async function generateStudentPdf(ctx: PdfContext): Promise<jsPDF> {
@@ -154,7 +155,12 @@ export async function generateStudentPdf(ctx: PdfContext): Promise<jsPDF> {
       { text: teacherName || '—', type: 'val' },
       { text: '   ·   ', type: 'sep' },
       { text: 'Printed: ', type: 'lbl' },
-      { text: printed, type: 'val' }
+      { text: printed, type: 'val' },
+      ...(ctx.filterNotice ? [
+        { text: '   ·   ', type: 'sep' as const },
+        { text: 'Scope: ', type: 'lbl' as const },
+        { text: ctx.filterNotice, type: 'val' as const }
+      ] : [])
     ]
   ]
 
@@ -674,6 +680,7 @@ export interface BulkOptions {
   school: School
   className: string
   teacherName: string
+  filterNotice?: string
   onProgress?: (done: number, total: number) => void
 }
 
@@ -688,6 +695,7 @@ export async function downloadClassReportsZip(opts: BulkOptions): Promise<void> 
       school: opts.school,
       className: opts.className,
       teacherName: opts.teacherName,
+      filterNotice: opts.filterNotice,
       rows: opts.rowsByStudent[st.id] ?? []
     })
     zip.file(reportFileName({ ...opts, student: st, rows: opts.rowsByStudent[st.id] ?? [] }), doc.output('arraybuffer'))
@@ -710,6 +718,7 @@ export async function saveClassReportsToFolder(opts: BulkOptions): Promise<void>
       school: opts.school,
       className: opts.className,
       teacherName: opts.teacherName,
+      filterNotice: opts.filterNotice,
       rows: opts.rowsByStudent[st.id] ?? []
     })
     const blob = doc.output('blob')

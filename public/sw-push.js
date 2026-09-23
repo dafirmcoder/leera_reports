@@ -4,7 +4,7 @@ self.addEventListener('push', function (event) {
   let data = {}
   try {
     data = event.data ? event.data.json() : {}
-  } catch (e) {
+  } catch (_e) {
     data = { body: event.data ? event.data.text() : 'You have a new update from Leera Reports.' }
   }
 
@@ -13,10 +13,14 @@ self.addEventListener('push', function (event) {
     body: data.body || 'You have a new notification.',
     icon: data.icon || '/icons/icon-192.png',
     badge: data.badge || '/icons/icon-192.png',
-    vibrate: [200, 100, 200],
+    vibrate: data.vibrate || [250, 100, 250, 100, 250],
     tag: data.tag || 'leera-notification',
     renotify: true,
-    data: data.data || { url: '/' }
+    requireInteraction: !!data.requireInteraction,
+    data: {
+      url: (data.data && data.data.url) || data.url || '/',
+      timestamp: Date.now()
+    }
   }
 
   event.waitUntil(
@@ -26,13 +30,14 @@ self.addEventListener('push', function (event) {
 
 self.addEventListener('notificationclick', function (event) {
   event.notification.close()
-  const targetUrl = (event.notification.data && event.notification.data.url) ? event.notification.data.url : '/'
+  const rawUrl = event.notification.data?.url || '/'
+  const targetUrl = new URL(rawUrl, self.location.origin).href
 
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (clientList) {
       for (let i = 0; i < clientList.length; i++) {
         const client = clientList[i]
-        if (client.url && 'focus' in client) {
+        if (client.url.startsWith(self.location.origin) && 'focus' in client) {
           client.navigate(targetUrl)
           return client.focus()
         }
@@ -43,3 +48,4 @@ self.addEventListener('notificationclick', function (event) {
     })
   )
 })
+

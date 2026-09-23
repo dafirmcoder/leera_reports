@@ -1,9 +1,10 @@
-﻿import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../../lib/api'
 import { useAuth } from '../../context/AuthContext'
 import { downloadAttendanceCsv, downloadAttendanceExcel } from '../../lib/attendanceExport'
 import type { AdminDashboardData } from '../../lib/types'
+import LeeraLoader from '../LeeraLoader'
 
 const todayIso = () => new Date().toISOString().slice(0, 10)
 
@@ -76,9 +77,10 @@ export default function AdminDashboard() {
 
   if (loading) {
     return (
-      <div className="card" style={{ padding: '40px', textAlign: 'center' }}>
-        <p className="muted" style={{ fontSize: '15px' }}>Loading administrator dashboard...</p>
-      </div>
+      <LeeraLoader
+        message="Loading administrator dashboard"
+        subMessage="Preparing attendance & class summaries"
+      />
     )
   }
 

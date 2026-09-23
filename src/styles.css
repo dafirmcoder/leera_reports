@@ -513,3 +513,237 @@ h3 { font-size: 15px; margin-top: 8px; }
   }
 }
 
+/* ============================================================
+   Animated Leera App Loader
+   ============================================================ */
+
+.leera-loader-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  text-align: center;
+}
+
+.leera-loader-card {
+  padding: 48px 24px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 280px;
+  background: var(--card);
+  border-radius: 16px;
+  border: 1px solid var(--line);
+}
+
+.leera-loader-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at center, rgba(248, 250, 252, 0.98), rgba(241, 245, 249, 0.95));
+  backdrop-filter: blur(8px);
+}
+
+.leera-loader-inline {
+  padding: 20px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+/* Logo & Rotating Aura */
+.leera-loader-logo-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.leera-loader-glow-ring {
+  position: absolute;
+  inset: -6px;
+  border-radius: 28px;
+  background: conic-gradient(from 0deg, #1F8A5F, #1e3a8a, #e11d48, #f59e0b, #1F8A5F);
+  filter: blur(8px);
+  opacity: 0.75;
+  animation: leera-spin 3.5s linear infinite;
+}
+
+.leera-loader-glow-ring-2 {
+  position: absolute;
+  inset: -3px;
+  border-radius: 24px;
+  background: conic-gradient(from 180deg, #1e3a8a, #1F8A5F, #f59e0b, #1e3a8a);
+  opacity: 0.9;
+  animation: leera-spin 5s linear infinite reverse;
+}
+
+.leera-loader-logo-card {
+  position: relative;
+  z-index: 2;
+  background: #ffffff;
+  padding: 8px;
+  border-radius: 20px;
+  box-shadow: 0 8px 24px rgba(30, 58, 138, 0.18);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: leera-pulse 2.2s ease-in-out infinite;
+}
+
+.leera-loader-logo-img {
+  display: block;
+  border-radius: 12px;
+  object-fit: contain;
+}
+
+/* Typography & Dots */
+.leera-loader-text-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.leera-loader-message {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #1e293b;
+  letter-spacing: -0.2px;
+}
+
+.leera-loader-submessage {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: #64748b;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.leera-loader-dots span {
+  display: inline-block;
+  animation: leera-dot-blink 1.4s infinite both;
+  font-weight: 700;
+  color: #1F8A5F;
+}
+
+.leera-loader-dots span:nth-child(1) {
+  animation-delay: 0s;
+}
+.leera-loader-dots span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.leera-loader-dots span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+/* Shimmer Progress Track */
+.leera-loader-shimmer-track {
+  width: 140px;
+  height: 4px;
+  background: #e2e8f0;
+  border-radius: 999px;
+  overflow: hidden;
+  position: relative;
+}
+
+.leera-loader-shimmer-bar {
+  width: 50%;
+  height: 100%;
+  background: linear-gradient(90deg, #1F8A5F 0%, #3b82f6 50%, #1F8A5F 100%);
+  border-radius: 999px;
+  animation: leera-shimmer 1.6s ease-in-out infinite;
+}
+
+/* Keyframes */
+@keyframes leera-spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+@keyframes leera-pulse {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 8px 24px rgba(30, 58, 138, 0.16);
+  }
+  50% {
+    transform: scale(1.06);
+    box-shadow: 0 12px 32px rgba(31, 138, 95, 0.28);
+  }
+}
+
+@keyframes leera-dot-blink {
+  0%, 80%, 100% {
+    opacity: 0.2;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+@keyframes leera-shimmer {
+  0% {
+    transform: translateX(-150%);
+  }
+  100% {
+    transform: translateX(250%);
+  }
+}
+
+/* ---------- Director's Class Marksheet Broadsheet Print Styles ---------- */
+@page marksheetLandscape {
+  size: A4 landscape;
+  margin: 6mm;
+}
+
+@media print {
+  body:has(.class-marksheet-page) {
+    background: #fff !important;
+  }
+  .class-marksheet-page {
+    page: marksheetLandscape;
+    gap: 8px !important;
+    width: 100% !important;
+    max-width: none !important;
+  }
+  .class-marksheet-page .page-head .btn,
+  .class-marksheet-page .page-head select,
+  .class-marksheet-page .page-head label,
+  .class-marksheet-page .class-marksheet-toolbar,
+  .class-marksheet-page .mobile-scroll-hint,
+  .class-marksheet-page .search,
+  .class-marksheet-page .grid4 {
+    display: none !important;
+  }
+  .class-marksheet-page .card {
+    box-shadow: none !important;
+    border: 1px solid #cbd5e1 !important;
+    padding: 0 !important;
+  }
+  .class-marksheet-table-wrap {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+  .class-marksheet-table {
+    font-size: 9.5px !important;
+    width: 100% !important;
+    page-break-inside: auto;
+  }
+  .class-marksheet-table tr {
+    page-break-inside: avoid;
+    page-break-after: auto;
+  }
+  .class-marksheet-table thead {
+    display: table-header-group;
+  }
+}
+
+
+

@@ -1,8 +1,40 @@
-import type { ReportData, ReportSubject, StudentReportRow } from './types'
+import type { ReportData, ReportFilter, ReportSubject, StudentReportRow } from './types'
+
+export const DEFAULT_REPORT_START_DATE = '2026-09-20'
 
 function pct(score: number, max: number): number {
   if (max <= 0) return 0
   return (score / max) * 100
+}
+
+/**
+ * Filter report rows based on teacher's filter settings:
+ * - 'since_date': only tests created on or after startDate (default 2026-09-20)
+ * - 'custom': only explicitly checked test IDs
+ * - 'all': all recorded tests
+ */
+export function filterReportRows(
+  rows: StudentReportRow[],
+  filter: ReportFilter
+): StudentReportRow[] {
+  if (filter.mode === 'all') {
+    return rows
+  }
+
+  if (filter.mode === 'since_date') {
+    const cutoff = filter.startDate || DEFAULT_REPORT_START_DATE
+    return rows.filter((r) => {
+      const createdDate = r.created_at ? r.created_at.slice(0, 10) : r.test_date
+      return createdDate >= cutoff
+    })
+  }
+
+  if (filter.mode === 'custom' && filter.selectedTestIds) {
+    const selectedSet = new Set(filter.selectedTestIds)
+    return rows.filter((r) => r.test_id && selectedSet.has(r.test_id))
+  }
+
+  return rows
 }
 
 /**

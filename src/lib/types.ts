@@ -285,6 +285,7 @@ export interface UnitTest {
   exam_paper_path?: string | null
   exam_paper_name?: string | null
   created_by?: string | null
+  created_at?: string
 }
 
 export interface UpdateUnitTestInput {
@@ -315,11 +316,19 @@ export interface Assignment {
 
 /** One raw mark line feeding the report builder. */
 export interface StudentReportRow {
+  test_id?: string
+  created_at?: string
   subject: string
   title: string
   test_date: string
   score: number
   max_mark: number
+}
+
+export interface ReportFilter {
+  mode: 'since_date' | 'all' | 'custom'
+  startDate?: string // ISO 'YYYY-MM-DD', default '2026-09-20'
+  selectedTestIds?: string[]
 }
 
 export interface ReportSubject {
@@ -421,6 +430,7 @@ export interface Api {
 
   // scores
   listScoresForTest(testId: string): Promise<ScoreRow[]>
+  listScoresForTests(testIds: string[]): Promise<ScoreRow[]>
   saveScore(unit_test_id: string, student_id: string, score: number | null): Promise<void>
 
   // reports

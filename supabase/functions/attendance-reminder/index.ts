@@ -10,9 +10,9 @@ const cors = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type'
 }
 
-const VAPID_PUBLIC_KEY = Deno.env.get('VAPID_PUBLIC_KEY') || 'BKd_9F-f3qZ_p2d6s5U5Q0Wp_0s9M4Y6A1v7H2X3k8N9L4P7q2R5t8V1w4Z7C0b3E6g9J2m5P8s1V4y7B0d3'
-const VAPID_PRIVATE_KEY = Deno.env.get('VAPID_PRIVATE_KEY') || 'd_5F-x8Z_q2r6s5U5Q0Wp_0s9M4Y6A1v7H2X3k8N9L4'
-const VAPID_SUBJECT = Deno.env.get('VAPID_SUBJECT') || 'mailto:info@leeraschool.ac.tz'
+const VAPID_PUBLIC_KEY = Deno.env.get('VAPID_PUBLIC_KEY') || 'BIdY_x0ofg0Ani-vbOnuuIcd4Y88gTLynWJoUZzqq-ftqRCGv8Y-EkmgGHLaSiPsC5f_0X91eWfBKeg-0imMIlo'
+const VAPID_PRIVATE_KEY = Deno.env.get('VAPID_PRIVATE_KEY') || '-ftJPnNMuKix3fP-ugq4kQm2HdZqYigsDp9hBJpne8g'
+const VAPID_SUBJECT = Deno.env.get('VAPID_SUBJECT') || 'mailto:admin@leeraschool.ac.tz'
 
 try {
   webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY)
@@ -57,6 +57,9 @@ Deno.serve(async (req: Request) => {
         body: `Good morning ${teacher.teacher_name}! Attendance for ${teacher.class_name} is pending. Please remember to submit it today.`,
         icon: '/icons/icon-192.png',
         badge: '/icons/icon-192.png',
+        vibrate: [300, 100, 300, 100, 300],
+        tag: 'attendance-reminder',
+        requireInteraction: true,
         data: { url: '/attendance' }
       })
 
@@ -67,7 +70,10 @@ Deno.serve(async (req: Request) => {
             keys: { p256dh: sub.p256dh, auth: sub.auth }
           }, payload)
           sentCount++
-        } catch (e) {
+        } catch (e: any) {
+          if (e.statusCode === 404 || e.statusCode === 410) {
+            await admin.from('push_subscriptions').delete().eq('endpoint', sub.endpoint)
+          }
           console.warn('Failed to send push to teacher:', sub.endpoint, e)
         }
       }

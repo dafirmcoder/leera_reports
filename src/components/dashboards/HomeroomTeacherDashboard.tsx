@@ -4,6 +4,7 @@ import { api } from '../../lib/api'
 import { useAuth } from '../../context/AuthContext'
 import { useSchool } from '../../context/SchoolContext'
 import type { TeacherDashboardData } from '../../lib/types'
+import LeeraLoader from '../LeeraLoader'
 
 export default function HomeroomTeacherDashboard() {
   const { profile } = useAuth()
@@ -39,9 +40,10 @@ export default function HomeroomTeacherDashboard() {
 
   if (loading) {
     return (
-      <div className="card" style={{ padding: '40px', textAlign: 'center' }}>
-        <p className="muted" style={{ fontSize: '15px' }}>Loading teacher dashboard...</p>
-      </div>
+      <LeeraLoader
+        message="Loading teacher dashboard"
+        subMessage="Preparing classes, attendance & unit tests"
+      />
     )
   }
 
@@ -254,9 +256,16 @@ export default function HomeroomTeacherDashboard() {
               ? `${data.totalTestsCreated} created in subjects you teach`
               : 'Across all class subjects'}
           </p>
-          <Link to="/marks" style={{ fontSize: '12px', fontWeight: 600, color: '#8b5cf6', textDecoration: 'none' }}>
-            View Class Marksheets →
-          </Link>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px' }}>
+            <Link to="/marks" style={{ fontSize: '12px', fontWeight: 600, color: '#8b5cf6', textDecoration: 'none' }}>
+              View Marksheets →
+            </Link>
+            {hr && (
+              <Link to={`/marks/class/${hr.id}`} style={{ fontSize: '12px', fontWeight: 600, color: '#2563eb', textDecoration: 'none' }}>
+                📊 Tabulated Sheet →
+              </Link>
+            )}
+          </div>
         </div>
 
         {/* Student Reports */}
@@ -278,6 +287,69 @@ export default function HomeroomTeacherDashboard() {
           </Link>
         </div>
       </div>
+
+      {/* Homeroom Tabulated Scoresheet Callout Banner */}
+      {hr && (
+        <div
+          className="card"
+          style={{
+            padding: '20px 24px',
+            borderRadius: '14px',
+            background: 'linear-gradient(135deg, #f0fdf4 0%, #eff6ff 100%)',
+            border: '1px solid #bfdbfe',
+            boxShadow: '0 2px 10px rgba(59, 130, 246, 0.08)'
+          }}
+        >
+          <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '16px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+              <div style={{
+                width: '52px',
+                height: '52px',
+                borderRadius: '14px',
+                background: '#ffffff',
+                border: '1px solid #dbeafe',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '26px',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.04)'
+              }}>
+                📊
+              </div>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <h3 style={{ margin: 0, fontSize: '17px', fontWeight: 700, color: '#0f172a' }}>
+                    {hr.name} — Tabulated Marksheet View
+                  </h3>
+                  <span style={{ fontSize: '11px', fontWeight: 700, background: '#dcfce7', color: '#166534', padding: '2px 8px', borderRadius: '12px' }}>
+                    BROADSHEET
+                  </span>
+                </div>
+                <p style={{ margin: '4px 0 0', fontSize: '13px', color: '#475569' }}>
+                  Full tabulated sheet for your class showing all {hr.student_count} learners, all subjects, unit test scores, subject averages & overall performance.
+                </p>
+              </div>
+            </div>
+            <div>
+              <Link
+                to={`/marks/class/${hr.id}`}
+                className="btn btn-primary"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  textDecoration: 'none',
+                  fontWeight: 600,
+                  padding: '10px 18px',
+                  borderRadius: '10px'
+                }}
+              >
+                <span>Open Tabulated Sheet →</span>
+              </Link>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Quick Action Shortcuts */}
       <div className="card" style={{ padding: '20px 24px', borderRadius: '12px' }}>
@@ -302,6 +374,26 @@ export default function HomeroomTeacherDashboard() {
             <span>👥</span>
             <span>View Student Roster</span>
           </Link>
+
+          {hr && (
+            <Link
+              to={`/marks/class/${hr.id}`}
+              className="btn btn-secondary"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                textDecoration: 'none',
+                background: '#eff6ff',
+                borderColor: '#bfdbfe',
+                color: '#1d4ed8',
+                fontWeight: 600
+              }}
+            >
+              <span>📊</span>
+              <span>Class Tabulated Sheet</span>
+            </Link>
+          )}
 
           <Link
             to="/marks"

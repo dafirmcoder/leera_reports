@@ -4,6 +4,7 @@ import { api } from '../../lib/api'
 import { useAuth } from '../../context/AuthContext'
 import { useSchool } from '../../context/SchoolContext'
 import type { TeacherDashboardData } from '../../lib/types'
+import LeeraLoader from '../LeeraLoader'
 
 export default function SubjectTeacherDashboard() {
   const { profile } = useAuth()
@@ -39,9 +40,10 @@ export default function SubjectTeacherDashboard() {
 
   if (loading) {
     return (
-      <div className="card" style={{ padding: '40px', textAlign: 'center' }}>
-        <p className="muted" style={{ fontSize: '15px' }}>Loading subject teacher dashboard...</p>
-      </div>
+      <LeeraLoader
+        message="Loading subject teacher dashboard"
+        subMessage="Preparing subject tests & marks"
+      />
     )
   }
 
