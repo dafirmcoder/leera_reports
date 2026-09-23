@@ -408,7 +408,7 @@ export const supabaseApi: Api = {
   async reallocateStudent(studentId: string, targetClassId: string): Promise<void> {
     const { data: currentStudent, error: fetchErr } = await db()
       .from('students')
-      .select('id, class_id, student_no, roll_no, admission_no, full_name, gender')
+      .select('id, class_id, student_no, roll_no, full_name, gender')
       .eq('id', studentId)
       .single()
 
@@ -450,6 +450,16 @@ export const supabaseApi: Api = {
 
     if (updateErr) {
       throw new Error(updateErr.message)
+    }
+
+    // Preserve attendance records by reallocating them to the target class
+    const { error: attErr } = await db()
+      .from('attendance')
+      .update({ class_id: targetClassId })
+      .eq('student_id', studentId)
+
+    if (attErr) {
+      console.warn('Attendance record reallocation warning:', attErr.message)
     }
   },
 

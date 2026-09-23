@@ -302,6 +302,12 @@ export default function Students() {
         </div>
       )}
 
+      {error && !reallocatingStudent && (
+        <div className="notice notice-error" style={{ marginBottom: '16px' }}>
+          {error}
+        </div>
+      )}
+
       {canAdd && (
         <form onSubmit={submit} className="card stack">
           <h3>{editingId ? 'Edit student' : 'Add student'}</h3>
@@ -545,6 +551,12 @@ export default function Students() {
                   </span>
                 </small>
               </label>
+
+              {error && (
+                <div className="notice notice-error" style={{ margin: 0 }}>
+                  {error}
+                </div>
+              )}
 
               {/* Modal Action Buttons */}
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '8px' }}>
