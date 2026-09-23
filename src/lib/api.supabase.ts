@@ -377,12 +377,23 @@ export const supabaseApi: Api = {
     // Exclude student_no so teachers or clients cannot alter the assigned serial number
     const rawRoll = (s.roll_no || s.admission_no || '').trim()
     const formattedRoll = formatRollNo(rawRoll) || rawRoll
+    const updatePayload: Record<string, any> = {
+      roll_no: formattedRoll,
+      full_name: s.full_name.trim(),
+      gender: s.gender
+    }
+    if (s.class_id) {
+      updatePayload.class_id = s.class_id
+    }
     let { error } = await db().from('students')
-      .update({ roll_no: formattedRoll, full_name: s.full_name.trim(), gender: s.gender })
+      .update(updatePayload)
       .eq('id', s.id)
     if (error && (error.code === '42703' || error.message.includes('roll_no'))) {
+      const retryPayload = { ...updatePayload }
+      delete retryPayload.roll_no
+      retryPayload.admission_no = formattedRoll
       const retry = await db().from('students')
-        .update({ admission_no: formattedRoll, full_name: s.full_name.trim(), gender: s.gender })
+        .update(retryPayload)
         .eq('id', s.id)
       error = retry.error
     }
@@ -391,6 +402,54 @@ export const supabaseApi: Api = {
         throw new Error('Roll number already exists. Enter a different number.')
       }
       throw new Error(error.message)
+    }
+  },
+
+  async reallocateStudent(studentId: string, targetClassId: string): Promise<void> {
+    const { data: currentStudent, error: fetchErr } = await db()
+      .from('students')
+      .select('id, class_id, student_no, roll_no, admission_no, full_name, gender')
+      .eq('id', studentId)
+      .single()
+
+    if (fetchErr || !currentStudent) {
+      throw new Error(fetchErr?.message || 'Student record not found.')
+    }
+
+    if (currentStudent.class_id === targetClassId) {
+      return // Already in target class
+    }
+
+    // Check if target class has collision with current student_no
+    const { data: targetStudents } = await db()
+      .from('students')
+      .select('student_no')
+      .eq('class_id', targetClassId)
+
+    const updatePayload: Record<string, any> = {
+      class_id: targetClassId
+    }
+
+    if (targetStudents && targetStudents.length > 0) {
+      const existingNos = new Set(targetStudents.map((s: any) => String(s.student_no).trim()))
+      if (existingNos.has(String(currentStudent.student_no).trim())) {
+        let maxSeq = 0
+        targetStudents.forEach((s: any) => {
+          const num = parseInt(String(s.student_no).replace(/[^0-9]/g, ''), 10)
+          if (!isNaN(num) && num > maxSeq) maxSeq = num
+        })
+        updatePayload.student_no = String(maxSeq + 1)
+      }
+    }
+
+    // Update class_id, keeping roll_no, full_name, and other details intact
+    const { error: updateErr } = await db()
+      .from('students')
+      .update(updatePayload)
+      .eq('id', studentId)
+
+    if (updateErr) {
+      throw new Error(updateErr.message)
     }
   },
 

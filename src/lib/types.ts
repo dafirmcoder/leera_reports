@@ -408,6 +408,7 @@ export interface Api {
   getStudent(id: string): Promise<Student | null>
   addStudent(classId: string, s: Omit<Student, 'id' | 'class_id'>): Promise<Student>
   updateStudent(s: Student): Promise<void>
+  reallocateStudent(studentId: string, targetClassId: string): Promise<void>
   deleteStudent(id: string): Promise<void>
 
   // population summary (for Directors & leadership)

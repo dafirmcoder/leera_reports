@@ -18,6 +18,7 @@ export type Capability =
   | 'viewDirectorDashboard' // executive summaries (director, HOS, coordinator)
   | 'viewAttendanceSummaries' // attendance summaries (admin, director, HOS, coordinator)
   | 'downloadAttendanceReports' // download xlsx/csv (admin, director, HOS, coordinator)
+  | 'reallocateStudents' // coordinators + HOS can reallocate a student to another class without altering details
 
 export function hasRole(role: Role | undefined, requiredRole: Role, additionalRoles: Role[] = []): boolean {
   return role === requiredRole || additionalRoles.includes(requiredRole)
@@ -78,6 +79,8 @@ export function can(role: Role | undefined, cap: Capability, additionalRoles: Ro
     case 'viewAttendanceSummaries':
     case 'downloadAttendanceReports':
       return roles.has('admin') || roles.has('director') || roles.has('head_of_school') || roles.has('curriculum_coordinator')
+    case 'reallocateStudents':
+      return roles.has('head_of_school') || roles.has('curriculum_coordinator')
     default:
       return false
   }
