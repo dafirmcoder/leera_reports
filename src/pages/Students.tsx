@@ -82,9 +82,17 @@ export default function Students() {
       setNextRollNo('')
       return
     }
-    api.nextRollNo(activeClassId).then(setNextRollNo).catch(() => {
-      const seq = students.length + 1
-      setNextRollNo(buildRollNo(className, seq, school?.academic_year))
+    // Set immediate fallback so the auto-assigned field is never empty while waiting
+    const seq = students.length + 1
+    const fallback = buildRollNo(className, seq, school?.academic_year)
+    setNextRollNo(fallback)
+
+    api.nextRollNo(activeClassId).then((res) => {
+      if (res && /^LIS-[0-9]{3}\/[0-9]+[A-Z]?\/[0-9]{2}$/i.test(res)) {
+        setNextRollNo(res)
+      }
+    }).catch(() => {
+      // Retain fallback
     })
   }, [canAdd, editingId, activeClassId, className, school?.academic_year, students.length])
 
@@ -99,7 +107,9 @@ export default function Students() {
       const studentNo = editingId
         ? (students.find((s) => s.id === editingId)?.student_no || form.student_no)
         : suggestedNo
-      const rawRoll = form.roll_no.trim() || (editingId ? '' : nextRollNo)
+      const rawRoll = (!isLeadership && !editingId)
+        ? nextRollNo
+        : (form.roll_no.trim() || (editingId ? '' : nextRollNo))
       const rollNo = formatRollNo(rawRoll)
       if (!rollNo) {
         setError('A unique roll number is required.')
@@ -344,12 +354,26 @@ export default function Students() {
               </small>
             </label>
             <label className="field"><span>Roll No. (LIS-001/9P/26)</span>
-              <input
-                value={form.roll_no}
-                placeholder={nextRollNo}
-                onChange={(e) => setForm({ ...form, roll_no: e.target.value })}
-              />
-              {nextRollNo && <small className="muted">Next roll number: {nextRollNo}</small>}
+              {(!isLeadership && !editingId) ? (
+                <input
+                  value={nextRollNo || 'Generating roll number…'}
+                  readOnly
+                  disabled
+                  tabIndex={-1}
+                  style={{ background: '#f8fafc', cursor: 'not-allowed', color: '#475569', fontWeight: 600 }}
+                />
+              ) : (
+                <input
+                  value={form.roll_no}
+                  placeholder={nextRollNo}
+                  onChange={(e) => setForm({ ...form, roll_no: e.target.value })}
+                />
+              )}
+              <small className="muted">
+                {(!isLeadership && !editingId)
+                  ? 'Auto-assigned sequential roll number for this class.'
+                  : (nextRollNo ? `Next roll number: ${nextRollNo}` : 'Unique student roll number')}
+              </small>
             </label>
             <label className="field"><span>Full name *</span>
               <input required value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} />
