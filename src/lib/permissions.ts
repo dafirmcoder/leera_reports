@@ -19,6 +19,8 @@ export type Capability =
   | 'viewAttendanceSummaries' // attendance summaries (admin, director, HOS, coordinator)
   | 'downloadAttendanceReports' // download xlsx/csv (admin, director, HOS, coordinator)
   | 'reallocateStudents' // coordinators + HOS can reallocate a student to another class without altering details
+  | 'viewPlanning'       // academic roles + director (admin is excluded)
+  | 'manageCurriculum'   // upload syllabus PDFs and seed schemes (HOS + coordinator)
 
 export function hasRole(role: Role | undefined, requiredRole: Role, additionalRoles: Role[] = []): boolean {
   return role === requiredRole || additionalRoles.includes(requiredRole)
@@ -81,6 +83,10 @@ export function can(role: Role | undefined, cap: Capability, additionalRoles: Ro
       return roles.has('admin') || roles.has('director') || roles.has('head_of_school') || roles.has('curriculum_coordinator')
     case 'reallocateStudents':
       return roles.has('head_of_school') || roles.has('curriculum_coordinator')
+    case 'viewPlanning':
+      return !roles.has('admin') && (roles.has('director') || roles.has('head_of_school') || roles.has('curriculum_coordinator') || roles.has('homeroom_teacher') || roles.has('subject_teacher'))
+    case 'manageCurriculum':
+      return roles.has('head_of_school') || roles.has('curriculum_coordinator')
     default:
       return false
   }
@@ -100,7 +106,7 @@ export function navTabs(
   if (!role || role === 'pending') return []
   const tabs: Tab[] = []
 
-  // Admin role: sees Dashboard, Attendance, and Settings
+  // Admin role: sees Dashboard, Attendance, and Settings (NO PLANNING tab)
   if (role === 'admin') {
     tabs.push({ to: '/dashboard', label: 'Dashboard', icon: '📊' })
     tabs.push({ to: '/attendance', label: 'Attendance', icon: '📅' })
@@ -108,9 +114,10 @@ export function navTabs(
     return tabs
   }
 
-  // Director role: sees Executive Dashboard, Sub-menus, and Settings (no teacher tools)
+  // Director role: sees Executive Dashboard, Planning, Sub-menus, and Settings (no direct mark entry)
   if (role === 'director') {
     tabs.push({ to: '/dashboard', label: 'Dashboard', icon: '📊' })
+    tabs.push({ to: '/planning', label: 'Planning', icon: '📋' })
     tabs.push({ to: '/dashboard/population', label: 'Population', icon: '👥' })
     tabs.push({ to: '/dashboard/attendance', label: 'Attendance', icon: '📅' })
     tabs.push({ to: '/dashboard/marks', label: 'Marks Summaries', icon: '📝' })
@@ -123,11 +130,13 @@ export function navTabs(
   tabs.push({ to: '/dashboard', label: 'Dashboard', icon: '📊' })
 
   // Students page: only accessible to homeroom teachers, coordinators, and head of school.
-  // Pure subject teachers who are not homeroom teachers are excluded.
   const canSeeStudents = options?.isHomeroom || can(role, 'viewStudents', additionalRoles)
   if (canSeeStudents) {
     tabs.push({ to: '/students', label: 'Students', icon: '👥' })
   }
+
+  // Planning Tab for teachers, coordinators, and HOS
+  tabs.push({ to: '/planning', label: 'Planning', icon: '📋' })
 
   tabs.push(
     { to: '/marks', label: 'Marks', icon: '📝' },

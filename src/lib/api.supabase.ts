@@ -1,11 +1,14 @@
 import { getSupabaseConfigError, supabase } from './supabase'
 import { formatAdmissionNo, formatRollNo, formatStudentNo } from './report'
+import { CAMBRIDGE_PRESEEDED_SCHEMES } from './cambridgeData'
 import type {
   AdminClassAttendanceSummary, AdminDashboardData, Api, Assignment, AttendanceAggregatedSummary, AttendanceRow, AttendanceStatus, AttendanceSummary,
   ClassAttendanceExportData, ClassInfo, ClassPopulationSummary, DetailedAttendanceExport,
   EndOfUnitTestOverview, Profile, Role, School,
   SchoolPopulationSummary, ScoreRow, Student, StudentReportRow, Subject,
-  SubjectTestSummary, TeacherAssignmentOverview, TeacherDashboardData, TeacherTestSummary, UnitTest, UnitTestSummaryItem, UpdateUnitTestInput
+  SubjectTestSummary, TeacherAssignmentOverview, TeacherDashboardData, TeacherTestSummary, UnitTest, UnitTestSummaryItem, UpdateUnitTestInput,
+  CurriculumScheme, CurriculumTopic, CurriculumObjective, TeacherTimetable, TeacherScheduleSlot, WorkPlan, WorkPlanWeek, WorkPlanWeekObjective, LessonPlan,
+  ImportWorkPlanInput, ImportWorkPlanResult, ParsedWorkPlanWeek
 } from './types'
 
 function db() {
@@ -1661,6 +1664,1338 @@ export const supabaseApi: Api = {
       },
       classes_summary
     }
+  },
+
+  // ----------------------------------------------------------------
+  // PLANNING & CURRICULUM IMPLEMENTATION
+  // ----------------------------------------------------------------
+
+  async listCurriculumSchemes(framework?: string): Promise<CurriculumScheme[]> {
+    try {
+      let q = db().from('curriculum_schemes').select('*').eq('is_active', true)
+      if (framework) q = q.eq('framework', framework)
+      const { data, error } = await q.order('subject_name').order('year_group')
+      if (!error && data) {
+        return data as CurriculumScheme[]
+      }
+    } catch (e) {
+      console.warn('curriculum_schemes Supabase error or table missing, using cache:', e)
+    }
+
+    // Fallback: check local storage uploaded schemes
+    const cached = localStorage.getItem('leera_curriculum_schemes')
+    if (cached) {
+      try {
+        const parsed: CurriculumScheme[] = JSON.parse(cached)
+        return framework ? parsed.filter((s) => s.framework === framework) : parsed
+      } catch {}
+    }
+
+    // Default to 0 curriculum schemes (blank until uploaded)
+    return []
+  },
+
+  async getCurriculumSchemeWithDetails(schemeId: string): Promise<{ scheme: CurriculumScheme; topics: CurriculumTopic[]; objectives: CurriculumObjective[] } | null> {
+    try {
+      const { data: scheme, error: sErr } = await db().from('curriculum_schemes').select('*').eq('id', schemeId).maybeSingle()
+      if (!sErr && scheme) {
+        const { data: topics } = await db().from('curriculum_topics').select('*').eq('scheme_id', schemeId).order('sequence')
+        const { data: objectives } = await db().from('curriculum_objectives').select('*').eq('scheme_id', schemeId).order('sequence')
+        return {
+          scheme: scheme as CurriculumScheme,
+          topics: (topics || []) as CurriculumTopic[],
+          objectives: (objectives || []) as CurriculumObjective[]
+        }
+      }
+    } catch {}
+
+    // Check local storage custom uploaded schemes
+    const customSchemes = JSON.parse(localStorage.getItem('leera_custom_schemes_detail') || '{}')
+    if (customSchemes[schemeId]) {
+      return customSchemes[schemeId]
+    }
+
+    return null
+  },
+
+  async saveCurriculumScheme(input: {
+    framework: string
+    subject_code: string
+    subject_name: string
+    year_group: string
+    title: string
+    syllabus_years?: string
+    topics: Array<{ code?: string; title: string; sequence: number; is_challenge?: boolean; description?: string }>
+    objectives: Array<{ topic_title?: string; code: string; text: string; subtopic?: string; challenge_title?: string; sequence: number }>
+  }): Promise<string> {
+    const school = await this.getSchool()
+    const schemePayload = {
+      school_id: school?.id || null,
+      framework: input.framework,
+      subject_code: input.subject_code,
+      subject_name: input.subject_name,
+      year_group: input.year_group,
+      title: input.title,
+      syllabus_years: input.syllabus_years || '2023-2027',
+      is_active: true
+    }
+
+    try {
+      // 1. Check if scheme already exists by subject_code (and year_group)
+      let schemeId: string | null = null
+      const { data: matchedSchemes } = await db()
+        .from('curriculum_schemes')
+        .select('*')
+        .eq('subject_code', input.subject_code)
+
+      if (matchedSchemes && matchedSchemes.length > 0) {
+        const found = matchedSchemes.find((s: any) => s.year_group === input.year_group) || matchedSchemes[0]
+        schemeId = found.id
+      } else {
+        const { data: newScheme, error: sErr } = await db()
+          .from('curriculum_schemes')
+          .insert(schemePayload)
+          .select()
+          .single()
+        if (!sErr && newScheme) {
+          schemeId = newScheme.id
+        }
+      }
+
+      if (schemeId) {
+        // 2. Fetch existing topics to avoid duplicate topic insertions
+        const { data: existingTopics } = await db()
+          .from('curriculum_topics')
+          .select('*')
+          .eq('scheme_id', schemeId)
+
+        const topicMap = new Map<string, string>()
+        if (existingTopics) {
+          existingTopics.forEach((it: any) => topicMap.set(it.title.toLowerCase().trim(), it.id))
+        }
+
+        // Insert only new topics
+        const newTopicsToInsert = input.topics
+          .filter((t) => !topicMap.has(t.title.toLowerCase().trim()))
+          .map((t, idx) => ({
+            scheme_id: schemeId!,
+            code: t.code || `T${(existingTopics?.length || 0) + idx + 1}`,
+            title: t.title,
+            sequence: t.sequence || (existingTopics?.length || 0) + idx + 1,
+            is_challenge: !!t.is_challenge,
+            description: t.description || ''
+          }))
+
+        if (newTopicsToInsert.length > 0) {
+          const { data: insertedTopics } = await db().from('curriculum_topics').insert(newTopicsToInsert).select()
+          if (insertedTopics) {
+            insertedTopics.forEach((it: any) => topicMap.set(it.title.toLowerCase().trim(), it.id))
+          }
+        }
+
+        // 3. Query existing objectives to prevent any duplication or overwriting
+        const { data: existingObjs } = await db()
+          .from('curriculum_objectives')
+          .select('code')
+          .eq('scheme_id', schemeId)
+
+        const existingCodes = new Set((existingObjs || []).map((o: any) => o.code.trim().toLowerCase()))
+
+        // Filter for only brand-new objectives
+        const newObjsToInsert: any[] = []
+        let seqCounter = (existingObjs?.length || 0) + 1
+
+        for (const o of input.objectives) {
+          const normCode = o.code.trim().toLowerCase()
+          if (!normCode) continue
+          if (!existingCodes.has(normCode)) {
+            existingCodes.add(normCode)
+            newObjsToInsert.push({
+              scheme_id: schemeId,
+              topic_id: o.topic_title ? topicMap.get(o.topic_title.toLowerCase().trim()) || null : null,
+              code: o.code.trim(),
+              text: o.text.trim(),
+              subtopic: o.subtopic || '',
+              challenge_title: o.challenge_title || '',
+              sequence: o.sequence || seqCounter++
+            })
+          }
+        }
+
+        if (newObjsToInsert.length > 0) {
+          await db().from('curriculum_objectives').insert(newObjsToInsert)
+        }
+
+        return schemeId
+      }
+    } catch (e) {
+      console.warn('saveCurriculumScheme Supabase fallback to local storage:', e)
+    }
+
+    // Local storage fallback with deduplication
+    const currentList: CurriculumScheme[] = JSON.parse(localStorage.getItem('leera_curriculum_schemes') || '[]')
+    let existingLocal = currentList.find((s) => s.subject_code === input.subject_code && s.year_group === input.year_group)
+      || currentList.find((s) => s.subject_code === input.subject_code)
+
+    const localId = existingLocal ? existingLocal.id : `custom-scheme-${Date.now()}`
+    const schemeObj: CurriculumScheme = existingLocal || {
+      id: localId,
+      ...schemePayload
+    }
+
+    const customSchemes = JSON.parse(localStorage.getItem('leera_custom_schemes_detail') || '{}')
+    const currentDetail = customSchemes[localId] || { scheme: schemeObj, topics: [], objectives: [] }
+
+    // Deduplicate topics in local storage
+    const localTopicMap = new Map<string, string>()
+    currentDetail.topics.forEach((t: any) => localTopicMap.set(t.title.toLowerCase().trim(), t.id))
+    input.topics.forEach((t, idx) => {
+      const k = t.title.toLowerCase().trim()
+      if (!localTopicMap.has(k)) {
+        const tid = `custom-topic-${localId}-${currentDetail.topics.length + idx + 1}`
+        localTopicMap.set(k, tid)
+        currentDetail.topics.push({
+          id: tid,
+          scheme_id: localId,
+          code: t.code || `T${currentDetail.topics.length + 1}`,
+          title: t.title,
+          sequence: t.sequence || currentDetail.topics.length + 1,
+          is_challenge: !!t.is_challenge,
+          description: t.description || ''
+        })
+      }
+    })
+
+    // Deduplicate objectives in local storage
+    const localObjCodes = new Set(currentDetail.objectives.map((o: any) => o.code.trim().toLowerCase()))
+    input.objectives.forEach((o, idx) => {
+      const k = o.code.trim().toLowerCase()
+      if (!localObjCodes.has(k)) {
+        localObjCodes.add(k)
+        currentDetail.objectives.push({
+          id: `custom-obj-${localId}-${currentDetail.objectives.length + idx + 1}`,
+          scheme_id: localId,
+          topic_id: o.topic_title ? localTopicMap.get(o.topic_title.toLowerCase().trim()) || null : null,
+          code: o.code.trim(),
+          text: o.text.trim(),
+          subtopic: o.subtopic || '',
+          challenge_title: o.challenge_title || '',
+          sequence: o.sequence || currentDetail.objectives.length + 1
+        })
+      }
+    })
+
+    customSchemes[localId] = currentDetail
+    localStorage.setItem('leera_custom_schemes_detail', JSON.stringify(customSchemes))
+
+    if (!existingLocal) {
+      currentList.push(schemeObj)
+      localStorage.setItem('leera_curriculum_schemes', JSON.stringify(currentList))
+    }
+
+    return localId
+  },
+
+  async seedCambridgeFrameworks(): Promise<{ schemesCreated: number }> {
+    let created = 0
+    for (const schemeDef of CAMBRIDGE_PRESEEDED_SCHEMES) {
+      await this.saveCurriculumScheme({
+        framework: schemeDef.framework,
+        subject_code: schemeDef.subject_code,
+        subject_name: schemeDef.subject_name,
+        year_group: schemeDef.year_group,
+        title: schemeDef.title,
+        syllabus_years: schemeDef.syllabus_years,
+        topics: schemeDef.topics,
+        objectives: schemeDef.objectives
+      })
+      created++
+    }
+    return { schemesCreated: created }
+  },
+
+  async deleteCurriculumScheme(schemeId: string): Promise<void> {
+    try {
+      await db().from('curriculum_objectives').delete().eq('scheme_id', schemeId)
+      await db().from('curriculum_topics').delete().eq('scheme_id', schemeId)
+      await db().from('curriculum_schemes').delete().eq('id', schemeId)
+    } catch (e) {
+      console.warn('deleteCurriculumScheme Supabase delete error:', e)
+    }
+
+    try {
+      const cached = localStorage.getItem('leera_curriculum_schemes')
+      if (cached) {
+        const parsed: CurriculumScheme[] = JSON.parse(cached)
+        const filtered = parsed.filter((s) => s.id !== schemeId)
+        localStorage.setItem('leera_curriculum_schemes', JSON.stringify(filtered))
+      }
+      const customSchemes = JSON.parse(localStorage.getItem('leera_custom_schemes_detail') || '{}')
+      if (customSchemes[schemeId]) {
+        delete customSchemes[schemeId]
+        localStorage.setItem('leera_custom_schemes_detail', JSON.stringify(customSchemes))
+      }
+    } catch {}
+  },
+
+  async clearCurriculumLibrary(): Promise<void> {
+    try {
+      await db().from('curriculum_objectives').delete().neq('id', '00000000-0000-0000-0000-000000000000')
+      await db().from('curriculum_topics').delete().neq('id', '00000000-0000-0000-0000-000000000000')
+      await db().from('curriculum_schemes').delete().neq('id', '00000000-0000-0000-0000-000000000000')
+    } catch (e) {
+      console.warn('clearCurriculumLibrary Supabase delete error:', e)
+    }
+
+    try {
+      localStorage.removeItem('leera_curriculum_schemes')
+      localStorage.removeItem('leera_custom_schemes_detail')
+    } catch {}
+  },
+
+  // ----------------------------------------------------------------
+  // TIMETABLES & SCHEDULE SLOTS
+  // ----------------------------------------------------------------
+
+  async getTeacherTimetable(teacherId?: string): Promise<{ timetable: TeacherTimetable | null; slots: TeacherScheduleSlot[] }> {
+    const tid = teacherId || (await uid())
+    try {
+      const { data: tt } = await db()
+        .from('teacher_timetables')
+        .select('*')
+        .eq('teacher_id', tid)
+        .eq('is_active', true)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+
+      if (tt) {
+        const { data: slots } = await db()
+          .from('teacher_schedule_slots')
+          .select('*')
+          .eq('timetable_id', tt.id)
+          .order('day_of_week')
+          .order('period_number')
+        return { timetable: tt as TeacherTimetable, slots: (slots || []) as TeacherScheduleSlot[] }
+      }
+    } catch (e) {
+      console.warn('getTeacherTimetable fallback to local storage:', e)
+    }
+
+    const cachedSlots = localStorage.getItem(`leera_timetable_slots_${tid}`)
+    if (cachedSlots) {
+      try {
+        const slots = JSON.parse(cachedSlots)
+        return {
+          timetable: { id: 'local-tt', teacher_id: tid, school_id: null, file_name: 'Timetable.pdf', academic_year: '2026/2027', semester: '1', is_active: true },
+          slots
+        }
+      } catch {}
+    }
+    return { timetable: null, slots: [] }
+  },
+
+  async saveTeacherScheduleSlots(slots: Array<Omit<TeacherScheduleSlot, 'id' | 'timetable_id' | 'teacher_id'>>, fileName = 'Weekly Timetable.pdf'): Promise<void> {
+    const tid = await uid()
+    const school = await this.getSchool()
+
+    try {
+      // Create timetable record
+      const { data: tt, error: ttErr } = await db()
+        .from('teacher_timetables')
+        .insert({
+          school_id: school?.id || null,
+          teacher_id: tid,
+          file_name: fileName,
+          academic_year: school?.academic_year || '2026/2027',
+          semester: school?.semester || '1',
+          is_active: true
+        })
+        .select()
+        .single()
+
+      if (!ttErr && tt) {
+        const slotRows = slots.map((s) => ({
+          timetable_id: tt.id,
+          teacher_id: tid,
+          class_id: s.class_id,
+          subject_id: s.subject_id,
+          class_name: s.class_name,
+          subject_name: s.subject_name,
+          day_of_week: s.day_of_week,
+          period_number: s.period_number,
+          start_time: s.start_time,
+          end_time: s.end_time,
+          room: s.room || ''
+        }))
+        await db().from('teacher_schedule_slots').insert(slotRows)
+        return
+      }
+    } catch (e) {
+      console.warn('saveTeacherScheduleSlots fallback to local storage:', e)
+    }
+
+    localStorage.setItem(`leera_timetable_slots_${tid}`, JSON.stringify(slots))
+  },
+
+  // ----------------------------------------------------------------
+  // WORK PLANS IMPLEMENTATION
+  // ----------------------------------------------------------------
+
+  async listWorkPlans(filter?: { teacherId?: string; classId?: string; subjectId?: string; semester?: string }): Promise<WorkPlan[]> {
+    try {
+      let q = db().from('work_plans').select(`
+        *,
+        classes:class_id(name),
+        subjects:subject_id(name),
+        profiles:teacher_id(full_name)
+      `).order('updated_at', { ascending: false })
+
+      if (filter?.teacherId) q = q.eq('teacher_id', filter.teacherId)
+      if (filter?.classId) q = q.eq('class_id', filter.classId)
+      if (filter?.subjectId) q = q.eq('subject_id', filter.subjectId)
+      if (filter?.semester) q = q.eq('semester', filter.semester)
+
+      const { data, error } = await q
+      if (!error && data) {
+        return data.map((d: any) => ({
+          ...d,
+          class_name: d.classes?.name || 'Class',
+          subject_name: d.subjects?.name || 'Subject',
+          teacher_name: d.profiles?.full_name || 'Teacher'
+        })) as WorkPlan[]
+      }
+    } catch (e) {
+      console.warn('listWorkPlans fallback:', e)
+    }
+
+    // Local storage fallback
+    const localPlans: WorkPlan[] = JSON.parse(localStorage.getItem('leera_work_plans') || '[]')
+    let res = localPlans
+    if (filter?.teacherId) res = res.filter((p) => p.teacher_id === filter.teacherId)
+    if (filter?.classId) res = res.filter((p) => p.class_id === filter.classId)
+    if (filter?.subjectId) res = res.filter((p) => p.subject_id === filter.subjectId)
+    return res
+  },
+
+  async getWorkPlan(id: string): Promise<WorkPlan | null> {
+    try {
+      const { data, error } = await db()
+        .from('work_plans')
+        .select(`
+          *,
+          classes:class_id(name),
+          subjects:subject_id(name),
+          profiles:teacher_id(full_name),
+          curriculum_schemes:scheme_id(title)
+        `)
+        .eq('id', id)
+        .maybeSingle()
+
+      if (!error && data) {
+        // Fetch weeks and objectives
+        const { data: weeks } = await db()
+          .from('work_plan_weeks')
+          .select('*')
+          .eq('work_plan_id', id)
+          .order('sequence')
+
+        let populatedWeeks: WorkPlanWeek[] = []
+        if (weeks && weeks.length > 0) {
+          const weekIds = weeks.map((w: any) => w.id)
+          const { data: objs } = await db()
+            .from('work_plan_week_objectives')
+            .select('*')
+            .in('work_plan_week_id', weekIds)
+
+          const objMap = new Map<string, WorkPlanWeekObjective[]>()
+          if (objs) {
+            objs.forEach((o: any) => {
+              const list = objMap.get(o.work_plan_week_id) || []
+              list.push(o as WorkPlanWeekObjective)
+              objMap.set(o.work_plan_week_id, list)
+            })
+          }
+
+          populatedWeeks = weeks.map((w: any) => ({
+            ...w,
+            objectives: objMap.get(w.id) || []
+          }))
+        }
+
+        return {
+          ...data,
+          class_name: data.classes?.name || 'Class',
+          subject_name: data.subjects?.name || 'Subject',
+          teacher_name: data.profiles?.full_name || 'Teacher',
+          scheme_title: data.curriculum_schemes?.title || '',
+          weeks: populatedWeeks
+        } as WorkPlan
+      }
+    } catch (e) {
+      console.warn('getWorkPlan fallback:', e)
+    }
+
+    const localPlans: WorkPlan[] = JSON.parse(localStorage.getItem('leera_work_plans') || '[]')
+    return localPlans.find((p) => p.id === id) || null
+  },
+
+  async createWorkPlan(input: {
+    subject_id: string
+    class_id: string
+    scheme_id?: string | null
+    semester?: string
+    academic_year?: string
+    resources?: string
+    notes?: string
+  }): Promise<string> {
+    const tid = await uid()
+    const profile = await this.getProfile()
+    const isLeadership = profile?.role === 'director' || profile?.role === 'head_of_school' || profile?.role === 'curriculum_coordinator'
+
+    // Enforce teacher assignment validation
+    if (profile && !isLeadership) {
+      const assignments = await this.listAssignments(input.class_id).catch(() => [])
+      const isAssigned = assignments.some((a) => a.teacher_id === profile.id && a.subject_id === input.subject_id)
+      const classes = await this.listClasses().catch(() => [])
+      const cls = classes.find((c) => c.id === input.class_id)
+      const isHomeroom = cls && (cls.homeroom_teacher_id === profile.id || profile.class_id === cls.id)
+      if (!isAssigned && !isHomeroom) {
+        throw new Error('You are only authorized to create work plans for classes and subjects assigned to you.')
+      }
+    }
+
+    const school = await this.getSchool()
+    const sem = input.semester || school?.semester || '1'
+    const yr = input.academic_year || school?.academic_year || '2026/2027'
+
+    try {
+      const { data, error } = await db()
+        .from('work_plans')
+        .insert({
+          school_id: school?.id,
+          subject_id: input.subject_id,
+          class_id: input.class_id,
+          teacher_id: tid,
+          scheme_id: input.scheme_id || null,
+          academic_year: yr,
+          semester: sem,
+          resources: input.resources || '',
+          notes: input.notes || '',
+          status: 'draft',
+          revision: 1
+        })
+        .select()
+        .single()
+
+      if (!error && data) {
+        // Pre-create 12 instructional weeks
+        const weeksData = []
+        for (let i = 1; i <= 12; i++) {
+          weeksData.push({
+            work_plan_id: data.id,
+            sequence: i,
+            week_label: `Week ${i}`,
+            month_label: i <= 4 ? 'MONTH 1' : i <= 8 ? 'MONTH 2' : 'MONTH 3',
+            is_instructional: true,
+            lessons_per_week: 1,
+            remarks: ''
+          })
+        }
+        await db().from('work_plan_weeks').insert(weeksData)
+        return data.id
+      }
+    } catch (e) {
+      console.warn('createWorkPlan fallback:', e)
+    }
+
+    // Local storage fallback
+    const id = `wp-${Date.now()}`
+    const classes = await this.listClasses()
+    const subjects = await this.listSubjects()
+    const clsName = classes.find((c) => c.id === input.class_id)?.name || 'Class'
+    const sbjName = subjects.find((s) => s.id === input.subject_id)?.name || 'Subject'
+
+    const weeks: WorkPlanWeek[] = []
+    for (let i = 1; i <= 12; i++) {
+      weeks.push({
+        id: `week-${id}-${i}`,
+        work_plan_id: id,
+        sequence: i,
+        week_label: `Week ${i}`,
+        month_label: i <= 4 ? 'MONTH 1' : i <= 8 ? 'MONTH 2' : 'MONTH 3',
+        start_date: null,
+        end_date: null,
+        is_instructional: true,
+        event_label: '',
+        topic_id: null,
+        topic_title: '',
+        challenge_title: '',
+        subtopic_title: '',
+        lessons_per_week: 1,
+        remarks: '',
+        objectives: []
+      })
+    }
+
+    const newPlan: WorkPlan = {
+      id,
+      school_id: school?.id || 'school-1',
+      subject_id: input.subject_id,
+      class_id: input.class_id,
+      teacher_id: tid,
+      scheme_id: input.scheme_id || null,
+      academic_year: yr,
+      semester: sem,
+      status: 'draft',
+      revision: 1,
+      resources: input.resources || '',
+      notes: input.notes || '',
+      submitted_at: null,
+      approved_at: null,
+      reviewer_id: null,
+      review_comment: '',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      class_name: clsName,
+      subject_name: sbjName,
+      teacher_name: profile?.full_name || 'Teacher',
+      weeks
+    }
+
+    const localPlans: WorkPlan[] = JSON.parse(localStorage.getItem('leera_work_plans') || '[]')
+    localPlans.push(newPlan)
+    localStorage.setItem('leera_work_plans', JSON.stringify(localPlans))
+    return id
+  },
+
+  async updateWorkPlan(id: string, updates: Partial<WorkPlan>): Promise<void> {
+    try {
+      await db().from('work_plans').update(updates).eq('id', id)
+    } catch {}
+
+    const localPlans: WorkPlan[] = JSON.parse(localStorage.getItem('leera_work_plans') || '[]')
+    const idx = localPlans.findIndex((p) => p.id === id)
+    if (idx >= 0) {
+      localPlans[idx] = { ...localPlans[idx], ...updates, updated_at: new Date().toISOString() }
+      localStorage.setItem('leera_work_plans', JSON.stringify(localPlans))
+    }
+  },
+
+  async saveWorkPlanWeeks(workPlanId: string, weeks: Array<{
+    id?: string
+    sequence: number
+    week_label: string
+    month_label?: string
+    start_date?: string | null
+    end_date?: string | null
+    is_instructional: boolean
+    event_label?: string
+    topic_id?: string | null
+    topic_title?: string
+    challenge_title?: string
+    subtopic_title?: string
+    lessons_per_week: number
+    remarks?: string
+    objectives?: Array<{ objective_id?: string; code_snapshot: string; text_snapshot: string; is_met?: boolean }>
+  }>): Promise<void> {
+    try {
+      for (const w of weeks) {
+        let weekId = w.id
+        const weekPayload = {
+          work_plan_id: workPlanId,
+          sequence: w.sequence,
+          week_label: w.week_label,
+          month_label: w.month_label || '',
+          start_date: w.start_date || null,
+          end_date: w.end_date || null,
+          is_instructional: w.is_instructional,
+          event_label: w.event_label || '',
+          topic_id: w.topic_id || null,
+          topic_title: w.topic_title || '',
+          challenge_title: w.challenge_title || '',
+          subtopic_title: w.subtopic_title || '',
+          lessons_per_week: w.lessons_per_week || 1,
+          remarks: w.remarks || ''
+        }
+
+        if (weekId && !weekId.startsWith('week-')) {
+          await db().from('work_plan_weeks').update(weekPayload).eq('id', weekId)
+        } else {
+          const { data: insWeek } = await db().from('work_plan_weeks').upsert(weekPayload, { onConflict: 'work_plan_id,sequence' }).select().single()
+          if (insWeek) weekId = insWeek.id
+        }
+
+        // Save week objectives
+        if (weekId && w.objectives) {
+          await db().from('work_plan_week_objectives').delete().eq('work_plan_week_id', weekId)
+          if (w.objectives.length > 0) {
+            const objRows = w.objectives.map((o) => ({
+              work_plan_week_id: weekId,
+              objective_id: o.objective_id || null,
+              code_snapshot: o.code_snapshot,
+              text_snapshot: o.text_snapshot,
+              is_met: !!o.is_met
+            }))
+            await db().from('work_plan_week_objectives').insert(objRows)
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('saveWorkPlanWeeks fallback:', e)
+    }
+
+    // Update in local cache
+    const localPlans: WorkPlan[] = JSON.parse(localStorage.getItem('leera_work_plans') || '[]')
+    const p = localPlans.find((plan) => plan.id === workPlanId)
+    if (p) {
+      p.weeks = weeks.map((w, idx) => ({
+        id: w.id || `week-${workPlanId}-${idx + 1}`,
+        work_plan_id: workPlanId,
+        sequence: w.sequence,
+        week_label: w.week_label,
+        month_label: w.month_label || '',
+        start_date: w.start_date || null,
+        end_date: w.end_date || null,
+        is_instructional: w.is_instructional,
+        event_label: w.event_label || '',
+        topic_id: w.topic_id || null,
+        topic_title: w.topic_title || '',
+        challenge_title: w.challenge_title || '',
+        subtopic_title: w.subtopic_title || '',
+        lessons_per_week: w.lessons_per_week || 1,
+        remarks: w.remarks || '',
+        objectives: (w.objectives || []).map((o, oidx) => ({
+          id: `wpo-${idx}-${oidx}`,
+          work_plan_week_id: w.id || `week-${workPlanId}-${idx + 1}`,
+          objective_id: o.objective_id || null,
+          code_snapshot: o.code_snapshot,
+          text_snapshot: o.text_snapshot,
+          is_met: !!o.is_met,
+          met_at: null
+        }))
+      }))
+      p.updated_at = new Date().toISOString()
+      localStorage.setItem('leera_work_plans', JSON.stringify(localPlans))
+    }
+  },
+
+  async importWorkPlan(input: ImportWorkPlanInput): Promise<ImportWorkPlanResult> {
+    const tid = await uid()
+    const profile = await this.getProfile()
+    const isLeadership = profile?.role === 'director' || profile?.role === 'head_of_school' || profile?.role === 'curriculum_coordinator'
+
+    // 1. Enforce teacher assignment validation
+    if (profile && !isLeadership) {
+      const assignments = await this.listAssignments(input.class_id).catch(() => [])
+      const isAssigned = assignments.some((a) => a.teacher_id === profile.id && a.subject_id === input.subject_id)
+      const classes = await this.listClasses().catch(() => [])
+      const cls = classes.find((c) => c.id === input.class_id)
+      const isHomeroom = cls && (cls.homeroom_teacher_id === profile.id || profile.class_id === cls.id)
+      if (!isAssigned && !isHomeroom) {
+        throw new Error('You are only authorized to import work plans for classes and subjects assigned to you.')
+      }
+    }
+
+    // 2. Validate Subject Code
+    const cleanCode = (input.subject_code || '').trim()
+    if (!cleanCode) {
+      throw new Error('A valid Cambridge Subject Code is required to import this work plan.')
+    }
+
+    const school = await this.getSchool()
+    const academicYear = input.academic_year || school?.academic_year || '2026/2027'
+    const semester = input.semester || school?.semester || '1'
+
+    let schemeId = input.scheme_id || null
+    let objectivesIngested = 0
+    let objectivesSkipped = 0
+
+    try {
+      // 3. Resolve or create Curriculum Scheme
+      if (!schemeId) {
+        const { data: matchedSchemes } = await db()
+          .from('curriculum_schemes')
+          .select('*')
+          .eq('subject_code', cleanCode)
+
+        if (matchedSchemes && matchedSchemes.length > 0) {
+          schemeId = matchedSchemes[0].id
+        } else {
+          const subjects = await this.listSubjects().catch(() => [])
+          const subjName = subjects.find((s) => s.id === input.subject_id)?.name || 'Subject'
+          const framework = input.framework || (cleanCode.startsWith('9') ? 'CAMBRIDGE_AS_A_LEVEL' : cleanCode.startsWith('0') ? 'CAMBRIDGE_IGCSE' : 'CAMBRIDGE_LOWER_SECONDARY')
+
+          const { data: createdScheme } = await db()
+            .from('curriculum_schemes')
+            .insert({
+              school_id: school?.id || null,
+              framework,
+              subject_code: cleanCode,
+              subject_name: subjName,
+              year_group: 'General',
+              title: `${subjName} (${cleanCode})`,
+              syllabus_years: '2023-2027',
+              is_active: true
+            })
+            .select()
+            .single()
+
+          if (createdScheme) schemeId = createdScheme.id
+        }
+      }
+
+      // 4. Ingest and Deduplicate Objectives
+      if (schemeId) {
+        const { data: existingObjs } = await db()
+          .from('curriculum_objectives')
+          .select('code')
+          .eq('scheme_id', schemeId)
+
+        const existingCodes = new Set((existingObjs || []).map((o: any) => o.code.trim().toLowerCase()))
+        const toInsert: any[] = []
+        let seqCounter = (existingObjs?.length || 0) + 1
+
+        for (const w of input.weeks) {
+          for (const obj of (w.objectives || [])) {
+            const normCode = obj.code.trim().toLowerCase()
+            if (!normCode) continue
+
+            if (existingCodes.has(normCode)) {
+              objectivesSkipped++
+            } else {
+              existingCodes.add(normCode)
+              toInsert.push({
+                scheme_id: schemeId,
+                topic_id: null,
+                code: obj.code.trim(),
+                text: obj.text.trim(),
+                subtopic: '',
+                challenge_title: obj.challenge_title || w.challenge_title || '',
+                sequence: seqCounter++
+              })
+              objectivesIngested++
+            }
+          }
+        }
+
+        if (toInsert.length > 0) {
+          await db().from('curriculum_objectives').insert(toInsert)
+        }
+      }
+
+      // 5. Create or Update Work Plan
+      let workPlanId = ''
+      const { data: existingPlan } = await db()
+        .from('work_plans')
+        .select('id')
+        .eq('teacher_id', tid)
+        .eq('class_id', input.class_id)
+        .eq('subject_id', input.subject_id)
+        .eq('semester', semester)
+        .eq('academic_year', academicYear)
+        .maybeSingle()
+
+      if (existingPlan) {
+        workPlanId = existingPlan.id
+        await db().from('work_plans').update({
+          scheme_id: schemeId,
+          resources: input.resources || '',
+          notes: input.notes || 'Imported from Semester 1 Work Plan',
+          updated_at: new Date().toISOString()
+        }).eq('id', workPlanId)
+      } else {
+        const { data: newPlan, error: pErr } = await db()
+          .from('work_plans')
+          .insert({
+            school_id: school?.id || null,
+            subject_id: input.subject_id,
+            class_id: input.class_id,
+            teacher_id: tid,
+            scheme_id: schemeId,
+            academic_year: academicYear,
+            semester: semester,
+            resources: input.resources || '',
+            notes: input.notes || 'Imported from Semester 1 Work Plan',
+            status: 'draft',
+            revision: 1
+          })
+          .select()
+          .single()
+
+        if (pErr) throw new Error(pErr.message)
+        if (newPlan) workPlanId = newPlan.id
+      }
+
+      // 6. Save Weeks & Objectives (with is_met / commed coverage status preserved)
+      if (workPlanId) {
+        await this.saveWorkPlanWeeks(
+          workPlanId,
+          input.weeks.map((w) => ({
+            sequence: w.sequence,
+            week_label: w.week_label,
+            month_label: w.month_label,
+            start_date: w.start_date,
+            end_date: w.end_date,
+            is_instructional: w.is_instructional,
+            event_label: w.event_label,
+            topic_title: w.topic_title,
+            challenge_title: w.challenge_title,
+            subtopic_title: w.subtopic_title,
+            lessons_per_week: w.lessons_per_week || 1,
+            remarks: w.remarks,
+            objectives: (w.objectives || []).map((o) => ({
+              code_snapshot: o.code,
+              text_snapshot: o.text,
+              is_met: !!o.is_met
+            }))
+          }))
+        )
+      }
+
+      const commedWeeksCount = input.weeks.filter((w) => w.is_commed || (w.objectives || []).some((o) => o.is_met)).length
+
+      return {
+        workPlanId,
+        schemeId: schemeId || '',
+        objectivesIngested,
+        objectivesSkipped,
+        weeksCount: input.weeks.length,
+        commedWeeksCount
+      }
+    } catch (e: any) {
+      console.warn('importWorkPlan Supabase fallback to local storage:', e)
+    }
+
+    // Local Storage Fallback
+    const localSchemes: CurriculumScheme[] = JSON.parse(localStorage.getItem('leera_curriculum_schemes') || '[]')
+    let foundScheme = localSchemes.find((s) => s.subject_code === cleanCode)
+    if (!foundScheme) {
+      const subjects = await this.listSubjects().catch(() => [])
+      const subjName = subjects.find((s) => s.id === input.subject_id)?.name || 'Subject'
+      foundScheme = {
+        id: `scheme-${cleanCode}-${Date.now()}`,
+        school_id: school?.id || null,
+        framework: input.framework || (cleanCode.startsWith('9') ? 'CAMBRIDGE_AS_A_LEVEL' : cleanCode.startsWith('0') ? 'CAMBRIDGE_IGCSE' : 'CAMBRIDGE_LOWER_SECONDARY'),
+        subject_code: cleanCode,
+        subject_name: subjName,
+        year_group: 'General',
+        title: `${subjName} (${cleanCode})`,
+        syllabus_years: '2023-2027',
+        is_active: true
+      }
+      localSchemes.push(foundScheme)
+      localStorage.setItem('leera_curriculum_schemes', JSON.stringify(localSchemes))
+    }
+    schemeId = foundScheme.id
+
+    // Deduplicate in custom scheme details
+    const customSchemes = JSON.parse(localStorage.getItem('leera_custom_schemes_detail') || '{}')
+    const detail = customSchemes[schemeId] || { scheme: foundScheme, topics: [], objectives: [] }
+    const localObjCodes = new Set(detail.objectives.map((o: any) => o.code.trim().toLowerCase()))
+
+    for (const w of input.weeks) {
+      for (const obj of (w.objectives || [])) {
+        const normCode = obj.code.trim().toLowerCase()
+        if (!normCode) continue
+        if (localObjCodes.has(normCode)) {
+          objectivesSkipped++
+        } else {
+          localObjCodes.add(normCode)
+          detail.objectives.push({
+            id: `obj-${schemeId}-${detail.objectives.length + 1}`,
+            scheme_id: schemeId,
+            topic_id: null,
+            code: obj.code.trim(),
+            text: obj.text.trim(),
+            subtopic: '',
+            challenge_title: obj.challenge_title || w.challenge_title || '',
+            sequence: detail.objectives.length + 1
+          })
+          objectivesIngested++
+        }
+      }
+    }
+    customSchemes[schemeId] = detail
+    localStorage.setItem('leera_custom_schemes_detail', JSON.stringify(customSchemes))
+
+    // Create work plan in local storage
+    const localPlans: WorkPlan[] = JSON.parse(localStorage.getItem('leera_work_plans') || '[]')
+    let plan = localPlans.find(
+      (p) => p.teacher_id === tid && p.class_id === input.class_id && p.subject_id === input.subject_id && p.semester === semester
+    )
+
+    const classes = await this.listClasses()
+    const subjects = await this.listSubjects()
+    const clsName = classes.find((c) => c.id === input.class_id)?.name || 'Class'
+    const sbjName = subjects.find((s) => s.id === input.subject_id)?.name || 'Subject'
+
+    if (!plan) {
+      plan = {
+        id: `wp-${Date.now()}`,
+        school_id: school?.id || 'school-1',
+        subject_id: input.subject_id,
+        class_id: input.class_id,
+        teacher_id: tid,
+        scheme_id: schemeId,
+        academic_year: academicYear,
+        semester: semester,
+        status: 'draft',
+        revision: 1,
+        resources: input.resources || '',
+        notes: input.notes || 'Imported from Semester 1 Work Plan',
+        submitted_at: null,
+        approved_at: null,
+        reviewer_id: null,
+        review_comment: '',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        class_name: clsName,
+        subject_name: sbjName,
+        teacher_name: profile?.full_name || 'Teacher',
+        weeks: []
+      }
+      localPlans.push(plan)
+    } else {
+      plan.scheme_id = schemeId
+      plan.resources = input.resources || plan.resources
+      plan.notes = input.notes || plan.notes
+      plan.updated_at = new Date().toISOString()
+    }
+
+    plan.weeks = input.weeks.map((w, idx) => ({
+      id: `week-${plan!.id}-${w.sequence}`,
+      work_plan_id: plan!.id,
+      sequence: w.sequence,
+      week_label: w.week_label,
+      month_label: w.month_label || '',
+      start_date: w.start_date || null,
+      end_date: w.end_date || null,
+      is_instructional: w.is_instructional,
+      event_label: w.event_label || '',
+      topic_id: null,
+      topic_title: w.topic_title || '',
+      challenge_title: w.challenge_title || '',
+      subtopic_title: w.subtopic_title || '',
+      lessons_per_week: w.lessons_per_week || 1,
+      remarks: w.remarks || '',
+      objectives: (w.objectives || []).map((o, oidx) => ({
+        id: `wpo-${idx}-${oidx}`,
+        work_plan_week_id: `week-${plan!.id}-${w.sequence}`,
+        objective_id: null,
+        code_snapshot: o.code,
+        text_snapshot: o.text,
+        is_met: !!o.is_met,
+        met_at: o.is_met ? new Date().toISOString() : null
+      }))
+    }))
+
+    localStorage.setItem('leera_work_plans', JSON.stringify(localPlans))
+    const commedWeeksCount = input.weeks.filter((w) => w.is_commed || (w.objectives || []).some((o) => o.is_met)).length
+
+    return {
+      workPlanId: plan.id,
+      schemeId: schemeId || '',
+      objectivesIngested,
+      objectivesSkipped,
+      weeksCount: input.weeks.length,
+      commedWeeksCount
+    }
+  },
+
+  async submitWorkPlan(id: string): Promise<void> {
+    await this.updateWorkPlan(id, {
+      status: 'submitted',
+      submitted_at: new Date().toISOString()
+    })
+  },
+
+  async reviewWorkPlan(id: string, status: 'approved' | 'returned', comment: string): Promise<void> {
+    const reviewerId = await uid()
+    await this.updateWorkPlan(id, {
+      status,
+      reviewer_id: reviewerId,
+      review_comment: comment,
+      approved_at: status === 'approved' ? new Date().toISOString() : null
+    })
+  },
+
+  async deleteWorkPlan(id: string): Promise<void> {
+    try {
+      await db().from('work_plans').delete().eq('id', id)
+    } catch {}
+
+    const localPlans: WorkPlan[] = JSON.parse(localStorage.getItem('leera_work_plans') || '[]')
+    const filtered = localPlans.filter((p) => p.id !== id)
+    localStorage.setItem('leera_work_plans', JSON.stringify(filtered))
+  },
+
+  // ----------------------------------------------------------------
+  // LESSON PLANS IMPLEMENTATION
+  // ----------------------------------------------------------------
+
+  async listLessonPlans(filter?: { teacherId?: string; classId?: string; subjectId?: string; date?: string }): Promise<LessonPlan[]> {
+    try {
+      let q = db().from('lesson_plans').select(`
+        *,
+        classes:class_id(name),
+        subjects:subject_id(name),
+        profiles:teacher_id(full_name)
+      `).order('lesson_date', { ascending: false })
+
+      if (filter?.teacherId) q = q.eq('teacher_id', filter.teacherId)
+      if (filter?.classId) q = q.eq('class_id', filter.classId)
+      if (filter?.subjectId) q = q.eq('subject_id', filter.subjectId)
+      if (filter?.date) q = q.eq('lesson_date', filter.date)
+
+      const { data, error } = await q
+      if (!error && data) {
+        return data.map((d: any) => ({
+          ...d,
+          class_name: d.classes?.name || 'Class',
+          subject_name: d.subjects?.name || 'Subject',
+          teacher_name: d.profiles?.full_name || 'Teacher'
+        })) as LessonPlan[]
+      }
+    } catch (e) {
+      console.warn('listLessonPlans fallback:', e)
+    }
+
+    const localPlans: LessonPlan[] = JSON.parse(localStorage.getItem('leera_lesson_plans') || '[]')
+    let res = localPlans
+    if (filter?.teacherId) res = res.filter((p) => p.teacher_id === filter.teacherId)
+    if (filter?.classId) res = res.filter((p) => p.class_id === filter.classId)
+    if (filter?.subjectId) res = res.filter((p) => p.subject_id === filter.subjectId)
+    if (filter?.date) res = res.filter((p) => p.lesson_date === filter.date)
+    return res
+  },
+
+  async getLessonPlan(id: string): Promise<LessonPlan | null> {
+    try {
+      const { data, error } = await db()
+        .from('lesson_plans')
+        .select(`
+          *,
+          classes:class_id(name),
+          subjects:subject_id(name),
+          profiles:teacher_id(full_name)
+        `)
+        .eq('id', id)
+        .maybeSingle()
+
+      if (!error && data) {
+        const { data: objs } = await db()
+          .from('lesson_plan_objectives')
+          .select('*')
+          .eq('lesson_plan_id', id)
+
+        return {
+          ...data,
+          class_name: data.classes?.name || 'Class',
+          subject_name: data.subjects?.name || 'Subject',
+          teacher_name: data.profiles?.full_name || 'Teacher',
+          objectives: (objs || []) as any[]
+        } as LessonPlan
+      }
+    } catch (e) {
+      console.warn('getLessonPlan fallback:', e)
+    }
+
+    const localPlans: LessonPlan[] = JSON.parse(localStorage.getItem('leera_lesson_plans') || '[]')
+    return localPlans.find((p) => p.id === id) || null
+  },
+
+  async createLessonPlan(input: {
+    subject_id: string
+    class_id: string
+    work_plan_week_id?: string | null
+    schedule_slot_id?: string | null
+    lesson_date: string
+    start_time?: string | null
+    end_time?: string | null
+    topic_title: string
+    challenge_title?: string
+    subtopic_title?: string
+    main_teaching_activity?: string
+    assessment_ideas?: string
+    resources?: string
+    differentiation?: string
+    boys_attendance?: number | null
+    girls_attendance?: number | null
+    reflection_remarks?: string
+    objectives?: Array<{ objective_id?: string; code_snapshot: string; text_snapshot: string }>
+  }): Promise<string> {
+    const tid = await uid()
+    const profile = await this.getProfile()
+    const isLeadership = profile?.role === 'director' || profile?.role === 'head_of_school' || profile?.role === 'curriculum_coordinator'
+
+    // Enforce teacher assignment validation
+    if (profile && !isLeadership) {
+      const assignments = await this.listAssignments(input.class_id).catch(() => [])
+      const isAssigned = assignments.some((a) => a.teacher_id === profile.id && a.subject_id === input.subject_id)
+      const classes = await this.listClasses().catch(() => [])
+      const cls = classes.find((c) => c.id === input.class_id)
+      const isHomeroom = cls && (cls.homeroom_teacher_id === profile.id || profile.class_id === cls.id)
+      if (!isAssigned && !isHomeroom) {
+        throw new Error('You are only authorized to create lesson plans for classes and subjects assigned to you.')
+      }
+    }
+
+    const school = await this.getSchool()
+
+    try {
+      const { data, error } = await db()
+        .from('lesson_plans')
+        .insert({
+          school_id: school?.id,
+          teacher_id: tid,
+          subject_id: input.subject_id,
+          class_id: input.class_id,
+          work_plan_week_id: input.work_plan_week_id || null,
+          schedule_slot_id: input.schedule_slot_id || null,
+          lesson_date: input.lesson_date,
+          start_time: input.start_time || null,
+          end_time: input.end_time || null,
+          topic_title: input.topic_title || '',
+          challenge_title: input.challenge_title || '',
+          subtopic_title: input.subtopic_title || '',
+          main_teaching_activity: input.main_teaching_activity || '',
+          assessment_ideas: input.assessment_ideas || '',
+          resources: input.resources || '',
+          differentiation: input.differentiation || '',
+          boys_attendance: input.boys_attendance,
+          girls_attendance: input.girls_attendance,
+          reflection_remarks: input.reflection_remarks || '',
+          status: 'draft',
+          revision: 1
+        })
+        .select()
+        .single()
+
+      if (!error && data) {
+        if (input.objectives && input.objectives.length > 0) {
+          const objRows = input.objectives.map((o) => ({
+            lesson_plan_id: data.id,
+            objective_id: o.objective_id || null,
+            code_snapshot: o.code_snapshot,
+            text_snapshot: o.text_snapshot
+          }))
+          await db().from('lesson_plan_objectives').insert(objRows)
+        }
+        return data.id
+      }
+    } catch (e) {
+      console.warn('createLessonPlan fallback:', e)
+    }
+
+    // Local storage fallback
+    const id = `lp-${Date.now()}`
+    const classes = await this.listClasses()
+    const subjects = await this.listSubjects()
+    const clsName = classes.find((c) => c.id === input.class_id)?.name || 'Class'
+    const sbjName = subjects.find((s) => s.id === input.subject_id)?.name || 'Subject'
+
+    const newPlan: LessonPlan = {
+      id,
+      school_id: school?.id || 'school-1',
+      teacher_id: tid,
+      subject_id: input.subject_id,
+      class_id: input.class_id,
+      work_plan_week_id: input.work_plan_week_id || null,
+      schedule_slot_id: input.schedule_slot_id || null,
+      lesson_date: input.lesson_date,
+      start_time: input.start_time || null,
+      end_time: input.end_time || null,
+      topic_title: input.topic_title || '',
+      challenge_title: input.challenge_title || '',
+      subtopic_title: input.subtopic_title || '',
+      main_teaching_activity: input.main_teaching_activity || '',
+      assessment_ideas: input.assessment_ideas || '',
+      resources: input.resources || '',
+      differentiation: input.differentiation || '',
+      boys_attendance: input.boys_attendance ?? null,
+      girls_attendance: input.girls_attendance ?? null,
+      reflection_remarks: input.reflection_remarks || '',
+      status: 'draft',
+      revision: 1,
+      submitted_at: null,
+      approved_at: null,
+      reviewer_id: null,
+      review_comment: '',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      class_name: clsName,
+      subject_name: sbjName,
+      teacher_name: profile?.full_name || 'Teacher',
+      objectives: (input.objectives || []).map((o, idx) => ({
+        id: `lpo-${id}-${idx}`,
+        lesson_plan_id: id,
+        objective_id: o.objective_id || null,
+        code_snapshot: o.code_snapshot,
+        text_snapshot: o.text_snapshot
+      }))
+    }
+
+    const localPlans: LessonPlan[] = JSON.parse(localStorage.getItem('leera_lesson_plans') || '[]')
+    localPlans.push(newPlan)
+    localStorage.setItem('leera_lesson_plans', JSON.stringify(localPlans))
+    return id
+  },
+
+  async updateLessonPlan(id: string, updates: Partial<LessonPlan> & {
+    objectives?: Array<{ objective_id?: string; code_snapshot: string; text_snapshot: string }>
+  }): Promise<void> {
+    try {
+      const { objectives, ...coreUpdates } = updates
+      await db().from('lesson_plans').update(coreUpdates).eq('id', id)
+
+      if (objectives) {
+        await db().from('lesson_plan_objectives').delete().eq('lesson_plan_id', id)
+        if (objectives.length > 0) {
+          const objRows = objectives.map((o) => ({
+            lesson_plan_id: id,
+            objective_id: o.objective_id || null,
+            code_snapshot: o.code_snapshot,
+            text_snapshot: o.text_snapshot
+          }))
+          await db().from('lesson_plan_objectives').insert(objRows)
+        }
+      }
+    } catch {}
+
+    const localPlans: LessonPlan[] = JSON.parse(localStorage.getItem('leera_lesson_plans') || '[]')
+    const idx = localPlans.findIndex((p) => p.id === id)
+    if (idx >= 0) {
+      localPlans[idx] = { ...localPlans[idx], ...updates, updated_at: new Date().toISOString() }
+      localStorage.setItem('leera_lesson_plans', JSON.stringify(localPlans))
+    }
+  },
+
+  async submitLessonPlan(id: string): Promise<void> {
+    await this.updateLessonPlan(id, {
+      status: 'submitted',
+      submitted_at: new Date().toISOString()
+    })
+  },
+
+  async reviewLessonPlan(id: string, status: 'approved' | 'returned', comment: string): Promise<void> {
+    const reviewerId = await uid()
+    await this.updateLessonPlan(id, {
+      status,
+      reviewer_id: reviewerId,
+      review_comment: comment,
+      approved_at: status === 'approved' ? new Date().toISOString() : null
+    })
+  },
+
+  async deleteLessonPlan(id: string): Promise<void> {
+    try {
+      await db().from('lesson_plans').delete().eq('id', id)
+    } catch {}
+
+    const localPlans: LessonPlan[] = JSON.parse(localStorage.getItem('leera_lesson_plans') || '[]')
+    const filtered = localPlans.filter((p) => p.id !== id)
+    localStorage.setItem('leera_lesson_plans', JSON.stringify(filtered))
   }
 }
 

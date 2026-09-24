@@ -62,7 +62,7 @@ export default function AppShell() {
         <div className="topbar-inner">
           <div className="brand">
             <img src="/icons/icon-192.png" alt="" width="30" height="30" />
-            <span>Leera Reports</span>
+            <span style={{ fontSize: '0.95rem', fontWeight: 700 }}>Leera international school - cambridge wing</span>
           </div>
           <div className="topbar-right">
             <span className="user-chip">

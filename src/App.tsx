@@ -16,6 +16,7 @@ import People from './pages/People'
 import Classes from './pages/Classes'
 import Attendance from './pages/Attendance'
 import ClassMarksheetPage from './pages/ClassMarksheetPage'
+import Planning from './pages/Planning'
 import LeeraLoader from './components/LeeraLoader'
 
 export default function App() {
@@ -54,6 +55,9 @@ export default function App() {
 
         {/* Dashboard landing page for all user roles */}
         <Route path="/dashboard" element={<Dashboard section="overview" />} />
+
+        {/* Planning: accessible to academic roles and Director (hidden from Admin) */}
+        {!isAdmin && <Route path="/planning" element={<Planning />} />}
 
         {/* Executive sub-sections for leadership */}
         {(can(profile.role, 'viewDirectorDashboard', profile.additional_roles) || isAdmin || isDirector) && (

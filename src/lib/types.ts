@@ -438,7 +438,334 @@ export interface Api {
   getStudentReport(studentId: string): Promise<StudentReportRow[]>
   getClassReportRows(classId: string): Promise<Record<string, StudentReportRow[]>>
 
+  // planning & curriculum
+  listCurriculumSchemes(framework?: string): Promise<CurriculumScheme[]>
+  getCurriculumSchemeWithDetails(schemeId: string): Promise<{ scheme: CurriculumScheme; topics: CurriculumTopic[]; objectives: CurriculumObjective[] } | null>
+  saveCurriculumScheme(input: {
+    framework: string
+    subject_code: string
+    subject_name: string
+    year_group: string
+    title: string
+    syllabus_years?: string
+    topics: Array<{ code?: string; title: string; sequence: number; is_challenge?: boolean; description?: string }>
+    objectives: Array<{ topic_title?: string; code: string; text: string; subtopic?: string; challenge_title?: string; sequence: number }>
+  }): Promise<string>
+  seedCambridgeFrameworks(): Promise<{ schemesCreated: number }>
+  deleteCurriculumScheme(schemeId: string): Promise<void>
+  clearCurriculumLibrary(): Promise<void>
+
+  // teacher timetables & schedule slots
+  getTeacherTimetable(teacherId?: string): Promise<{ timetable: TeacherTimetable | null; slots: TeacherScheduleSlot[] }>
+  saveTeacherScheduleSlots(slots: Array<Omit<TeacherScheduleSlot, 'id' | 'timetable_id' | 'teacher_id'>>, fileName?: string): Promise<void>
+
+  // work plans
+  listWorkPlans(filter?: { teacherId?: string; classId?: string; subjectId?: string; semester?: string }): Promise<WorkPlan[]>
+  getWorkPlan(id: string): Promise<WorkPlan | null>
+  createWorkPlan(input: { subject_id: string; class_id: string; scheme_id?: string | null; semester?: string; academic_year?: string; resources?: string; notes?: string }): Promise<string>
+  updateWorkPlan(id: string, updates: Partial<WorkPlan>): Promise<void>
+  saveWorkPlanWeeks(workPlanId: string, weeks: Array<{
+    id?: string
+    sequence: number
+    week_label: string
+    month_label?: string
+    start_date?: string | null
+    end_date?: string | null
+    is_instructional: boolean
+    event_label?: string
+    topic_id?: string | null
+    topic_title?: string
+    challenge_title?: string
+    subtopic_title?: string
+    lessons_per_week: number
+    remarks?: string
+    objectives?: Array<{ objective_id?: string | null; code_snapshot: string; text_snapshot: string; is_met?: boolean }>
+  }>): Promise<void>
+  importWorkPlan(input: ImportWorkPlanInput): Promise<ImportWorkPlanResult>
+  submitWorkPlan(id: string): Promise<void>
+  reviewWorkPlan(id: string, status: 'approved' | 'returned', comment: string): Promise<void>
+  deleteWorkPlan(id: string): Promise<void>
+
+  // lesson plans
+  listLessonPlans(filter?: { teacherId?: string; classId?: string; subjectId?: string; date?: string }): Promise<LessonPlan[]>
+  getLessonPlan(id: string): Promise<LessonPlan | null>
+  createLessonPlan(input: {
+    subject_id: string
+    class_id: string
+    work_plan_week_id?: string | null
+    schedule_slot_id?: string | null
+    lesson_date: string
+    start_time?: string | null
+    end_time?: string | null
+    topic_title: string
+    challenge_title?: string
+    subtopic_title?: string
+    main_teaching_activity?: string
+    assessment_ideas?: string
+    resources?: string
+    differentiation?: string
+    boys_attendance?: number | null
+    girls_attendance?: number | null
+    reflection_remarks?: string
+    objectives?: Array<{ objective_id?: string | null; code_snapshot: string; text_snapshot: string }>
+  }): Promise<string>
+  updateLessonPlan(id: string, updates: Partial<LessonPlan> & {
+    objectives?: Array<{ objective_id?: string | null; code_snapshot: string; text_snapshot: string }>
+  }): Promise<void>
+  submitLessonPlan(id: string): Promise<void>
+  reviewLessonPlan(id: string, status: 'approved' | 'returned', comment: string): Promise<void>
+  deleteLessonPlan(id: string): Promise<void>
+
   // dashboard
   getTeacherDashboardData(teacherId: string, homeroomClassId?: string | null): Promise<TeacherDashboardData>
   getAdminDashboardData(): Promise<AdminDashboardData>
 }
+
+// ------------------------------------------------------------------
+// Planning & Curriculum Domain Models
+// ------------------------------------------------------------------
+
+export type CurriculumFrameworkCode =
+  | 'CAMBRIDGE_PRIMARY'
+  | 'CAMBRIDGE_LOWER_SECONDARY'
+  | 'CAMBRIDGE_IGCSE'
+  | 'CAMBRIDGE_AS_A_LEVEL'
+  | 'NATIONAL'
+  | 'OTHER'
+
+export interface CurriculumScheme {
+  id: string
+  school_id: string | null
+  framework: string
+  subject_code: string
+  subject_name: string
+  year_group: string
+  title: string
+  syllabus_years: string
+  is_active: boolean
+  topics_count?: number
+  objectives_count?: number
+  created_at?: string
+}
+
+export interface CurriculumTopic {
+  id: string
+  scheme_id: string
+  code: string
+  title: string
+  sequence: number
+  is_challenge: boolean
+  description: string
+  objectives?: CurriculumObjective[]
+}
+
+export interface CurriculumObjective {
+  id: string
+  scheme_id: string
+  topic_id: string | null
+  code: string
+  text: string
+  subtopic: string
+  challenge_title: string
+  sequence: number
+}
+
+export interface TeacherTimetable {
+  id: string
+  school_id: string | null
+  teacher_id: string
+  file_name: string
+  academic_year: string
+  semester: string
+  is_active: boolean
+  created_at?: string
+}
+
+export interface TeacherScheduleSlot {
+  id?: string
+  timetable_id?: string
+  teacher_id?: string
+  class_id: string | null
+  subject_id: string | null
+  class_name: string
+  subject_name: string
+  day_of_week: number // 0 = Mon, 4 = Fri
+  period_number: number
+  start_time: string // "08:00"
+  end_time: string   // "08:45"
+  room: string
+}
+
+export type PlanStatus = 'draft' | 'submitted' | 'under_review' | 'approved' | 'returned' | 'archived'
+
+export interface WorkPlan {
+  id: string
+  school_id: string
+  subject_id: string
+  class_id: string
+  teacher_id: string
+  scheme_id: string | null
+  academic_year: string
+  semester: string
+  status: PlanStatus
+  revision: number
+  resources: string
+  notes: string
+  submitted_at: string | null
+  approved_at: string | null
+  reviewer_id: string | null
+  review_comment: string
+  created_at: string
+  updated_at: string
+  subject_name?: string
+  class_name?: string
+  teacher_name?: string
+  scheme_title?: string
+  weeks?: WorkPlanWeek[]
+}
+
+export interface WorkPlanWeek {
+  id: string
+  work_plan_id: string
+  sequence: number
+  week_label: string
+  month_label: string
+  start_date: string | null
+  end_date: string | null
+  is_instructional: boolean
+  event_label: string
+  topic_id: string | null
+  topic_title: string
+  challenge_title: string
+  subtopic_title: string
+  lessons_per_week: number
+  remarks: string
+  objectives?: WorkPlanWeekObjective[]
+}
+
+export interface WorkPlanWeekObjective {
+  id: string
+  work_plan_week_id: string
+  objective_id: string | null
+  code_snapshot: string
+  text_snapshot: string
+  is_met: boolean
+  met_at: string | null
+}
+
+export interface LessonPlan {
+  id: string
+  school_id: string
+  teacher_id: string
+  subject_id: string
+  class_id: string
+  work_plan_week_id: string | null
+  schedule_slot_id: string | null
+  lesson_date: string
+  start_time: string | null
+  end_time: string | null
+  topic_title: string
+  challenge_title: string
+  subtopic_title: string
+  main_teaching_activity: string
+  assessment_ideas: string
+  resources: string
+  differentiation: string
+  boys_attendance: number | null
+  girls_attendance: number | null
+  reflection_remarks: string
+  status: 'draft' | 'submitted' | 'approved' | 'returned'
+  revision: number
+  submitted_at: string | null
+  approved_at: string | null
+  reviewer_id: string | null
+  review_comment: string
+  created_at: string
+  updated_at: string
+  subject_name?: string
+  class_name?: string
+  teacher_name?: string
+  objectives?: LessonPlanObjective[]
+}
+
+export interface LessonPlanObjective {
+  id: string
+  lesson_plan_id: string
+  objective_id: string | null
+  code_snapshot: string
+  text_snapshot: string
+}
+
+export interface WorkPlanCoverageStats {
+  total_objectives: number
+  planned_objectives: number
+  covered_percent: number
+  total_topics: number
+  covered_topics: number
+  total_lessons: number
+}
+
+export interface ParsedWorkPlanObjective {
+  code: string
+  text: string
+  is_met: boolean
+  topic_title?: string
+  challenge_title?: string
+}
+
+export interface ParsedWorkPlanWeek {
+  sequence: number
+  week_label: string
+  month_label?: string
+  term_dates?: string
+  start_date?: string | null
+  end_date?: string | null
+  is_instructional: boolean
+  event_label?: string
+  topic_title?: string
+  challenge_title?: string
+  subtopic_title?: string
+  lessons_per_week?: number
+  remarks?: string
+  objectives: ParsedWorkPlanObjective[]
+  is_commed?: boolean
+}
+
+export interface ParsedWorkPlan {
+  raw_text: string
+  title: string
+  framework?: string
+  subject_code?: string
+  subject_name?: string
+  class_name?: string
+  teacher_name?: string
+  academic_year?: string
+  semester?: string
+  needs_subject_code: boolean
+  weeks: ParsedWorkPlanWeek[]
+  resources?: string
+  notes?: string
+}
+
+export interface ImportWorkPlanInput {
+  class_id: string
+  subject_id: string
+  subject_code: string
+  framework?: string
+  academic_year?: string
+  semester?: string
+  resources?: string
+  notes?: string
+  scheme_id?: string | null
+  weeks: ParsedWorkPlanWeek[]
+}
+
+export interface ImportWorkPlanResult {
+  workPlanId: string
+  schemeId: string
+  objectivesIngested: number
+  objectivesSkipped: number
+  weeksCount: number
+  commedWeeksCount: number
+}
+

@@ -31,8 +31,8 @@ export default function Login() {
     <div className="login-wrap">
       <div className="login-card">
         <img src="/icons/icon-192.png" alt="" width="72" height="72" className="login-logo" />
-        <h1>Leera End-of-Unit Reports</h1>
-        <p className="muted">Record unit-test marks and view school summaries & reports.</p>
+        <h1>Leera international school - cambridge wing</h1>
+        <p className="muted">Academic planning, assessments, and school management.</p>
 
         <form onSubmit={submit} className="stack" style={{ marginTop: '16px' }}>
           <label className="field">
@@ -68,9 +68,9 @@ export default function Login() {
         {apkReady && (
           <div className="apk-card">
             <strong>📱 Android app</strong>
-            <span>Download the APK to install Leera Reports on an Android phone.</span>
-            <a className="btn btn-primary btn-block" href={`${import.meta.env.BASE_URL}leera-reports.apk`} download>
-              ⬇ Download APK for Android
+            <span>Download the APK to install LEERA SCHOOL on an Android phone.</span>
+            <a className="btn btn-primary btn-block" href={`${import.meta.env.BASE_URL}leera-reports.apk`} download="LEERA_SCHOOL.apk">
+              ⬇ Download LEERA SCHOOL APK
             </a>
             <span className="muted apk-note">You may be asked to allow “install from unknown sources”.</span>
           </div>

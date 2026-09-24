@@ -745,5 +745,43 @@ h3 { font-size: 15px; margin-top: 8px; }
   }
 }
 
+/* ---------- Planning & Form Utilities ---------- */
+.field {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 13px;
+  background: #ffffff;
+  color: var(--text);
+  box-sizing: border-box;
+}
+.field:focus {
+  outline: none;
+  border-color: var(--green);
+  box-shadow: 0 0 0 2px rgba(31, 138, 95, 0.15);
+}
+.field.select {
+  appearance: auto;
+  cursor: pointer;
+}
+.field-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
 
 

@@ -27,9 +27,9 @@ export default defineConfig(({ mode }) => {
       registerType: 'autoUpdate',
       includeAssets: ['logos/school-logo.png', 'logos/cambridge-logo.png', 'icons/favicon.png'],
       manifest: {
-        name: 'Leera End-of-Unit Reports',
-        short_name: 'Leera Reports',
-        description: 'Record end-of-unit test marks and generate parent reports.',
+        name: 'LEERA SCHOOL',
+        short_name: 'LEERA SCHOOL',
+        description: 'Leera international school - cambridge wing',
         theme_color: '#1F8A5F',
         background_color: '#F4F7F9',
         display: 'standalone',
@@ -41,6 +41,7 @@ export default defineConfig(({ mode }) => {
         ]
       },
       workbox: {
+        maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
         navigateFallback: '/index.html',
         importScripts: ['/sw-push.js'],
@@ -53,7 +54,17 @@ export default defineConfig(({ mode }) => {
         ]
       }
     })
-    ]
+    ],
+    build: {
+      chunkSizeWarningLimit: 1500,
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            pdfjs: ['pdfjs-dist']
+          }
+        }
+      }
+    }
   }
 })
 
