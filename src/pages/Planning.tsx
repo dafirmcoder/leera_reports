@@ -2946,40 +2946,152 @@ export default function Planning() {
       {/* ===================================================================== */}
       {showUploadTimetableModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 16 }}>
-          <div className="card" style={{ width: '100%', maxWidth: 640, padding: 24, maxHeight: '90vh', overflowY: 'auto' }}>
-            <h3 style={{ margin: '0 0 10px' }}>Confirm Timetable Periods</h3>
-            <p style={{ margin: '0 0 14px', fontSize: 13, color: '#64748b' }}>
-              Review the detected periods below. Once confirmed, these slots will be ready for instant lesson planning.
-            </p>
+          <div className="card" style={{ width: '100%', maxWidth: 860, padding: 24, maxHeight: '90vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: 17 }}>Confirm Timetable Periods ({parsedTimetablePreview.length} Detected)</h3>
+                <p style={{ margin: '4px 0 0', fontSize: 13, color: '#64748b' }}>
+                  Review and verify the detected subjects, classes, and timings below. You can adjust any assignment before saving.
+                </p>
+              </div>
+              <button className="btn btn-ghost btn-small" onClick={() => setShowUploadTimetableModal(false)}>✕</button>
+            </div>
 
-            <div style={{ maxHeight: 280, overflowY: 'auto', border: '1px solid #e2e8f0', borderRadius: 6 }}>
+            <div style={{ maxHeight: 360, overflowY: 'auto', border: '1px solid #e2e8f0', borderRadius: 6, marginBottom: 12 }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                 <thead>
-                  <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0', textAlign: 'left' }}>
-                    <th style={{ padding: 6 }}>Day</th>
-                    <th style={{ padding: 6 }}>Time</th>
-                    <th style={{ padding: 6 }}>Subject</th>
-                    <th style={{ padding: 6 }}>Class</th>
+                  <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0', textAlign: 'left', position: 'sticky', top: 0, zIndex: 1 }}>
+                    <th style={{ padding: '8px 6px', width: 110 }}>Day & Period</th>
+                    <th style={{ padding: '8px 6px', width: 120 }}>Time Range</th>
+                    <th style={{ padding: '8px 6px' }}>Subject Assignment</th>
+                    <th style={{ padding: '8px 6px' }}>Class</th>
+                    <th style={{ padding: '8px 6px', width: 90 }}>Room</th>
+                    <th style={{ padding: '8px 6px', width: 40, textAlign: 'center' }}></th>
                   </tr>
                 </thead>
                 <tbody>
                   {parsedTimetablePreview.map((slot, idx) => (
                     <tr key={idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                      <td style={{ padding: 6, fontWeight: 700 }}>{DAYS_NAMES[slot.day_of_week]}</td>
-                      <td style={{ padding: 6 }}>{slot.start_time} – {slot.end_time}</td>
-                      <td style={{ padding: 6 }}>{slot.subject_name}</td>
-                      <td style={{ padding: 6, color: '#1f8a5f', fontWeight: 600 }}>{slot.class_name}</td>
+                      <td style={{ padding: 6, verticalAlign: 'middle' }}>
+                        <strong style={{ color: '#0f172a' }}>{DAYS_NAMES[slot.day_of_week]}</strong>
+                        <div style={{ fontSize: 11, color: '#64748b' }}>Period {slot.period_number}</div>
+                      </td>
+                      <td style={{ padding: 6, verticalAlign: 'middle', whiteSpace: 'nowrap' }}>
+                        <span style={{ fontWeight: 600, color: '#0b4f8a' }}>{slot.start_time} – {slot.end_time}</span>
+                      </td>
+                      <td style={{ padding: 6, verticalAlign: 'middle' }}>
+                        <select
+                          className="field select"
+                          style={{ width: '100%', fontSize: 12, padding: '4px 8px' }}
+                          value={slot.subject_id || ''}
+                          onChange={(e) => {
+                            const newSubId = e.target.value
+                            const subObj = subjects.find((s) => s.id === newSubId)
+                            const updated = [...parsedTimetablePreview]
+                            updated[idx] = {
+                              ...updated[idx],
+                              subject_id: newSubId || null,
+                              subject_name: subObj ? subObj.name : slot.subject_name
+                            }
+                            setParsedTimetablePreview(updated)
+                          }}
+                        >
+                          <option value="">{slot.subject_name || '— Select Subject —'}</option>
+                          {subjects.map((s) => (
+                            <option key={s.id} value={s.id}>{s.name}</option>
+                          ))}
+                        </select>
+                      </td>
+                      <td style={{ padding: 6, verticalAlign: 'middle' }}>
+                        <select
+                          className="field select"
+                          style={{ width: '100%', fontSize: 12, padding: '4px 8px' }}
+                          value={slot.class_id || ''}
+                          onChange={(e) => {
+                            const newClassId = e.target.value
+                            const clsObj = classes.find((c) => c.id === newClassId)
+                            const updated = [...parsedTimetablePreview]
+                            updated[idx] = {
+                              ...updated[idx],
+                              class_id: newClassId || null,
+                              class_name: clsObj ? clsObj.name : slot.class_name
+                            }
+                            setParsedTimetablePreview(updated)
+                          }}
+                        >
+                          <option value="">{slot.class_name || '— Select Class —'}</option>
+                          {classes.map((c) => (
+                            <option key={c.id} value={c.id}>{c.name}</option>
+                          ))}
+                        </select>
+                      </td>
+                      <td style={{ padding: 6, verticalAlign: 'middle' }}>
+                        <input
+                          type="text"
+                          className="field"
+                          style={{ width: '100%', fontSize: 12, padding: '4px 6px' }}
+                          value={slot.room || ''}
+                          placeholder="e.g. Lab 1"
+                          onChange={(e) => {
+                            const updated = [...parsedTimetablePreview]
+                            updated[idx] = { ...updated[idx], room: e.target.value }
+                            setParsedTimetablePreview(updated)
+                          }}
+                        />
+                      </td>
+                      <td style={{ padding: 6, textAlign: 'center', verticalAlign: 'middle' }}>
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-small"
+                          style={{ padding: '2px 6px', color: '#ef4444' }}
+                          title="Remove slot"
+                          onClick={() => {
+                            setParsedTimetablePreview((prev) => prev.filter((_, i) => i !== idx))
+                          }}
+                        >
+                          ✕
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
-              <button className="btn btn-ghost" onClick={() => setShowUploadTimetableModal(false)}>Cancel</button>
-              <button className="btn btn-primary" onClick={handleConfirmTimetableSlots}>
-                ✓ Confirm & Save Timetable
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 16 }}>
+              <button
+                type="button"
+                className="btn btn-ghost btn-small"
+                onClick={() => {
+                  setParsedTimetablePreview((prev) => [
+                    ...prev,
+                    {
+                      day_of_week: 0,
+                      period_number: prev.length + 1,
+                      start_time: '08:00',
+                      end_time: '08:45',
+                      class_id: null,
+                      subject_id: null,
+                      class_name: 'Year 9',
+                      subject_name: 'ICT',
+                      room: ''
+                    }
+                  ])
+                }}
+              >
+                + Add Period Slot Manually
               </button>
+
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn btn-ghost" onClick={() => setShowUploadTimetableModal(false)}>Cancel</button>
+                <button
+                  className="btn btn-primary"
+                  onClick={handleConfirmTimetableSlots}
+                  disabled={parsedTimetablePreview.length === 0}
+                >
+                  ✓ Confirm & Save Timetable ({parsedTimetablePreview.length} Lessons)
+                </button>
+              </div>
             </div>
           </div>
         </div>
