@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { useSchool } from '../context/SchoolContext'
 import { api } from '../lib/api'
@@ -25,6 +25,69 @@ import type {
 type PlanningSubTab = 'work_plans' | 'lesson_plans' | 'timetable' | 'curriculum' | 'review'
 
 const DAYS_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+
+export function getMondayOfDate(d: Date): Date {
+  const date = new Date(d)
+  const day = date.getDay()
+  const diff = date.getDate() - day + (day === 0 ? -6 : 1)
+  date.setDate(diff)
+  date.setHours(0, 0, 0, 0)
+  return date
+}
+
+export function formatDateISO(d: Date): string {
+  const year = d.getFullYear()
+  const month = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+export function isPastLessonSlot(dateStr: string, startTime?: string | null, endTime?: string | null): boolean {
+  if (!dateStr) return false
+  const now = new Date()
+  const todayStr = formatDateISO(now)
+
+  if (dateStr < todayStr) return true
+  if (dateStr > todayStr) return false
+
+  // dateStr === todayStr: compare against start_time (or end_time)
+  const checkTime = startTime || endTime
+  if (!checkTime) return false
+
+  const [hh, mm] = checkTime.split(':').map((v) => parseInt(v, 10))
+  if (isNaN(hh) || isNaN(mm)) return false
+
+  const currentMinutes = now.getHours() * 60 + now.getMinutes()
+  const lessonMinutes = hh * 60 + mm
+
+  return lessonMinutes <= currentMinutes
+}
+
+export function findMatchingLessonPlan(
+  slot: TeacherScheduleSlot,
+  dateStr: string,
+  plans: LessonPlan[]
+): LessonPlan | undefined {
+  return plans.find((lp) => {
+    if (lp.lesson_date !== dateStr) return false
+
+    const classMatches =
+      (slot.class_id && lp.class_id === slot.class_id) ||
+      (slot.class_name && lp.class_name && slot.class_name.toLowerCase().trim() === lp.class_name.toLowerCase().trim())
+
+    const subjectMatches =
+      (slot.subject_id && lp.subject_id === slot.subject_id) ||
+      (slot.subject_name && lp.subject_name && slot.subject_name.toLowerCase().trim() === lp.subject_name.toLowerCase().trim())
+
+    if (!classMatches || !subjectMatches) return false
+
+    if (slot.start_time && lp.start_time) {
+      return slot.start_time === lp.start_time
+    }
+
+    return true
+  })
+}
 
 export default function Planning() {
   const { profile, user } = useAuth()
@@ -64,10 +127,12 @@ export default function Planning() {
   const [lessonPlans, setLessonPlans] = useState<LessonPlan[]>([])
   const [selectedLessonPlan, setSelectedLessonPlan] = useState<LessonPlan | null>(null)
   const [lessonPlanScope, setLessonPlanScope] = useState<'my' | 'all'>('my')
+  const [lpViewMode, setLpViewMode] = useState<'grid' | 'list'>('grid')
+  const [selectedWeekMonday, setSelectedWeekMonday] = useState<Date>(() => getMondayOfDate(new Date()))
   const [showCreateLessonPlanModal, setShowCreateLessonPlanModal] = useState(false)
   const [createLpClassId, setCreateLpClassId] = useState('')
   const [createLpSubjectId, setCreateLpSubjectId] = useState('')
-  const [createLpDate, setCreateLpDate] = useState(() => new Date().toISOString().split('T')[0])
+  const [createLpDate, setCreateLpDate] = useState(() => formatDateISO(new Date()))
   const [createLpStartTime, setCreateLpStartTime] = useState('08:30')
   const [createLpEndTime, setCreateLpEndTime] = useState('09:15')
   const [createLpTopicTitle, setCreateLpTopicTitle] = useState('')
@@ -218,7 +283,64 @@ export default function Planning() {
     setShowCreateWorkPlanModal(true)
   }
 
-  const openCreateLessonPlan = (slotClass?: string, slotSubject?: string, slotStartTime?: string, slotEndTime?: string) => {
+  const handleNavigateWeek = (offsetWeeks: number) => {
+    setSelectedWeekMonday((prev) => {
+      const next = new Date(prev)
+      next.setDate(next.getDate() + offsetWeeks * 7)
+      return next
+    })
+  }
+
+  const handleResetCurrentWeek = () => {
+    setSelectedWeekMonday(getMondayOfDate(new Date()))
+  }
+
+  const weekSlotStats = useMemo(() => {
+    let totalSlots = 0
+    let plannedCount = 0
+    let unplannedCount = 0
+    let pastUnplannedCount = 0
+
+    for (let dayIdx = 0; dayIdx < 5; dayIdx++) {
+      const dayDate = new Date(selectedWeekMonday)
+      dayDate.setDate(selectedWeekMonday.getDate() + dayIdx)
+      const dayDateStr = formatDateISO(dayDate)
+      const slots = timetableSlots.filter((s) => s.day_of_week === dayIdx)
+      totalSlots += slots.length
+
+      for (const s of slots) {
+        const isPlanned = !!findMatchingLessonPlan(s, dayDateStr, lessonPlans)
+        if (isPlanned) {
+          plannedCount++
+        } else {
+          unplannedCount++
+          if (isPastLessonSlot(dayDateStr, s.start_time, s.end_time)) {
+            pastUnplannedCount++
+          }
+        }
+      }
+    }
+
+    return { totalSlots, plannedCount, unplannedCount, pastUnplannedCount }
+  }, [selectedWeekMonday, timetableSlots, lessonPlans])
+
+  const openCreateLessonPlan = (
+    slotClass?: string,
+    slotSubject?: string,
+    slotStartTime?: string,
+    slotEndTime?: string,
+    slotDate?: string
+  ) => {
+    const targetDate = slotDate || formatDateISO(new Date())
+
+    // Strict validation: A teacher cannot create lesson plans for past lessons in both time and date
+    if (isPastLessonSlot(targetDate, slotStartTime, slotEndTime)) {
+      setError(
+        `Cannot plan past lesson: The scheduled period for ${slotClass || 'this class'} on ${targetDate} (${slotStartTime || ''}) is in the past. Lessons must be planned in advance.`
+      )
+      return
+    }
+
     let cId = ''
     let sId = ''
     if (slotClass) {
@@ -239,6 +361,7 @@ export default function Planning() {
     }
     setCreateLpClassId(cId)
     setCreateLpSubjectId(sId)
+    setCreateLpDate(targetDate)
     setCreateLpStartTime(slotStartTime || '08:30')
     setCreateLpEndTime(slotEndTime || '09:15')
     setCreateLpTopicTitle('')
@@ -591,16 +714,22 @@ export default function Planning() {
   const handleCreateLessonPlan = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     const form = new FormData(e.currentTarget)
-    const classId = createLpClassId || (form.get('class_id') as string)
-    const subjectId = createLpSubjectId || (form.get('subject_id') as string)
-    const lessonDate = createLpDate || (form.get('lesson_date') as string)
-    const startTime = createLpStartTime || (form.get('start_time') as string)
-    const endTime = createLpEndTime || (form.get('end_time') as string)
-    const topicTitle = createLpTopicTitle || (form.get('topic_title') as string)
-    const challengeTitle = createLpChallengeTitle || (form.get('challenge_title') as string)
+    const classId = createLpClassId || (form.get('class_id') as string) || ''
+    const subjectId = createLpSubjectId || (form.get('subject_id') as string) || ''
+    const lessonDate = createLpDate || (form.get('lesson_date') as string) || ''
+    const startTime = createLpStartTime || (form.get('start_time') as string) || ''
+    const endTime = createLpEndTime || (form.get('end_time') as string) || ''
+    const topicTitle = createLpTopicTitle || (form.get('topic_title') as string) || ''
+    const challengeTitle = createLpChallengeTitle || (form.get('challenge_title') as string) || ''
 
     if (!classId || !subjectId || !lessonDate || !topicTitle.trim()) {
       setError('Please provide assigned class, subject, date, and topic/challenge.')
+      return
+    }
+
+    // Strict Enforcement: Cannot create lesson plans for past lessons in both time and date
+    if (isPastLessonSlot(lessonDate, startTime, endTime)) {
+      setError('Cannot create lesson plan: Lessons cannot be planned for past dates and times. Prospective lesson plans must be created in advance.')
       return
     }
 
@@ -874,6 +1003,301 @@ export default function Planning() {
       default:
         return <span className="chip" style={{ background: '#f1f5f9', color: '#475569', fontWeight: 700 }}>Draft</span>
     }
+  }
+
+  const renderWeeklyLessonGrid = (source: 'lesson_plans' | 'timetable') => {
+    const currentFriday = new Date(selectedWeekMonday)
+    currentFriday.setDate(selectedWeekMonday.getDate() + 4)
+
+    return (
+      <div>
+        {/* Week Navigator & Statistics */}
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: 14,
+            flexWrap: 'wrap',
+            gap: 10,
+            background: '#f8fafc',
+            padding: '12px 16px',
+            borderRadius: 8,
+            border: '1px solid #e2e8f0'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', background: '#e2e8f0', borderRadius: 6, padding: 2 }}>
+              <button
+                type="button"
+                className="btn btn-ghost btn-small"
+                style={{ padding: '3px 8px', fontSize: 12 }}
+                onClick={() => handleNavigateWeek(-1)}
+                title="Previous Week"
+              >
+                ← Prev Week
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost btn-small"
+                style={{ padding: '3px 10px', fontSize: 12, fontWeight: 700, color: '#0f172a' }}
+                onClick={handleResetCurrentWeek}
+              >
+                Current Week
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost btn-small"
+                style={{ padding: '3px 8px', fontSize: 12 }}
+                onClick={() => handleNavigateWeek(1)}
+                title="Next Week"
+              >
+                Next Week →
+              </button>
+            </div>
+            <span style={{ fontWeight: 800, fontSize: 14, color: '#0f172a' }}>
+              📅 {selectedWeekMonday.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })} –{' '}
+              {currentFriday.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+            </span>
+          </div>
+
+          {/* Status Breakdown Chips */}
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', fontSize: 12 }}>
+            <span style={{ background: '#e2e8f0', color: '#1e293b', padding: '3px 10px', borderRadius: 12, fontWeight: 600 }}>
+              {weekSlotStats.totalSlots} Total Periods
+            </span>
+            <span style={{ background: '#dcfce7', color: '#166534', padding: '3px 10px', borderRadius: 12, fontWeight: 700, border: '1px solid #86efac' }}>
+              ✓ {weekSlotStats.plannedCount} Planned
+            </span>
+            <span style={{ background: '#fee2e2', color: '#b91c1c', padding: '3px 10px', borderRadius: 12, fontWeight: 800, border: '1px solid #f87171' }}>
+              ⚠️ {weekSlotStats.unplannedCount} Unplanned (Red)
+            </span>
+            {weekSlotStats.pastUnplannedCount > 0 && (
+              <span style={{ background: '#fef2f2', color: '#991b1b', padding: '3px 8px', borderRadius: 12, fontSize: 11, fontWeight: 600 }}>
+                🔒 {weekSlotStats.pastUnplannedCount} Past (Closed)
+              </span>
+            )}
+          </div>
+        </div>
+
+        {timetableSlots.length === 0 ? (
+          <div style={{ padding: 40, textAlign: 'center', color: '#64748b', background: '#f8fafc', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+            <div style={{ fontSize: 32, marginBottom: 8 }}>🗓</div>
+            <h4 style={{ margin: '0 0 6px', color: '#1e293b' }}>No Timetable Schedule Uploaded Yet</h4>
+            <p style={{ margin: '0 0 14px', fontSize: 13, maxWidth: 500, marginLeft: 'auto', marginRight: 'auto' }}>
+              To plan lessons weekly by date and time and monitor unplanned lessons in real-time, upload your timetable PDF in the Timetable tab.
+            </p>
+            {source === 'lesson_plans' && (
+              <button className="btn btn-secondary btn-small" onClick={() => setActiveTab('timetable')}>
+                Go to Timetable Tab
+              </button>
+            )}
+          </div>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 12 }}>
+            {[0, 1, 2, 3, 4].map((dayIdx) => {
+              const dayDate = new Date(selectedWeekMonday)
+              dayDate.setDate(selectedWeekMonday.getDate() + dayIdx)
+              const dayDateStr = formatDateISO(dayDate)
+              const isToday = dayDateStr === formatDateISO(new Date())
+              const daySlots = timetableSlots
+                .filter((s) => s.day_of_week === dayIdx)
+                .sort((a, b) => (a.start_time || '').localeCompare(b.start_time || ''))
+
+              return (
+                <div
+                  key={dayIdx}
+                  style={{
+                    background: isToday ? '#f0f9ff' : '#f8fafc',
+                    border: isToday ? '2px solid #0284c7' : '1px solid #e2e8f0',
+                    borderRadius: 8,
+                    padding: 12,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 8
+                  }}
+                >
+                  {/* Day Header with Calendar Date */}
+                  <div
+                    style={{
+                      fontWeight: 800,
+                      fontSize: 14,
+                      color: isToday ? '#0369a1' : '#1e293b',
+                      borderBottom: isToday ? '2px solid #38bdf8' : '1px solid #cbd5e1',
+                      paddingBottom: 6,
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center'
+                    }}
+                  >
+                    <span>{DAYS_NAMES[dayIdx]}</span>
+                    <span
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 700,
+                        color: isToday ? '#0369a1' : '#64748b',
+                        background: isToday ? '#e0f2fe' : 'transparent',
+                        padding: isToday ? '1px 6px' : 0,
+                        borderRadius: 10
+                      }}
+                    >
+                      {dayDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                      {isToday ? ' · Today' : ''}
+                    </span>
+                  </div>
+
+                  {daySlots.length === 0 ? (
+                    <div style={{ fontSize: 12, color: '#94a3b8', fontStyle: 'italic', padding: '12px 4px', textAlign: 'center' }}>
+                      No scheduled lessons
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {daySlots.map((s, idx) => {
+                        const matchingLp = findMatchingLessonPlan(s, dayDateStr, lessonPlans)
+                        const isPast = isPastLessonSlot(dayDateStr, s.start_time, s.end_time)
+                        const isPlanned = !!matchingLp
+
+                        return (
+                          <div
+                            key={idx}
+                            style={{
+                              background: isPlanned ? '#f0fdf4' : '#fef2f2',
+                              border: isPlanned ? '1.5px solid #22c55e' : '2px solid #ef4444',
+                              borderRadius: 6,
+                              padding: 10,
+                              fontSize: 12,
+                              boxShadow: isPlanned
+                                ? '0 1px 2px rgba(34, 197, 94, 0.08)'
+                                : '0 2px 4px rgba(239, 68, 68, 0.12)',
+                              transition: 'all 0.15s ease'
+                            }}
+                          >
+                            {/* Status Badge */}
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                              <span
+                                style={{
+                                  fontSize: 10,
+                                  fontWeight: 800,
+                                  padding: '2px 6px',
+                                  borderRadius: 4,
+                                  textTransform: 'uppercase',
+                                  letterSpacing: '0.3px',
+                                  background: isPlanned ? '#dcfce7' : '#fee2e2',
+                                  color: isPlanned ? '#15803d' : '#b91c1c'
+                                }}
+                              >
+                                {isPlanned ? `✓ Planned (${matchingLp.status})` : '⚠️ Unplanned Lesson'}
+                              </span>
+                              <span style={{ fontSize: 11, fontWeight: 700, color: '#64748b' }}>
+                                P{s.period_number}
+                              </span>
+                            </div>
+
+                            {/* Subject & Class */}
+                            <div style={{ fontWeight: 800, color: '#0f172a', fontSize: 13 }}>
+                              {s.subject_name}
+                            </div>
+                            <div style={{ color: isPlanned ? '#15803d' : '#0369a1', fontWeight: 700, fontSize: 12 }}>
+                              {s.class_name}
+                            </div>
+
+                            {/* Time & Room */}
+                            <div style={{ fontSize: 11, color: '#475569', marginTop: 2 }}>
+                              ⏱ {s.start_time} – {s.end_time} {s.room ? `· 📍 ${s.room}` : ''}
+                            </div>
+
+                            {/* Planned Details or Unplanned Action */}
+                            {isPlanned ? (
+                              <div style={{ marginTop: 6, borderTop: '1px solid #bbf7d0', paddingTop: 6 }}>
+                                <div
+                                  style={{
+                                    fontSize: 11,
+                                    color: '#166534',
+                                    fontWeight: 600,
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap'
+                                  }}
+                                  title={matchingLp.topic_title}
+                                >
+                                  🎯 {matchingLp.topic_title}
+                                </div>
+                                <button
+                                  type="button"
+                                  className="btn btn-ghost btn-small"
+                                  style={{
+                                    marginTop: 6,
+                                    fontSize: 11,
+                                    padding: '3px 8px',
+                                    width: '100%',
+                                    borderColor: '#86efac',
+                                    color: '#166534',
+                                    fontWeight: 600,
+                                    background: '#ffffff'
+                                  }}
+                                  onClick={() => handleSelectLessonPlan(matchingLp.id)}
+                                >
+                                  ✏ View & Edit Plan
+                                </button>
+                              </div>
+                            ) : (
+                              <div style={{ marginTop: 6, borderTop: '1px solid #fecaca', paddingTop: 6 }}>
+                                {isPast ? (
+                                  <div
+                                    style={{
+                                      background: '#fee2e2',
+                                      borderRadius: 4,
+                                      padding: '4px 6px',
+                                      color: '#991b1b',
+                                      fontSize: 11,
+                                      fontWeight: 700,
+                                      textAlign: 'center'
+                                    }}
+                                  >
+                                    🔒 Past Lesson (Planning Closed)
+                                  </div>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    className="btn btn-small"
+                                    style={{
+                                      width: '100%',
+                                      fontSize: 11,
+                                      padding: '4px 8px',
+                                      fontWeight: 700,
+                                      background: '#dc2626',
+                                      color: '#ffffff',
+                                      border: 'none',
+                                      cursor: 'pointer',
+                                      boxShadow: '0 1px 2px rgba(220, 38, 38, 0.2)'
+                                    }}
+                                    onClick={() =>
+                                      openCreateLessonPlan(
+                                        s.class_name,
+                                        s.subject_name,
+                                        s.start_time,
+                                        s.end_time,
+                                        dayDateStr
+                                      )
+                                    }
+                                  >
+                                    + Plan Lesson
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    )
   }
 
   return (
@@ -1414,9 +1838,29 @@ export default function Planning() {
 
               return (
                 <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 10 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                       <h3 style={{ margin: 0, fontSize: 16 }}>Scheduled Lesson Plans</h3>
+                      {/* View Mode Switcher: Weekly Lesson Grid vs All Plans */}
+                      <div style={{ display: 'flex', gap: 3, background: '#e2e8f0', padding: 2, borderRadius: 6 }}>
+                        <button
+                          type="button"
+                          className={`btn btn-small ${lpViewMode === 'grid' ? 'btn-primary' : 'btn-ghost'}`}
+                          style={{ padding: '3px 10px', fontSize: 12, fontWeight: 700 }}
+                          onClick={() => setLpViewMode('grid')}
+                        >
+                          📅 Weekly Lesson Grid
+                        </button>
+                        <button
+                          type="button"
+                          className={`btn btn-small ${lpViewMode === 'list' ? 'btn-primary' : 'btn-ghost'}`}
+                          style={{ padding: '3px 10px', fontSize: 12, fontWeight: 700 }}
+                          onClick={() => setLpViewMode('list')}
+                        >
+                          📋 All Lesson Plans ({displayedLessonPlans.length})
+                        </button>
+                      </div>
+
                       {isLeadership && (
                         <div style={{ display: 'flex', gap: 4, background: '#f1f5f9', padding: 3, borderRadius: 6 }}>
                           <button
@@ -1441,7 +1885,9 @@ export default function Planning() {
                     </button>
                   </div>
 
-                  {displayedLessonPlans.length === 0 ? (
+                  {lpViewMode === 'grid' ? (
+                    renderWeeklyLessonGrid('lesson_plans')
+                  ) : displayedLessonPlans.length === 0 ? (
                     <div className="card" style={{ padding: 40, textAlign: 'center', color: '#64748b' }}>
                       <div style={{ fontSize: 36, marginBottom: 10 }}>📖</div>
                       <h4 style={{ margin: '0 0 6px', color: '#1e293b' }}>
@@ -1786,51 +2232,7 @@ export default function Planning() {
             </label>
           </div>
 
-          {timetableSlots.length === 0 ? (
-            <div style={{ padding: 40, textAlign: 'center', color: '#64748b', background: '#f8fafc', borderRadius: 8 }}>
-              <div style={{ fontSize: 32, marginBottom: 8 }}>🗓</div>
-              <h4 style={{ margin: '0 0 6px', color: '#1e293b' }}>No Timetable Slots Uploaded Yet</h4>
-              <p style={{ margin: '0 0 14px', fontSize: 13 }}>
-                Upload your school timetable PDF (e.g. from aSc Timetables) to automatically import your teaching periods.
-              </p>
-            </div>
-          ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
-              {[0, 1, 2, 3, 4].map((dayIdx) => {
-                const daySlots = timetableSlots.filter((s) => s.day_of_week === dayIdx)
-                return (
-                  <div key={dayIdx} style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: 12 }}>
-                    <div style={{ fontWeight: 800, fontSize: 14, color: '#1e293b', marginBottom: 8, borderBottom: '1px solid #cbd5e1', paddingBottom: 4 }}>
-                      {DAYS_NAMES[dayIdx]}
-                    </div>
-                    {daySlots.length === 0 ? (
-                      <div style={{ fontSize: 12, color: '#94a3b8' }}>No lessons</div>
-                    ) : (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                        {daySlots.map((s, idx) => (
-                          <div key={idx} style={{ background: '#fff', padding: 8, borderRadius: 6, border: '1px solid #e2e8f0', fontSize: 12 }}>
-                            <div style={{ fontWeight: 700, color: '#0f172a' }}>{s.subject_name}</div>
-                            <div style={{ color: '#1f8a5f', fontWeight: 600 }}>{s.class_name}</div>
-                            <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
-                              ⏱ {s.start_time} – {s.end_time} {s.room ? `· ${s.room}` : ''}
-                            </div>
-                            <button
-                              type="button"
-                              className="btn btn-secondary btn-small"
-                              style={{ marginTop: 6, fontSize: 11, padding: '2px 8px', width: '100%' }}
-                              onClick={() => openCreateLessonPlan(s.class_name, s.subject_name, s.start_time, s.end_time)}
-                            >
-                              + Plan Lesson
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-          )}
+          {renderWeeklyLessonGrid('timetable')}
         </div>
       )}
 
@@ -2657,6 +3059,7 @@ export default function Planning() {
                     name="lesson_date"
                     className="field"
                     value={createLpDate}
+                    min={formatDateISO(new Date())}
                     onChange={(e) => setCreateLpDate(e.target.value)}
                     required
                     style={{ width: '100%' }}
@@ -2685,6 +3088,27 @@ export default function Planning() {
                   />
                 </div>
               </div>
+
+              {isPastLessonSlot(createLpDate, createLpStartTime, createLpEndTime) && (
+                <div
+                  style={{
+                    background: '#fef2f2',
+                    border: '1.5px solid #ef4444',
+                    borderRadius: 6,
+                    padding: '8px 12px',
+                    fontSize: 12,
+                    color: '#b91c1c',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8
+                  }}
+                >
+                  <span style={{ fontSize: 16 }}>⚠️</span>
+                  <div>
+                    <strong>Past Lesson Time (Planning Blocked):</strong> Lessons cannot be created for past dates and times. Please select an upcoming prospective lesson slot.
+                  </div>
+                </div>
+              )}
 
               {/* Learning Objectives Selection (Uncovered Only) */}
               <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: 12 }}>
@@ -2834,6 +3258,7 @@ export default function Planning() {
                     !createLpSubjectId ||
                     (!isLeadership && availableClasses.length === 0) ||
                     (matchingWorkPlanForLp && uncoveredLpObjectives.length === 0 && coveredLpObjectives.length > 0) ||
+                    isPastLessonSlot(createLpDate, createLpStartTime, createLpEndTime) ||
                     loading
                   }
                 >
