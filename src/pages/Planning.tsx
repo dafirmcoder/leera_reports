@@ -324,6 +324,14 @@ export default function Planning() {
   const uncoveredLpObjectives = availableLpObjectives.filter((o) => !o.is_met)
   const coveredLpObjectives = availableLpObjectives.filter((o) => o.is_met)
 
+  const selectedCreateSubject = subjects.find((s) => s.id === createLpSubjectId)
+  const isCreateLpGlobalPerspectives = !!(
+    selectedCreateSubject?.name?.toLowerCase().includes('global perspective') ||
+    selectedCreateSubject?.name?.toLowerCase().includes('gp') ||
+    matchingWorkPlanForLp?.subject_name?.toLowerCase().includes('global perspective') ||
+    matchingWorkPlanForLp?.subject_name?.toLowerCase().includes('gp')
+  )
+
   // -------------------------------------------------------------------------
   // WORK PLAN ACTIONS
   // -------------------------------------------------------------------------
@@ -1524,28 +1532,41 @@ export default function Planning() {
 
               {/* Form Grid */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-                <div>
-                  <label className="field-label">Topic / Unit</label>
-                  <input
-                    type="text"
-                    className="field"
-                    style={{ width: '100%' }}
-                    value={selectedLessonPlan.topic_title || ''}
-                    onChange={(e) => setSelectedLessonPlan({ ...selectedLessonPlan, topic_title: e.target.value })}
-                  />
-                </div>
+                {(() => {
+                  const isSelectedLpGlobalPerspectives = !!(
+                    selectedLessonPlan.subject_name?.toLowerCase().includes('global perspective') ||
+                    selectedLessonPlan.subject_name?.toLowerCase().includes('gp')
+                  )
 
-                <div>
-                  <label className="field-label">Challenge (For Global Perspectives)</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. Keeping Healthy / Digital World"
-                    className="field"
-                    style={{ width: '100%' }}
-                    value={selectedLessonPlan.challenge_title || ''}
-                    onChange={(e) => setSelectedLessonPlan({ ...selectedLessonPlan, challenge_title: e.target.value })}
-                  />
-                </div>
+                  return (
+                    <>
+                      <div style={{ gridColumn: isSelectedLpGlobalPerspectives ? 'span 1' : 'span 2' }}>
+                        <label className="field-label">Topic / Unit</label>
+                        <input
+                          type="text"
+                          className="field"
+                          style={{ width: '100%' }}
+                          value={selectedLessonPlan.topic_title || ''}
+                          onChange={(e) => setSelectedLessonPlan({ ...selectedLessonPlan, topic_title: e.target.value })}
+                        />
+                      </div>
+
+                      {isSelectedLpGlobalPerspectives && (
+                        <div>
+                          <label className="field-label">Challenge (For Global Perspectives)</label>
+                          <input
+                            type="text"
+                            placeholder="e.g. Keeping Healthy / Digital World"
+                            className="field"
+                            style={{ width: '100%' }}
+                            value={selectedLessonPlan.challenge_title || ''}
+                            onChange={(e) => setSelectedLessonPlan({ ...selectedLessonPlan, challenge_title: e.target.value })}
+                          />
+                        </div>
+                      )}
+                    </>
+                  )
+                })()}
 
                 <div style={{ gridColumn: 'span 2' }}>
                   <label className="field-label">Main Teaching Activities & Inquiry</label>
@@ -2783,18 +2804,20 @@ export default function Planning() {
                 />
               </div>
 
-              <div>
-                <label className="field-label">Challenge (For Global Perspectives)</label>
-                <input
-                  type="text"
-                  name="challenge_title"
-                  placeholder="e.g. Keeping Healthy / Digital World"
-                  className="field"
-                  value={createLpChallengeTitle}
-                  onChange={(e) => setCreateLpChallengeTitle(e.target.value)}
-                  style={{ width: '100%' }}
-                />
-              </div>
+              {isCreateLpGlobalPerspectives && (
+                <div>
+                  <label className="field-label">Challenge (For Global Perspectives)</label>
+                  <input
+                    type="text"
+                    name="challenge_title"
+                    placeholder="e.g. Keeping Healthy / Digital World"
+                    className="field"
+                    value={createLpChallengeTitle}
+                    onChange={(e) => setCreateLpChallengeTitle(e.target.value)}
+                    style={{ width: '100%' }}
+                  />
+                </div>
+              )}
 
               <div>
                 <label className="field-label">Main Teaching Activities</label>
