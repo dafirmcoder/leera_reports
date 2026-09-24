@@ -220,7 +220,7 @@ function tryParseTabularWorkPlan(
 ): ParsedWorkPlanWeek[] | null {
   if (!pagesItems || pagesItems.length === 0) return null
 
-  // 1. Locate all week sequence numbers across pages (digits in column x ~ 120-180)
+  // 1. Locate all week sequence numbers across pages (digits in column x ~ 110-185)
   const weekStarters: Array<{ pageIndex: number; y: number; weekNum: number }> = []
 
   for (let pNum = 0; pNum < pagesItems.length; pNum++) {
@@ -258,91 +258,75 @@ function tryParseTabularWorkPlan(
 
   for (let i = 0; i < weekStarters.length; i++) {
     const curW = weekStarters[i]
+    const pIndex = curW.pageIndex
     const nextW = weekStarters[i + 1]
 
-    const weekItems: PositionedPdfItem[] = []
-    const pItems = pagesItems[curW.pageIndex]
-    const yStart = curW.y + 12
-    const yEnd = nextW && nextW.pageIndex === curW.pageIndex ? nextW.y + 12 : 25
+    let weekItems: PositionedPdfItem[] = []
 
-    for (const it of pItems) {
-      if (it.y <= yStart && it.y > yEnd) {
-        weekItems.push(it)
-      }
+    // Each week row begins just above its starter digit
+    const topY = curW.y + 5
+
+    if (!nextW || nextW.pageIndex === pIndex) {
+      // Next week is on same page, or this is the last week in document
+      // On page 6 (0-indexed page 5), stop before RESOURCES at y ~ 235
+      const bottomY = nextW ? nextW.y + 5 : (pIndex === 5 ? 235 : 25)
+      weekItems = pagesItems[pIndex].filter((it) => it.y <= topY && it.y > bottomY)
+    } else {
+      // Week spans across page boundary to next page!
+      // Current page items: from topY down to page bottom
+      const p1Items = pagesItems[pIndex].filter((it) => it.y <= topY && it.y > 25)
+      // Next page items: from top of next page table down to nextW.y + 5
+      const nextHeader = pagesItems[nextW.pageIndex].find((it) => it.str === 'TOPIC/ LEARNING OBJECTIVE' || it.str === 'WEEK')
+      const nextTableTop = nextHeader ? nextHeader.y - 8 : 580
+      const p2Items = pagesItems[nextW.pageIndex].filter((it) => it.y < nextTableTop && it.y > nextW.y + 5)
+      weekItems = [...p1Items, ...p2Items]
     }
-
-    // If next week is on a subsequent page, collect spanning items
-    if (nextW && nextW.pageIndex > curW.pageIndex) {
-      for (let p = curW.pageIndex + 1; p <= nextW.pageIndex; p++) {
-        const subItems = pagesItems[p]
-        const subTopItem = subItems.find((it) => it.str === 'TOPIC/ LEARNING OBJECTIVE' || it.str === 'WEEK')
-        const subTableTop = subTopItem ? subTopItem.y - 8 : 580
-        const subEnd = p === nextW.pageIndex ? nextW.y + 12 : 25
-        for (const it of subItems) {
-          if (it.y < subTableTop && it.y > subEnd) {
-            weekItems.push(it)
-          }
-        }
-      }
-    } else if (!nextW) {
-      for (let p = curW.pageIndex + 1; p < pagesItems.length; p++) {
-        const subItems = pagesItems[p]
-        const subTopItem = subItems.find((it) => it.str === 'TOPIC/ LEARNING OBJECTIVE' || it.str === 'WEEK')
-        const subTableTop = subTopItem ? subTopItem.y - 8 : 580
-        for (const it of subItems) {
-          if (it.y < subTableTop && it.y > 25) {
-            weekItems.push(it)
-          }
-        }
-      }
-    }
-
-    weekItems.sort((a, b) => a.page - b.page || b.y - a.y || a.x - b.x)
 
     // 1. Month update in x < 100
-    const mItem = weekItems.find((it) => it.x < 100 && MONTH_MAP[it.str.toUpperCase().slice(0, 3)] !== undefined)
-    if (mItem) currentMonth = mItem.str.toUpperCase()
+    const mItem = weekItems.find(
+      (it) => it.x < 100 && it.str.length > 2 && !it.str.includes('MONTH') && !it.str.includes('SEMESTER')
+    )
+    if (mItem) {
+      currentMonth = mItem.str.toUpperCase()
+    }
 
     // 2. Dates in x: [110, 185]
-    const dateParts = weekItems
-      .filter((it) => it.x >= 110 && it.x <= 185 && !/^\d{1,2}$/.test(it.str))
-      .map((it) => it.str)
-    const termDates = dateParts.join(' ').replace(/\s*–\s*/g, ' – ')
+    const dateItems = weekItems.filter((it) => it.x >= 110 && it.x <= 185 && it.y < curW.y)
+    const termDates = dateItems.map((it) => it.str).join(' ').replace(/\s*–\s*/g, ' – ')
 
     // 3. Topic in x: [180, 640]
     const topicParts: string[] = []
-    for (const it of weekItems) {
-      if (it.x >= 180 && it.x <= 640) {
-        if (
-          /^(?:UNIT|TOPIC|CHAPTER|STRAND|SECTION)\s*\d+/i.test(it.str) ||
-          /REVISION\s*WEEK|SEMESTER\s*ASSESSMENT|END\s*OF\s*FIRST\s*SEMESTER|PTC/i.test(it.str)
-        ) {
-          topicParts.push(it.str)
-        } else if (
-          topicParts.length > 0 &&
-          !it.str.startsWith('Learning Objectives:') &&
-          !it.str.startsWith('•') &&
-          topicParts.length < 3
-        ) {
-          topicParts.push(it.str)
-        }
-      }
+    const topicItems = weekItems.filter(
+      (it) => it.x >= 180 && it.x <= 640 && /^(?:UNIT|TOPIC|REVISION|SEMESTER|END OF)/i.test(it.str)
+    )
+    for (const ti of topicItems) {
+      const lineItems = weekItems.filter(
+        (it) => it.x >= 180 && it.x <= 640 && Math.abs(it.y - ti.y) < 4
+      )
+      const text = lineItems.map((it) => it.str).join(' ')
+      if (!topicParts.includes(text)) topicParts.push(text)
     }
-    const topic = topicParts.join(' — ').replace(/\s*—\s*—\s*/g, ' — ')
+    const topic = topicParts.join(' — ').replace(/\s*—\s*—\s*/g, ' — ') || 'General Curriculum'
 
     // 4. Learning Objectives in x: [180, 640]
+    // Filter out everything after "Weekly Lesson Breakdown" so lesson activities are NEVER parsed as objectives
     const objectives: ParsedWorkPlanObjective[] = []
-    const objItems = weekItems.filter((it) => it.x >= 180 && it.x <= 640)
-    for (let j = 0; j < objItems.length; j++) {
-      const it = objItems[j]
+    const colItems = weekItems.filter((it) => it.x >= 180 && it.x <= 640)
+    const breakdownIdx = colItems.findIndex(
+      (it) => it.str.includes('Weekly Lesson Breakdown') || it.str.startsWith('• Lesson')
+    )
+    const candidateObjItems = breakdownIdx >= 0 ? colItems.slice(0, breakdownIdx) : colItems
+
+    for (let j = 0; j < candidateObjItems.length; j++) {
+      const it = candidateObjItems[j]
       const codeMatch = it.str.match(/^(?:•\s*)?(\*?[A-Za-z0-9\.\-]{2,12}[0-9]+[A-Za-z0-9\.\-]*)\s*[:\-]?\s*(.*)/)
       if (codeMatch && !it.str.includes('Weekly Lesson Breakdown') && !it.str.startsWith('• Lesson')) {
         const code = codeMatch[1].replace(/^\*/, '').trim()
         let text = codeMatch[2].trim()
 
         let k = j + 1
-        while (k < objItems.length) {
-          const nextIt = objItems[k]
+        while (k < candidateObjItems.length) {
+          const nextIt = candidateObjItems[k]
           if (
             nextIt.str.startsWith('•') ||
             nextIt.str.includes('Weekly Lesson Breakdown') ||
@@ -370,6 +354,7 @@ function tryParseTabularWorkPlan(
       .replace(/\s+/g, ' ')
       .replace(/\s*–\s*/g, ' – ')
       .replace(/\s*—\s*/g, ' — ')
+      .trim()
 
     const { isCommed, updatedObjectives } = evaluateCoverageFromRemarks(remarks, objectives)
     const { startDate, endDate } = parseTermDates(
@@ -387,7 +372,7 @@ function tryParseTabularWorkPlan(
       start_date: startDate,
       end_date: endDate,
       is_instructional: isInstructional,
-      topic_title: topic || 'General Curriculum',
+      topic_title: topic,
       challenge_title: '',
       subtopic_title: '',
       lessons_per_week: 3,
@@ -661,6 +646,9 @@ export async function parseWorkPlanPdf(file: File): Promise<ParsedWorkPlan> {
         text = codeMatch[2].trim()
       } else if (objBulletMatch) {
         const afterBullet = objBulletMatch[1].trim()
+        if (/^Lesson\s*\d+/i.test(afterBullet) || /Weekly Lesson Breakdown/i.test(afterBullet)) {
+          continue
+        }
         const innerCodeMatch = afterBullet.match(/^(\*?[A-Za-z0-9\.\-]{2,12}[0-9]+[A-Za-z0-9\.\-]*)\s*[:\-]?\s+(.*)/)
         if (innerCodeMatch) {
           code = innerCodeMatch[1].replace(/^\*/, '').trim()
