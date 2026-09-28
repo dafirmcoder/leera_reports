@@ -2,16 +2,20 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { api } from '../lib/api'
 import { useSchool } from '../context/SchoolContext'
+import { useAuth } from '../context/AuthContext'
+import { isCoordinatorOrLeadership } from '../lib/permissions'
 import ReportSheet from '../components/ReportSheet'
 import { DEFAULT_REPORT_START_DATE, filterReportRows, fmtDate } from '../lib/report'
-import type { ReportFilter, Student, StudentReportRow } from '../lib/types'
+import type { ClassMarksLock, ReportFilter, Student, StudentReportRow } from '../lib/types'
 
 export default function ReportView() {
   const { studentId } = useParams<{ studentId: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
   const { school, classes } = useSchool()
+  const { profile } = useAuth()
   const [student, setStudent] = useState<Student | null>(null)
   const [rows, setRows] = useState<StudentReportRow[]>([])
+  const [lockInfo, setLockInfo] = useState<ClassMarksLock | null>(null)
   const [error, setError] = useState('')
   const [downloading, setDownloading] = useState(false)
 
@@ -43,7 +47,12 @@ export default function ReportView() {
 
   useEffect(() => {
     if (!studentId) return
-    api.getStudent(studentId).then(setStudent).catch((e) => setError(e.message))
+    api.getStudent(studentId).then((st) => {
+      setStudent(st)
+      if (st?.class_id) {
+        api.getClassMarksLock(st.class_id).then(setLockInfo).catch(() => setLockInfo(null))
+      }
+    }).catch((e) => setError(e.message))
     api.getStudentReport(studentId).then(setRows).catch((e) => setError(e.message))
   }, [studentId])
 
@@ -83,6 +92,17 @@ export default function ReportView() {
         filterNotice,
         rows: filteredRows
       })
+
+      // Lock class marks once report is downloaded
+      if (student.class_id) {
+        try {
+          await api.lockClassMarks(student.class_id, 'Report downloaded by Homeroom Teacher')
+          const updated = await api.getClassMarksLock(student.class_id)
+          setLockInfo(updated)
+        } catch (lErr) {
+          console.warn('Could not lock class marks:', lErr)
+        }
+      }
     } catch (e: any) {
       setError(e.message ?? 'PDF download failed.')
     } finally {
@@ -109,6 +129,26 @@ export default function ReportView() {
           <Link to={`/reports${searchParams.toString() ? `?${searchParams.toString()}` : ''}`} className="btn btn-ghost btn-sm">
             ← Back to Reports
           </Link>
+          {lockInfo?.is_locked && (
+            <span
+              style={{
+                fontSize: '11px',
+                fontWeight: 700,
+                color: '#991b1b',
+                background: '#fee2e2',
+                border: '1px solid #fca5a5',
+                padding: '3px 8px',
+                borderRadius: '12px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px'
+              }}
+              title="Marks are locked for subject teachers because reports have been downloaded"
+            >
+              <span>🔒</span>
+              <span>Marks Locked</span>
+            </span>
+          )}
         </div>
 
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>

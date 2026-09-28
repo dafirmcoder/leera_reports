@@ -37,6 +37,19 @@ export interface ClassInfo {
   name: string
   homeroom_teacher_id: string | null
   homeroom_teacher_name: string
+  marks_locked?: boolean
+  marks_locked_at?: string | null
+  marks_locked_by?: string | null
+  marks_locked_by_name?: string | null
+}
+
+export interface ClassMarksLock {
+  class_id: string
+  is_locked: boolean
+  locked_at: string | null
+  locked_by: string | null
+  locked_by_name: string | null
+  reason?: string
 }
 
 export interface Subject {
@@ -434,6 +447,11 @@ export interface Api {
   listScoresForTest(testId: string): Promise<ScoreRow[]>
   listScoresForTests(testIds: string[]): Promise<ScoreRow[]>
   saveScore(unit_test_id: string, student_id: string, score: number | null): Promise<void>
+
+  // marks lock
+  getClassMarksLock(classId: string): Promise<ClassMarksLock>
+  lockClassMarks(classId: string, reason?: string): Promise<void>
+  unlockClassMarks(classId: string): Promise<void>
 
   // reports
   getStudentReport(studentId: string): Promise<StudentReportRow[]>

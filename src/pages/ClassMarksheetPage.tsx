@@ -3,10 +3,10 @@ import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
 import { api } from '../lib/api'
 import { useSchool } from '../context/SchoolContext'
 import { useAuth } from '../context/AuthContext'
-import { can, getTeacherHomeroomClasses, isHomeroomTeacher } from '../lib/permissions'
+import { can, getTeacherHomeroomClasses, isCoordinatorOrLeadership, isHomeroomTeacher } from '../lib/permissions'
 import LeeraLoader from '../components/LeeraLoader'
 import { downloadMarksheetExcel, downloadMarksheetCsv } from '../lib/marksheetExport'
-import type { Assignment, Student, UnitTest } from '../lib/types'
+import type { Assignment, ClassMarksLock, Student, UnitTest } from '../lib/types'
 
 export default function ClassMarksheetPage() {
   const { classId } = useParams<{ classId: string }>()
@@ -62,6 +62,7 @@ export default function ClassMarksheetPage() {
   const [students, setStudents] = useState<Student[]>([])
   const [tests, setTests] = useState<UnitTest[]>([])
   const [assignments, setAssignments] = useState<Assignment[]>([])
+  const [lockInfo, setLockInfo] = useState<ClassMarksLock | null>(null)
   const [scoresMap, setScoresMap] = useState<Record<string, Record<string, number | null>>>({})
   const [studentSearch, setStudentSearch] = useState('')
   const [displayMode, setDisplayMode] = useState<'pct' | 'raw' | 'both'>('pct')
@@ -74,11 +75,13 @@ export default function ClassMarksheetPage() {
     setLoading(true)
     setError('')
     try {
-      const [studentsData, testsData, assignmentsData] = await Promise.all([
+      const [studentsData, testsData, assignmentsData, lockData] = await Promise.all([
         api.listStudents(currentClassId),
         api.listUnitTests(currentClassId),
-        api.listAssignments(currentClassId).catch(() => [] as Assignment[])
+        api.listAssignments(currentClassId).catch(() => [] as Assignment[]),
+        api.getClassMarksLock(currentClassId).catch(() => null)
       ])
+      setLockInfo(lockData)
 
       // Sort tests chronologically
       const sortedTests = [...testsData].sort((a, b) =>
@@ -471,6 +474,59 @@ export default function ClassMarksheetPage() {
       </div>
 
       {error && <div className="notice notice-error">{error}</div>}
+
+      {/* Class Marks Lock Banner */}
+      {lockInfo?.is_locked && (
+        <div
+          style={{
+            background: '#fef2f2',
+            border: '1.5px solid #f87171',
+            borderRadius: '12px',
+            padding: '12px 18px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: '12px',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.05)'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <span style={{ fontSize: '20px' }}>🔒</span>
+            <div>
+              <div style={{ fontWeight: 700, color: '#991b1b', fontSize: '13.5px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span>Class Marks Locked for Subject Teachers</span>
+                <span style={{ fontSize: '11px', background: '#fee2e2', color: '#991b1b', padding: '1px 8px', borderRadius: '10px', border: '1px solid #fca5a5' }}>
+                  Reports Downloaded
+                </span>
+              </div>
+              <p style={{ margin: '2px 0 0', fontSize: '12px', color: '#7f1d1d' }}>
+                Reports for {currentClass?.name || 'this class'} have been downloaded{lockInfo.locked_at ? ` on ${new Date(lockInfo.locked_at).toLocaleDateString()}` : ''}{lockInfo.locked_by_name ? ` by ${lockInfo.locked_by_name}` : ''}. Subject teachers cannot modify marks.
+              </p>
+            </div>
+          </div>
+          {isCoordinatorOrLeadership(profile) && (
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              style={{ borderColor: '#ef4444', color: '#b91c1c', fontWeight: 600, background: '#ffffff', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+              onClick={async () => {
+                if (!confirm(`Unlock marks for ${currentClass?.name || 'this class'}? Subject teachers will be able to edit scores again.`)) return
+                try {
+                  await api.unlockClassMarks(currentClassId)
+                  const updated = await api.getClassMarksLock(currentClassId)
+                  setLockInfo(updated)
+                } catch (e: any) {
+                  setError(e.message)
+                }
+              }}
+            >
+              <span>🔓</span>
+              <span>Unlock Marks (Coordinator)</span>
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Summary KPI Cards */}
       <div className="grid4">

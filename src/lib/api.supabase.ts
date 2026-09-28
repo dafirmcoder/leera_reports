@@ -1,9 +1,10 @@
 import { getSupabaseConfigError, supabase } from './supabase'
 import { formatAdmissionNo, formatRollNo, formatStudentNo } from './report'
 import { CAMBRIDGE_PRESEEDED_SCHEMES } from './cambridgeData'
+import { isCoordinatorOrLeadership } from './permissions'
 import type {
   AdminClassAttendanceSummary, AdminDashboardData, Api, Assignment, AttendanceAggregatedSummary, AttendanceRow, AttendanceStatus, AttendanceSummary,
-  ClassAttendanceExportData, ClassInfo, ClassPopulationSummary, DetailedAttendanceExport,
+  ClassAttendanceExportData, ClassInfo, ClassMarksLock, ClassPopulationSummary, DetailedAttendanceExport,
   EndOfUnitTestOverview, Profile, Role, School,
   SchoolPopulationSummary, ScoreRow, Student, StudentReportRow, Subject,
   SubjectTestSummary, TeacherAssignmentOverview, TeacherDashboardData, TeacherTestSummary, UnitTest, UnitTestSummaryItem, UpdateUnitTestInput,
@@ -189,15 +190,21 @@ export const supabaseApi: Api = {
   },
 
   async listClasses(): Promise<ClassInfo[]> {
-    const [classesRes, profilesRes] = await Promise.all([
-      db()
+    let classesRes: any = await db()
+      .from('classes')
+      .select('id, name, homeroom_teacher_id, marks_locked, marks_locked_at, marks_locked_by, marks_locked_by_name')
+      .order('name', { ascending: true })
+
+    if (classesRes.error && classesRes.error.code === '42703') {
+      classesRes = await db()
         .from('classes')
         .select('id, name, homeroom_teacher_id')
-        .order('name', { ascending: true }),
-      db()
-        .from('profiles')
-        .select('id, full_name, class_id, role, additional_roles')
-    ])
+        .order('name', { ascending: true })
+    }
+
+    const profilesRes = await db()
+      .from('profiles')
+      .select('id, full_name, class_id, role, additional_roles')
 
     if (classesRes.error) throw new Error(classesRes.error.message)
 
@@ -224,11 +231,35 @@ export const supabaseApi: Api = {
       const teacherId = r.homeroom_teacher_id || fallback?.id || null
       const teacherName = explicitName || fallback?.name || ''
 
+      let isLocked = Boolean(r.marks_locked)
+      let lockedAt = r.marks_locked_at || null
+      let lockedBy = r.marks_locked_by || null
+      let lockedByName = r.marks_locked_by_name || null
+
+      if (!isLocked) {
+        try {
+          const raw = localStorage.getItem(`leera_class_marks_lock_${r.id}`)
+          if (raw) {
+            const parsed = JSON.parse(raw)
+            if (parsed.is_locked) {
+              isLocked = true
+              lockedAt = parsed.locked_at || null
+              lockedBy = parsed.locked_by || null
+              lockedByName = parsed.locked_by_name || null
+            }
+          }
+        } catch {}
+      }
+
       return {
         id: r.id,
         name: r.name,
         homeroom_teacher_id: teacherId,
-        homeroom_teacher_name: teacherName
+        homeroom_teacher_name: teacherName,
+        marks_locked: isLocked,
+        marks_locked_at: lockedAt,
+        marks_locked_by: lockedBy,
+        marks_locked_by_name: lockedByName
       }
     })
   },
@@ -663,6 +694,14 @@ export const supabaseApi: Api = {
     classId: string,
     input: { subject_id: string; title: string; test_date: string; max_mark: number; examPaperFile?: File | null }
   ): Promise<string> {
+    const lockInfo = await this.getClassMarksLock(classId)
+    if (lockInfo.is_locked) {
+      const profile = await this.getProfile().catch(() => null)
+      if (!isCoordinatorOrLeadership(profile)) {
+        throw new Error('Marks and assessments for this class are locked because reports have been downloaded. Only Curriculum Coordinators can create tests.')
+      }
+    }
+
     const d = db()
     const { examPaperFile, ...testData } = input
     let exam_paper_url: string | null = null
@@ -728,6 +767,16 @@ export const supabaseApi: Api = {
       .single()
     if (fetchErr) throw new Error(fetchErr.message)
 
+    if (testData?.class_id) {
+      const lockInfo = await this.getClassMarksLock(testData.class_id)
+      if (lockInfo.is_locked) {
+        const profile = await this.getProfile().catch(() => null)
+        if (!isCoordinatorOrLeadership(profile)) {
+          throw new Error('Marks and assessments for this class are locked because reports have been downloaded. Only Curriculum Coordinators can edit tests.')
+        }
+      }
+    }
+
     const updatePayload: Record<string, any> = {}
     if (input.title !== undefined) updatePayload.title = input.title.trim()
     if (input.test_date !== undefined) updatePayload.test_date = input.test_date
@@ -768,7 +817,18 @@ export const supabaseApi: Api = {
 
   async deleteUnitTest(id: string): Promise<void> {
     const d = db()
-    const { data: testData } = await d.from('unit_tests').select('exam_paper_path').eq('id', id).maybeSingle()
+    const { data: testData } = await d.from('unit_tests').select('class_id, exam_paper_path').eq('id', id).maybeSingle()
+
+    if (testData?.class_id) {
+      const lockInfo = await this.getClassMarksLock(testData.class_id)
+      if (lockInfo.is_locked) {
+        const profile = await this.getProfile().catch(() => null)
+        if (!isCoordinatorOrLeadership(profile)) {
+          throw new Error('Marks and assessments for this class are locked because reports have been downloaded. Only Curriculum Coordinators can delete tests.')
+        }
+      }
+    }
+
     if (testData?.exam_paper_path) {
       try {
         await d.storage.from('exam-papers').remove([testData.exam_paper_path])
@@ -843,10 +903,145 @@ export const supabaseApi: Api = {
   },
 
   async saveScore(unit_test_id: string, student_id: string, score: number | null): Promise<void> {
+    const { data: testData } = await db()
+      .from('unit_tests')
+      .select('id, class_id')
+      .eq('id', unit_test_id)
+      .maybeSingle()
+
+    const classId = testData?.class_id
+    if (classId) {
+      const lockInfo = await this.getClassMarksLock(classId)
+      if (lockInfo.is_locked) {
+        const profile = await this.getProfile().catch(() => null)
+        if (!isCoordinatorOrLeadership(profile)) {
+          throw new Error('Marks for this class are locked because reports have been downloaded. Only Curriculum Coordinators can make changes.')
+        }
+      }
+    }
+
     const { error } = await db()
       .from('scores')
       .upsert({ unit_test_id, student_id, score }, { onConflict: 'unit_test_id,student_id' })
     if (error) throw new Error(error.message)
+    invalidateTeacherDashboardCache()
+  },
+
+  async getClassMarksLock(classId: string): Promise<ClassMarksLock> {
+    try {
+      const { data, error } = await db()
+        .from('classes')
+        .select('id, marks_locked, marks_locked_at, marks_locked_by, marks_locked_by_name, marks_lock_reason')
+        .eq('id', classId)
+        .maybeSingle()
+
+      if (!error && data && data.marks_locked !== undefined && data.marks_locked !== null) {
+        return {
+          class_id: classId,
+          is_locked: Boolean(data.marks_locked),
+          locked_at: data.marks_locked_at || null,
+          locked_by: data.marks_locked_by || null,
+          locked_by_name: data.marks_locked_by_name || null,
+          reason: data.marks_lock_reason || undefined
+        }
+      }
+    } catch {
+      // Fallback to localStorage
+    }
+
+    try {
+      const raw = localStorage.getItem(`leera_class_marks_lock_${classId}`)
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        return {
+          class_id: classId,
+          is_locked: Boolean(parsed.is_locked),
+          locked_at: parsed.locked_at || null,
+          locked_by: parsed.locked_by || null,
+          locked_by_name: parsed.locked_by_name || null,
+          reason: parsed.reason || undefined
+        }
+      }
+    } catch {}
+
+    return {
+      class_id: classId,
+      is_locked: false,
+      locked_at: null,
+      locked_by: null,
+      locked_by_name: null
+    }
+  },
+
+  async lockClassMarks(classId: string, reason?: string): Promise<void> {
+    const profile = await this.getProfile().catch(() => null)
+    const lockedAt = new Date().toISOString()
+    const lockedBy = profile?.id || null
+    const lockedByName = profile?.full_name || 'Homeroom Teacher'
+    const lockReason = reason || 'Reports downloaded by Homeroom Teacher'
+
+    const lockObj: ClassMarksLock = {
+      class_id: classId,
+      is_locked: true,
+      locked_at: lockedAt,
+      locked_by: lockedBy,
+      locked_by_name: lockedByName,
+      reason: lockReason
+    }
+
+    try {
+      localStorage.setItem(`leera_class_marks_lock_${classId}`, JSON.stringify(lockObj))
+    } catch {}
+
+    try {
+      await db()
+        .from('classes')
+        .update({
+          marks_locked: true,
+          marks_locked_at: lockedAt,
+          marks_locked_by: lockedBy,
+          marks_locked_by_name: lockedByName,
+          marks_lock_reason: lockReason
+        })
+        .eq('id', classId)
+    } catch (err) {
+      console.warn('Supabase lockClassMarks update warning:', err)
+    }
+    invalidateTeacherDashboardCache()
+  },
+
+  async unlockClassMarks(classId: string): Promise<void> {
+    const profile = await this.getProfile().catch(() => null)
+    if (!isCoordinatorOrLeadership(profile)) {
+      throw new Error('Only Curriculum Coordinators or School Leadership can unlock marks.')
+    }
+
+    const unlockObj: ClassMarksLock = {
+      class_id: classId,
+      is_locked: false,
+      locked_at: null,
+      locked_by: null,
+      locked_by_name: null
+    }
+
+    try {
+      localStorage.setItem(`leera_class_marks_lock_${classId}`, JSON.stringify(unlockObj))
+    } catch {}
+
+    try {
+      await db()
+        .from('classes')
+        .update({
+          marks_locked: false,
+          marks_locked_at: null,
+          marks_locked_by: null,
+          marks_locked_by_name: null,
+          marks_lock_reason: null
+        })
+        .eq('id', classId)
+    } catch (err) {
+      console.warn('Supabase unlockClassMarks update warning:', err)
+    }
     invalidateTeacherDashboardCache()
   },
 

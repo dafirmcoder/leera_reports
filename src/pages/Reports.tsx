@@ -3,19 +3,25 @@ import { Link } from 'react-router-dom'
 import { api } from '../lib/api'
 import { DEFAULT_REPORT_START_DATE, filterReportRows, fmtDate, formatRollNo } from '../lib/report'
 import { useSchool } from '../context/SchoolContext'
+import { useAuth } from '../context/AuthContext'
+import { isCoordinatorOrLeadership } from '../lib/permissions'
 import ClassPicker from '../components/ClassPicker'
-import type { ReportFilter, Student, StudentReportRow, UnitTest } from '../lib/types'
+import type { ClassMarksLock, ReportFilter, Student, StudentReportRow, UnitTest } from '../lib/types'
 
 const canSaveToFolder = typeof window !== 'undefined' && 'showDirectoryPicker' in window
 
 export default function Reports() {
   const { selectedClassId, classes, school } = useSchool()
+  const { profile } = useAuth()
   const [students, setStudents] = useState<Student[]>([])
   const [unitTests, setUnitTests] = useState<UnitTest[]>([])
+  const [lockInfo, setLockInfo] = useState<ClassMarksLock | null>(null)
   const [q, setQ] = useState('')
   const [busy, setBusy] = useState(false)
   const [progress, setProgress] = useState('')
   const [error, setError] = useState('')
+
+  const isCoordinator = isCoordinatorOrLeadership(profile)
 
   // Report Test Filter State
   // Default mode is 'since_date' starting on 2026-09-20 (or teacher selected start date)
@@ -28,10 +34,12 @@ export default function Reports() {
     if (!selectedClassId) {
       setStudents([])
       setUnitTests([])
+      setLockInfo(null)
       return
     }
     api.listStudents(selectedClassId).then(setStudents).catch((e) => setError(e.message))
     api.listUnitTests(selectedClassId).then(setUnitTests).catch(() => setUnitTests([]))
+    api.getClassMarksLock(selectedClassId).then(setLockInfo).catch(() => setLockInfo(null))
   }, [selectedClassId])
 
   const cls = classes.find((c) => c.id === selectedClassId)
@@ -113,6 +121,15 @@ export default function Reports() {
         const { saveClassReportsToFolder } = await import('../lib/pdf')
         await saveClassReportsToFolder(opts)
       }
+
+      // Automatically lock marks once reports have been downloaded
+      try {
+        await api.lockClassMarks(selectedClassId, 'Reports downloaded by Homeroom Teacher')
+        const updatedLock = await api.getClassMarksLock(selectedClassId)
+        setLockInfo(updatedLock)
+      } catch (lockErr) {
+        console.warn('Failed to lock class marks after report download:', lockErr)
+      }
     } catch (err: any) {
       setError(err?.message ?? 'Download failed.')
     } finally {
@@ -181,6 +198,94 @@ export default function Reports() {
           <ClassPicker />
         </div>
       </div>
+
+      {/* Marks Lock Banner */}
+      {selectedClassId && lockInfo?.is_locked && (
+        <div
+          style={{
+            background: '#fef2f2',
+            border: '1.5px solid #f87171',
+            borderRadius: '12px',
+            padding: '14px 20px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '16px',
+            flexWrap: 'wrap',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.05)'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <span style={{ fontSize: '24px' }}>🔒</span>
+            <div>
+              <div style={{ fontWeight: 700, color: '#991b1b', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span>Marks Locked for Subject Teachers</span>
+                <span style={{ fontSize: '11px', background: '#fee2e2', color: '#991b1b', padding: '2px 8px', borderRadius: '12px', border: '1px solid #fca5a5' }}>Locked</span>
+              </div>
+              <p style={{ margin: '2px 0 0', fontSize: '12.5px', color: '#7f1d1d' }}>
+                Reports for this class have been downloaded{lockInfo.locked_at ? ` on ${new Date(lockInfo.locked_at).toLocaleDateString()}` : ''}{lockInfo.locked_by_name ? ` by ${lockInfo.locked_by_name}` : ''}. Subject teachers can no longer modify marks for this class.
+              </p>
+            </div>
+          </div>
+
+          {isCoordinator && (
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              style={{
+                borderColor: '#ef4444',
+                color: '#b91c1c',
+                fontWeight: 600,
+                background: '#ffffff',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}
+              onClick={async () => {
+                if (!confirm(`Unlock marks for ${cls?.name || 'this class'}? Subject teachers will be able to edit scores and assessments again.`)) return
+                try {
+                  await api.unlockClassMarks(selectedClassId)
+                  setLockInfo({
+                    class_id: selectedClassId,
+                    is_locked: false,
+                    locked_at: null,
+                    locked_by: null,
+                    locked_by_name: null
+                  })
+                } catch (e: any) {
+                  setError(e.message)
+                }
+              }}
+            >
+              <span>🔓</span>
+              <span>Unlock Marks (Coordinator)</span>
+            </button>
+          )}
+        </div>
+      )}
+
+      {selectedClassId && !lockInfo?.is_locked && isCoordinator && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '-6px' }}>
+          <button
+            type="button"
+            className="btn btn-ghost btn-xs text-muted"
+            style={{ fontSize: '12px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+            onClick={async () => {
+              if (!confirm(`Lock marks for ${cls?.name || 'this class'} now? Subject teachers will not be able to edit scores until unlocked.`)) return
+              try {
+                await api.lockClassMarks(selectedClassId, 'Manually locked by Curriculum Coordinator')
+                const updated = await api.getClassMarksLock(selectedClassId)
+                setLockInfo(updated)
+              } catch (e: any) {
+                setError(e.message)
+              }
+            }}
+          >
+            <span>🔒</span>
+            <span>Manually Lock Marks</span>
+          </button>
+        </div>
+      )}
 
       {/* Test Filter Panel: allows homeroom teachers to select which tests are included */}
       {selectedClassId && (

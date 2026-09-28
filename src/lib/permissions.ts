@@ -21,6 +21,19 @@ export type Capability =
   | 'reallocateStudents' // coordinators + HOS can reallocate a student to another class without altering details
   | 'viewPlanning'       // academic roles + director (admin is excluded)
   | 'manageCurriculum'   // upload syllabus PDFs and seed schemes (HOS + coordinator)
+  | 'manageMarksLock'    // coordinators, HOS, and admin can lock/unlock marks
+
+export function isCoordinatorOrLeadership(
+  profile?: { id?: string; role?: Role; additional_roles?: Role[] } | null
+): boolean {
+  if (!profile) return false
+  const roles = new Set<Role>(profile.role ? [profile.role, ...(profile.additional_roles || [])] : [])
+  return (
+    roles.has('curriculum_coordinator') ||
+    roles.has('head_of_school') ||
+    roles.has('admin')
+  )
+}
 
 export function hasRole(role: Role | undefined, requiredRole: Role, additionalRoles: Role[] = []): boolean {
   return role === requiredRole || additionalRoles.includes(requiredRole)
@@ -87,6 +100,8 @@ export function can(role: Role | undefined, cap: Capability, additionalRoles: Ro
       return !roles.has('admin') && (roles.has('director') || roles.has('head_of_school') || roles.has('curriculum_coordinator') || roles.has('homeroom_teacher') || roles.has('subject_teacher'))
     case 'manageCurriculum':
       return roles.has('head_of_school') || roles.has('curriculum_coordinator')
+    case 'manageMarksLock':
+      return roles.has('curriculum_coordinator') || roles.has('head_of_school') || roles.has('admin')
     default:
       return false
   }

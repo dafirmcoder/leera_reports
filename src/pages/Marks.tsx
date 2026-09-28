@@ -4,10 +4,10 @@ import { api } from '../lib/api'
 import { fmtDate } from '../lib/report'
 import { useSchool } from '../context/SchoolContext'
 import { useAuth } from '../context/AuthContext'
-import { can, hasRole } from '../lib/permissions'
+import { can, hasRole, isCoordinatorOrLeadership } from '../lib/permissions'
 import ClassPicker from '../components/ClassPicker'
 import CoordinatorMarksOverview from '../components/CoordinatorMarksOverview'
-import type { Assignment, UnitTest } from '../lib/types'
+import type { Assignment, ClassMarksLock, UnitTest } from '../lib/types'
 
 export default function Marks() {
   const navigate = useNavigate()
@@ -16,6 +16,7 @@ export default function Marks() {
   const { profile } = useAuth()
   const [tests, setTests] = useState<UnitTest[]>([])
   const [assignments, setAssignments] = useState<Assignment[]>([])
+  const [lockInfo, setLockInfo] = useState<ClassMarksLock | null>(null)
   const [selectedSubjectId, setSelectedSubjectId] = useState<string>('')
   const [downloadingSubjectId, setDownloadingSubjectId] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(false)
@@ -68,32 +69,46 @@ export default function Marks() {
   const className = classes.find((c) => c.id === selectedClassId)?.name ?? ''
 
   const reload = () => {
-    if (!selectedClassId) return
+    if (!selectedClassId) {
+      setTests([])
+      setAssignments([])
+      setLockInfo(null)
+      return
+    }
     api.listUnitTests(selectedClassId).then(setTests).catch((e) => setError(e.message))
     api.listAssignments(selectedClassId).then(setAssignments).catch(() => {})
+    api.getClassMarksLock(selectedClassId).then(setLockInfo).catch(() => setLockInfo(null))
   }
 
   useEffect(reload, [selectedClassId])
 
+  const isCoordinatorLead = isCoordinatorOrLeadership(profile)
+  const isClassLocked = Boolean(lockInfo?.is_locked)
+  const canModifyAssessments = !isClassLocked || isCoordinatorLead
+
   const isLeadership = hasRole(profile?.role, 'head_of_school', profile?.additional_roles)
     || hasRole(profile?.role, 'curriculum_coordinator', profile?.additional_roles)
+    || hasRole(profile?.role, 'admin', profile?.additional_roles)
   const isHomeroom = hasRole(profile?.role, 'homeroom_teacher', profile?.additional_roles)
   const isOwnClass = isHomeroom && !!profile?.class_id && profile.class_id === selectedClassId
   const myAssignments = assignments.filter((a) => a.teacher_id === profile?.id)
   const mySubjects = isOwnClass || isLeadership
     ? subjects
     : subjects.filter((s) => myAssignments.some((a) => a.subject_id === s.id))
-  const canAdd = roleCanAdd && (
+
+  const canAdd = roleCanAdd && canModifyAssessments && (
     isLeadership
     || isOwnClass
     || mySubjects.length > 0
   )
 
-  const canEditTest = (test: UnitTest) => isLeadership
+  const canEditTest = (test: UnitTest) => canModifyAssessments && (
+    isLeadership
     || (isOwnClass && test.class_id === profile?.class_id)
     || myAssignments.some((a) => a.class_id === test.class_id && a.subject_id === test.subject_id)
     || test.created_by === profile?.id
-  const canDeleteTest = can(profile?.role, 'deleteTests', profile?.additional_roles)
+  )
+  const canDeleteTest = canModifyAssessments && can(profile?.role, 'deleteTests', profile?.additional_roles)
 
   const startEditing = (t: UnitTest) => {
     setEditingTest(t)
@@ -113,6 +128,10 @@ export default function Marks() {
 
   const submitEdit = async (e: FormEvent) => {
     e.preventDefault()
+    if (isClassLocked && !isCoordinatorLead) {
+      setError('Marks and assessments for this class are locked because reports have been downloaded. Only Curriculum Coordinators can edit tests.')
+      return
+    }
     if (!editingTest || !editForm.title.trim()) {
       setError('Unit / Topic name cannot be empty.')
       return
@@ -203,6 +222,10 @@ export default function Marks() {
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
+    if (isClassLocked && !isCoordinatorLead) {
+      setError('Marks and assessments for this class are locked because reports have been downloaded. Only Curriculum Coordinators can create tests.')
+      return
+    }
     if (!selectedClassId || !form.subject_id || !form.title.trim()) {
       setError('Choose a subject and enter a unit/topic.')
       return
@@ -234,6 +257,10 @@ export default function Marks() {
   }
 
   const remove = async (t: UnitTest) => {
+    if (isClassLocked && !isCoordinatorLead) {
+      setError('Marks and assessments for this class are locked because reports have been downloaded. Only Curriculum Coordinators can delete tests.')
+      return
+    }
     if (!canDeleteTest) {
       setError('Only coordinators and leadership can delete a unit test.')
       return
@@ -387,6 +414,59 @@ export default function Marks() {
           )}
         </div>
       </div>
+
+      {/* Marks Lock Notification */}
+      {selectedClassId && lockInfo?.is_locked && (
+        <div
+          style={{
+            background: isCoordinatorLead ? '#eff6ff' : '#fff1f2',
+            border: `1.5px solid ${isCoordinatorLead ? '#93c5fd' : '#fda4af'}`,
+            borderRadius: '12px',
+            padding: '14px 18px',
+            marginBottom: '16px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: '12px',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.05)'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <span style={{ fontSize: '24px' }}>🔒</span>
+            <div>
+              <div style={{ fontWeight: 700, color: isCoordinatorLead ? '#1e40af' : '#9f1239', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span>Marks & Assessments Locked for Subject Teachers</span>
+                <span style={{ fontSize: '11px', background: isCoordinatorLead ? '#dbeafe' : '#ffe4e6', color: isCoordinatorLead ? '#1e40af' : '#9f1239', padding: '1px 8px', borderRadius: '10px' }}>
+                  {isCoordinatorLead ? 'Coordinator Access' : 'Locked'}
+                </span>
+              </div>
+              <p style={{ margin: '2px 0 0', fontSize: '12.5px', color: isCoordinatorLead ? '#1e3a8a' : '#881337' }}>
+                Reports for {className || 'this class'} have been downloaded{lockInfo.locked_at ? ` on ${new Date(lockInfo.locked_at).toLocaleDateString()}` : ''}{lockInfo.locked_by_name ? ` by ${lockInfo.locked_by_name}` : ''}. Subject teachers can no longer create or edit tests and marks.
+              </p>
+            </div>
+          </div>
+          {isCoordinatorLead && (
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              style={{ borderColor: '#3b82f6', color: '#1d4ed8', fontWeight: 600, background: '#ffffff', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+              onClick={async () => {
+                if (!confirm(`Unlock marks and assessments for ${className || 'this class'}? Subject teachers will be able to edit scores and tests again.`)) return
+                try {
+                  await api.unlockClassMarks(selectedClassId)
+                  reload()
+                } catch (e: any) {
+                  setError(e.message)
+                }
+              }}
+            >
+              <span>🔓</span>
+              <span>Unlock Class Marks</span>
+            </button>
+          )}
+        </div>
+      )}
 
       <div className="row" style={{ alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
         <div className="row" style={{ alignItems: 'center', gap: 8 }}>

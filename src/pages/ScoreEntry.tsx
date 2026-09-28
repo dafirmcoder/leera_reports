@@ -4,8 +4,8 @@ import { api } from '../lib/api'
 import { fmtDate } from '../lib/report'
 import { useAuth } from '../context/AuthContext'
 import { useSchool } from '../context/SchoolContext'
-import { hasRole } from '../lib/permissions'
-import type { ScoreRow, Student, UnitTest } from '../lib/types'
+import { hasRole, isCoordinatorOrLeadership } from '../lib/permissions'
+import type { ClassMarksLock, ScoreRow, Student, UnitTest } from '../lib/types'
 
 export default function ScoreEntry() {
   const { classId, testId } = useParams<{ classId: string; testId: string }>()
@@ -15,6 +15,7 @@ export default function ScoreEntry() {
   const { school, classes } = useSchool()
   const [test, setTest] = useState<UnitTest | null>(null)
   const [rows, setRows] = useState<ScoreRow[]>([])
+  const [lockInfo, setLockInfo] = useState<ClassMarksLock | null>(null)
   const [error, setError] = useState('')
   const [canEdit, setCanEdit] = useState(false)
   const [downloading, setDownloading] = useState(false)
@@ -30,6 +31,7 @@ export default function ScoreEntry() {
   const isHeadOfSchool = hasRole(profile?.role, 'head_of_school', profile?.additional_roles)
   const isCoordinator = hasRole(profile?.role, 'curriculum_coordinator', profile?.additional_roles)
   const isLeadership = isDirector || isHeadOfSchool || isCoordinator
+  const isCoordinatorLead = isCoordinatorOrLeadership(profile)
 
   // Determine active view mode: 'marksheet' (read-only table) vs 'entry' (score input boxes)
   const [activeTab, setActiveTab] = useState<'marksheet' | 'entry'>(() => {
@@ -57,13 +59,22 @@ export default function ScoreEntry() {
         const selected = ts.find((t) => t.id === testId) ?? null
         setTest(selected)
         if (!selected || !profile) return
+
+        const lock = await api.getClassMarksLock(classId).catch(() => null)
+        setLockInfo(lock)
+
+        const isLead = isCoordinatorOrLeadership(profile)
         const isHomeroomOfClass = hasRole(profile.role, 'homeroom_teacher', profile.additional_roles) && profile.class_id === classId
-        const isLead = hasRole(profile.role, 'curriculum_coordinator', profile.additional_roles)
-          || hasRole(profile.role, 'head_of_school', profile.additional_roles)
         const assignments = await api.listAssignments(classId).catch(() => [])
         const isAssignedSubjectTeacher = assignments.some((a) => a.teacher_id === profile.id && a.subject_id === selected.subject_id)
 
-        setCanEdit(!isDirector && (isHomeroomOfClass || isAssignedSubjectTeacher || selected.created_by === profile.id || isLead))
+        const isLockedForSubjectTeacher = Boolean(lock?.is_locked && !isLead)
+
+        setCanEdit(
+          !isDirector &&
+          !isLockedForSubjectTeacher &&
+          (isHomeroomOfClass || isAssignedSubjectTeacher || selected.created_by === profile.id || isLead)
+        )
       }).catch(() => {})
     }
   }, [testId, classId, profile, isDirector])
@@ -111,6 +122,10 @@ export default function ScoreEntry() {
 
   const setScore = (studentId: string, value: string) => {
     if (!canEdit || isDirector) return
+    if (lockInfo?.is_locked && !isCoordinatorLead) {
+      setError('Marks for this class are locked because reports have been downloaded. Only Curriculum Coordinators can make changes.')
+      return
+    }
     const raw = value.trim()
     const score = raw === '' ? null : Math.max(0, Math.min(Number(raw) || 0, maxMark))
     setRows((prev) => prev.map((r) => (r.student_id === studentId ? { ...r, score } : r)))
@@ -233,6 +248,84 @@ export default function ScoreEntry() {
       </div>
 
       {error && <div className="notice notice-error">{error}</div>}
+
+      {/* Marks Lock Banners */}
+      {lockInfo?.is_locked && !isCoordinatorLead && (
+        <div
+          style={{
+            background: '#fff1f2',
+            border: '1.5px solid #fda4af',
+            borderRadius: '10px',
+            padding: '12px 16px',
+            marginBottom: '16px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
+            boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
+          }}
+        >
+          <span style={{ fontSize: '24px' }}>🔒</span>
+          <div>
+            <div style={{ fontWeight: 700, color: '#9f1239', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span>Marks Locked (Read-Only)</span>
+              <span style={{ fontSize: '11px', background: '#ffe4e6', color: '#9f1239', padding: '1px 6px', borderRadius: '10px' }}>Reports Generated</span>
+            </div>
+            <div style={{ fontSize: '12.5px', color: '#881337', marginTop: '2px' }}>
+              The homeroom teacher has downloaded reports for this class. Subject marks are locked and cannot be edited by subject teachers. If a mark change is needed, please ask the Curriculum Coordinator to unlock this class.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {lockInfo?.is_locked && isCoordinatorLead && (
+        <div
+          style={{
+            background: '#eff6ff',
+            border: '1.5px solid #93c5fd',
+            borderRadius: '10px',
+            padding: '12px 16px',
+            marginBottom: '16px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: '12px',
+            boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <span style={{ fontSize: '22px' }}>🔒</span>
+            <div>
+              <div style={{ fontWeight: 700, color: '#1e40af', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span>Marks Locked for Subject Teachers</span>
+                <span style={{ fontSize: '11px', background: '#dbeafe', color: '#1e40af', padding: '1px 6px', borderRadius: '10px' }}>Coordinator Override Active</span>
+              </div>
+              <div style={{ fontSize: '12px', color: '#1e3a8a', marginTop: '2px' }}>
+                Reports were downloaded{lockInfo.locked_at ? ` on ${new Date(lockInfo.locked_at).toLocaleDateString()}` : ''}{lockInfo.locked_by_name ? ` by ${lockInfo.locked_by_name}` : ''}. You have coordinator privileges to edit scores or unlock the class for teachers.
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            style={{ borderColor: '#3b82f6', color: '#1d4ed8', fontWeight: 600, background: '#ffffff', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+            onClick={async () => {
+              if (!confirm('Unlock marks for this class? Subject teachers will be able to edit scores again.')) return
+              try {
+                await api.unlockClassMarks(classId!)
+                const updated = await api.getClassMarksLock(classId!)
+                setLockInfo(updated)
+                setCanEdit(true)
+              } catch (e: any) {
+                setError(e.message)
+              }
+            }}
+          >
+            <span>🔓</span>
+            <span>Unlock Class Marks</span>
+          </button>
+        </div>
+      )}
 
       {/* Tab Switch: allowed for teachers and coordinators who have edit permissions */}
       {canEdit && !isDirector && (
@@ -398,7 +491,13 @@ export default function ScoreEntry() {
               )}
             </tbody>
           </table>
-          <p className="muted">{canEdit ? 'Scores save automatically as you type.' : 'Read-only score sheet. You can edit scores only for an assigned class subject.'}</p>
+          <p className="muted">
+            {canEdit
+              ? 'Scores save automatically as you type.'
+              : lockInfo?.is_locked
+              ? '🔒 Scores locked: The homeroom teacher has downloaded reports for this class. Only Curriculum Coordinators can make changes.'
+              : 'Read-only score sheet. You can edit scores only for an assigned class subject.'}
+          </p>
         </div>
       )}
     </div>
