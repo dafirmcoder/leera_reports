@@ -5,6 +5,7 @@ import { useAuth } from '../../context/AuthContext'
 import { useSchool } from '../../context/SchoolContext'
 import type { TeacherDashboardData } from '../../lib/types'
 import LeeraLoader from '../LeeraLoader'
+import LessonPlanComplianceCard from './LessonPlanComplianceCard'
 
 export default function SubjectTeacherDashboard() {
   const { profile } = useAuth()
@@ -243,6 +244,9 @@ export default function SubjectTeacherDashboard() {
             Student score average across tests
           </p>
         </div>
+
+        {/* Lesson Plan Compliance */}
+        <LessonPlanComplianceCard teacherId={profile?.id} title="Lesson Plan Compliance" />
       </div>
 
       {/* Quick Action Shortcuts */}

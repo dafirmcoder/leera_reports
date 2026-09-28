@@ -12,6 +12,7 @@ export default function People() {
   const { classes } = useSchool()
   const [people, setPeople] = useState<Profile[]>([])
   const [invite, setInvite] = useState({ email: '', full_name: '', role: 'subject_teacher' as Role, class_id: '' })
+  const [search, setSearch] = useState('')
   const [error, setError] = useState('')
   const [info, setInfo] = useState('')
   const [busy, setBusy] = useState(false)
@@ -24,6 +25,24 @@ export default function People() {
   }
 
   useEffect(reload, [])
+
+  const resetPassword = async (p: Profile) => {
+    const targetName = p.full_name || p.email || 'this user'
+    if (!confirm(`Are you sure you want to reset the password for ${targetName} back to default (00123456)?\n\nThe user will be able to log in immediately with PIN: 00123456.`)) {
+      return
+    }
+    setError('')
+    setInfo('')
+    setBusy(true)
+    try {
+      const msg = await api.resetUserPassword(p.id)
+      setInfo(msg || `Password for ${targetName} has been reset to default (00123456).`)
+    } catch (err: any) {
+      setError(err?.message || 'Failed to reset password.')
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const changeRole = async (p: Profile, role: Role, classId: string | null) => {
     try {
@@ -121,57 +140,128 @@ export default function People() {
       {error && <div className="notice notice-error">{error}</div>}
       {info && <div className="notice notice-ok">{info}</div>}
 
-      <div className="card">
+      {/* Search & Overview Bar */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, gap: 12, flexWrap: 'wrap' }}>
+        <input
+          type="search"
+          placeholder="🔍 Search staff by name, email, or role..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          style={{ maxWidth: 360, width: '100%', padding: '8px 12px', fontSize: 13, borderRadius: 8, border: '1px solid #cbd5e1' }}
+        />
+        <div style={{ fontSize: 12, color: '#64748b' }}>
+          Default PIN: <strong style={{ color: '#0f172a' }}>00123456</strong> · {people.length} total staff
+        </div>
+      </div>
+
+      <div className="card" style={{ overflowX: 'auto' }}>
         <table className="table">
           <thead>
-            <tr><th>Name</th><th>Email</th><th>Role</th><th>Class</th>{canInvite && <th className="right">Actions</th>}</tr>
+            <tr>
+              <th>Name</th>
+              <th>Email</th>
+              <th>Role</th>
+              <th>Class</th>
+              {canManage && <th className="right">Actions</th>}
+            </tr>
           </thead>
           <tbody>
-            {people.map((p) => {
-              const isSelf = p.id === profile?.id
-              return (
-                <tr key={p.id}>
-                  <td>{p.full_name || '—'}{isSelf && <span className="muted"> (you)</span>}</td>
-                  <td className="mono">{p.email || '—'}</td>
-                  <td>
-                    {canManage && !isSelf ? (
-                      <select
-                        className="role-select"
-                        value={p.role}
-                        onChange={(e) => changeRole(p, e.target.value as Role, p.role === 'homeroom_teacher' ? p.class_id : null)}
-                      >
-                        {ROLES.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
-                      </select>
-                    ) : (
-                      ROLE_LABEL[p.role]
+            {people
+              .filter((p) => {
+                if (!search.trim()) return true
+                const q = search.toLowerCase()
+                return (
+                  (p.full_name && p.full_name.toLowerCase().includes(q)) ||
+                  (p.email && p.email.toLowerCase().includes(q)) ||
+                  (p.role && ROLE_LABEL[p.role]?.toLowerCase().includes(q))
+                )
+              })
+              .map((p) => {
+                const isSelf = p.id === profile?.id
+                return (
+                  <tr key={p.id}>
+                    <td>
+                      <strong>{p.full_name || '—'}</strong>
+                      {isSelf && <span className="muted"> (you)</span>}
+                    </td>
+                    <td className="mono" style={{ fontSize: 12 }}>{p.email || '—'}</td>
+                    <td>
+                      {canManage && !isSelf ? (
+                        <select
+                          className="role-select"
+                          value={p.role}
+                          onChange={(e) => changeRole(p, e.target.value as Role, p.role === 'homeroom_teacher' ? p.class_id : null)}
+                        >
+                          {ROLES.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
+                        </select>
+                      ) : (
+                        ROLE_LABEL[p.role]
+                      )}
+                    </td>
+                    <td>
+                      {canManage && p.role === 'homeroom_teacher' ? (
+                        <select
+                          value={p.class_id ?? ''}
+                          onChange={(e) => changeRole(p, 'homeroom_teacher', e.target.value || null)}
+                        >
+                          <option value="">—</option>
+                          {classes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                        </select>
+                      ) : (
+                        classes.find((c) => c.id === p.class_id)?.name ?? '—'
+                      )}
+                    </td>
+                    {canManage && (
+                      <td className="right" style={{ whiteSpace: 'nowrap' }}>
+                        <div style={{ display: 'inline-flex', gap: '6px', alignItems: 'center', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                          {p.role === 'homeroom_teacher' && !isSelf && (
+                            <label className="check" style={{ marginRight: 4, fontSize: 11 }}>
+                              <input
+                                type="checkbox"
+                                checked={p.additional_roles.includes('curriculum_coordinator')}
+                                onChange={(e) => toggleCoordinator(p, e.target.checked)}
+                              /> Coordinator
+                            </label>
+                          )}
+
+                          {/* Reset Password to default PIN */}
+                          {!isSelf && (
+                            <button
+                              type="button"
+                              className="btn btn-small"
+                              style={{
+                                background: '#fffbeb',
+                                borderColor: '#f59e0b',
+                                color: '#b45309',
+                                fontWeight: 700,
+                                fontSize: '11px',
+                                padding: '3px 8px'
+                              }}
+                              disabled={busy}
+                              onClick={() => resetPassword(p)}
+                              title="Reset password back to default PIN (00123456)"
+                            >
+                              🔑 Reset PIN
+                            </button>
+                          )}
+
+                          {canInvite && (p.role === 'homeroom_teacher' || p.role === 'subject_teacher') && !isSelf && (
+                            <button
+                              type="button"
+                              className="btn btn-small btn-danger"
+                              style={{ fontSize: '11px', padding: '3px 8px' }}
+                              disabled={busy}
+                              onClick={() => deleteTeacher(p)}
+                            >
+                              Delete
+                            </button>
+                          )}
+                        </div>
+                      </td>
                     )}
-                  </td>
-                  <td>
-                    {canManage && p.role === 'homeroom_teacher' ? (
-                      <select
-                        value={p.class_id ?? ''}
-                        onChange={(e) => changeRole(p, 'homeroom_teacher', e.target.value || null)}
-                      >
-                        <option value="">—</option>
-                        {classes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                      </select>
-                    ) : (
-                      classes.find((c) => c.id === p.class_id)?.name ?? '—'
-                    )}
-                  </td>
-                  {canInvite && <td className="right">
-                    {canManage && p.role === 'homeroom_teacher' && !isSelf && (
-                      <label className="check"><input type="checkbox" checked={p.additional_roles.includes('curriculum_coordinator')} onChange={(e) => toggleCoordinator(p, e.target.checked)} /> Coordinator</label>
-                    )}
-                    {(p.role === 'homeroom_teacher' || p.role === 'subject_teacher') && !isSelf && (
-                      <button className="btn btn-small btn-danger" disabled={busy} onClick={() => deleteTeacher(p)}>
-                        Delete teacher
-                      </button>
-                    )}
-                  </td>}
-                </tr>
-              )
-            })}
+                  </tr>
+                )
+              })}
           </tbody>
         </table>
       </div>

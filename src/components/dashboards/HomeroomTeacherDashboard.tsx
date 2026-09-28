@@ -5,6 +5,7 @@ import { useAuth } from '../../context/AuthContext'
 import { useSchool } from '../../context/SchoolContext'
 import type { TeacherDashboardData } from '../../lib/types'
 import LeeraLoader from '../LeeraLoader'
+import LessonPlanComplianceCard from './LessonPlanComplianceCard'
 
 export default function HomeroomTeacherDashboard() {
   const { profile } = useAuth()
@@ -286,6 +287,9 @@ export default function HomeroomTeacherDashboard() {
             Generate Report Cards →
           </Link>
         </div>
+
+        {/* Lesson Plan Compliance */}
+        <LessonPlanComplianceCard teacherId={profile?.id} classId={profile?.class_id} title="Lesson Plan Compliance" />
       </div>
 
       {/* Homeroom Tabulated Scoresheet Callout Banner */}

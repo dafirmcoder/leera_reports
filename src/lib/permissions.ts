@@ -53,7 +53,7 @@ export function can(role: Role | undefined, cap: Capability, additionalRoles: Ro
   const roles = new Set<Role>(role ? [role, ...additionalRoles] : [])
   switch (cap) {
     case 'manageUsers':
-      return roles.has('head_of_school') || roles.has('curriculum_coordinator')
+      return roles.has('head_of_school') || roles.has('curriculum_coordinator') || roles.has('admin') || roles.has('director')
     case 'createAccounts':
     case 'editSchool':
     case 'manageClasses':

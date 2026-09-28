@@ -92,6 +92,47 @@ function parseLocalDate(str: string): Date {
   return new Date(parts[0] || new Date().getFullYear(), (parts[1] || 1) - 1, parts[2] || 1)
 }
 
+// ---------------------------------------------------------------------------
+// Subject Name Harmonization
+// ---------------------------------------------------------------------------
+// Alias groups: each array contains all acceptable names for the same subject.
+// When two uploads use names from the same group they map to the same curriculum
+// scheme instead of creating separate duplicates.
+const SUBJECT_ALIAS_GROUPS: string[][] = [
+  ['computing', 'computer science', 'ict', 'information and communication technology', 'information technology', 'it'],
+  ['mathematics', 'maths', 'math'],
+  ['english', 'english language', 'english literature'],
+  ['science', 'integrated science'],
+  ['biology'],
+  ['chemistry'],
+  ['physics'],
+  ['global perspectives', 'global perspective', 'gp'],
+  ['business studies', 'business'],
+  ['economics'],
+]
+
+/**
+ * Returns a canonical key for a subject name so that variant names
+ * (e.g. "ICT" vs "Computing" vs "Computer Science") resolve to the same key.
+ */
+function normalizeSubjectName(name: string): string {
+  const lower = (name || '').toLowerCase().trim()
+  for (const group of SUBJECT_ALIAS_GROUPS) {
+    if (group.some((alias) => lower.includes(alias) || alias.includes(lower))) {
+      return group[0] // canonical key is the first alias in the group
+    }
+  }
+  return lower
+}
+
+/**
+ * Returns true when two subject names should be treated as the same subject
+ * (i.e. they belong to the same alias group).
+ */
+function subjectNamesMatch(a: string, b: string): boolean {
+  return normalizeSubjectName(a) === normalizeSubjectName(b)
+}
+
 export const supabaseApi: Api = {
   async getProfile(): Promise<Profile | null> {
     const id = await uid()
@@ -269,6 +310,48 @@ export const supabaseApi: Api = {
     })
     const json = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(json.error ?? 'Teacher deletion failed')
+  },
+
+  async resetUserPassword(userId: string): Promise<string> {
+    const { data: { session } } = await supabase!.auth.getSession()
+    const token = session?.access_token
+    if (!token) throw new Error('Not signed in')
+    const url = import.meta.env.VITE_SUPABASE_URL as string
+
+    // 1. Attempt via Edge Function
+    try {
+      const res = await fetch(`${url}/functions/v1/invite-user`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ action: 'reset_password', user_id: userId })
+      })
+      const json = await res.json().catch(() => ({}))
+      if (res.ok) {
+        return json.message || 'Password has been reset to default (00123456).'
+      }
+      console.warn('invite-user edge function response:', json)
+    } catch (edgeErr) {
+      console.warn('invite-user edge function reset error, trying RPC:', edgeErr)
+    }
+
+    // 2. Fallback via database RPC
+    try {
+      const { data: rpcData, error: rpcErr } = await db().rpc('reset_user_password_to_default', {
+        target_user_id: userId
+      })
+      if (!rpcErr && rpcData) {
+        return (rpcData as any).message || 'Password has been reset to default (00123456).'
+      }
+      if (rpcErr) throw rpcErr
+    } catch (rpcErr: any) {
+      console.error('reset_user_password_to_default RPC error:', rpcErr)
+      throw new Error(rpcErr.message || 'Password reset failed. Please ensure edge function or RPC is deployed.')
+    }
+
+    return 'Password has been reset to default (00123456).'
   },
 
   async nextAdmissionNo(classId?: string): Promise<string> {
@@ -632,6 +715,7 @@ export const supabaseApi: Api = {
       )
       if (ierr) throw new Error(ierr.message)
     }
+    invalidateTeacherDashboardCache()
     return testId
   },
 
@@ -678,6 +762,7 @@ export const supabaseApi: Api = {
     if (Object.keys(updatePayload).length > 0) {
       const { error: updateErr } = await d.from('unit_tests').update(updatePayload).eq('id', id)
       if (updateErr) throw new Error(updateErr.message)
+      invalidateTeacherDashboardCache()
     }
   },
 
@@ -1096,12 +1181,16 @@ export const supabaseApi: Api = {
       const highest = hasMarks ? Math.max(...enteredMarks) : null
       const lowest = hasMarks ? Math.min(...enteredMarks) : null
       const creator = profiles.find((pr) => pr.id === t.created_by)
+      const creatorIsCoordOrLead = creator?.role === 'curriculum_coordinator' || creator?.role === 'director' || creator?.role === 'admin' || creator?.role === 'head_of_school'
       const assignedTeacherId = assignmentIdMap.get(`${t.class_id}_${t.subject_id}`)
       const assignedTeacherName = assignmentMap.get(`${t.class_id}_${t.subject_id}`)
-      const teacherId = assignedTeacherId || t.created_by || classHomeroomIdMap.get(t.class_id)
+      const homeroomTeacherId = classHomeroomIdMap.get(t.class_id)
+      const homeroomTeacherName = classHomeroomMap.get(t.class_id)
+
+      const teacherId = assignedTeacherId || homeroomTeacherId || (!creatorIsCoordOrLead ? t.created_by : undefined)
       const teacherName = assignedTeacherName
-        || (creator?.full_name ? creator.full_name : null)
-        || classHomeroomMap.get(t.class_id)
+        || homeroomTeacherName
+        || (!creatorIsCoordOrLead && creator?.full_name ? creator.full_name : null)
         || 'Unassigned'
 
       return {
@@ -1223,13 +1312,27 @@ export const supabaseApi: Api = {
       }
 
       const teacherTests = all_tests.filter((t) => {
-        if (t.created_by === p.id) return true
-        if (t.teacher_id === p.id) return true
         const key = `${t.class_id}_${t.subject_id}`
         const assignedTeacherId = assignmentIdMap.get(key)
-        if (assignedTeacherId) return assignedTeacherId === p.id
+        // 1. If this subject has an assigned teacher in class_subject_teachers,
+        // the test strictly belongs to the assigned teacher (NOT the coordinator who created it)
+        if (assignedTeacherId) {
+          return assignedTeacherId === p.id
+        }
+        // 2. Direct teacher_id match
+        if (t.teacher_id) {
+          return t.teacher_id === p.id
+        }
+        // 3. Class homeroom teacher fallback
         const hrId = classHomeroomIdMap.get(t.class_id)
-        if (hrId) return hrId === p.id
+        if (hrId) {
+          return hrId === p.id
+        }
+        // 4. Fallback to creator only if unassigned and creator is an ordinary teacher (not coordinator/leadership)
+        const isCoordOrLead = p.role === 'curriculum_coordinator' || p.role === 'director' || p.role === 'admin' || p.role === 'head_of_school'
+        if (!isCoordOrLead && t.created_by === p.id) {
+          return true
+        }
         return t.teacher_name === teacherName
       })
 
@@ -1321,7 +1424,6 @@ export const supabaseApi: Api = {
     const [
       classes,
       assignmentsRes,
-      createdTestsRes,
       studentsCountRes
     ] = await Promise.all([
       this.listClasses(),
@@ -1329,10 +1431,6 @@ export const supabaseApi: Api = {
         .from('class_subject_teachers')
         .select('id, class_id, subject_id, classes(name), subjects(name)')
         .eq('teacher_id', teacherId),
-      db()
-        .from('unit_tests')
-        .select('id, class_id, subject_id, classes(name), subjects(name)')
-        .eq('created_by', teacherId),
       db().from('students').select('class_id')
     ])
 
@@ -1344,7 +1442,7 @@ export const supabaseApi: Api = {
       hrClass = classes.find((c) => c.homeroom_teacher_id === teacherId)
     }
 
-    // Build assignment pairs
+    // Build assignment pairs: ONLY subjects officially assigned to this teacher in class_subject_teachers
     const assignedPairs = (assignmentsRes.data ?? [])
       .filter((a: any) => a.subjects?.name && !a.subjects.name.toLowerCase().includes('unknown'))
       .map((a: any) => ({
@@ -1354,20 +1452,6 @@ export const supabaseApi: Api = {
         subject_id: a.subject_id,
         subject_name: a.subjects.name
       }))
-
-    for (const ct of (createdTestsRes.data ?? []) as any[]) {
-      const sName = ct.subjects?.name
-      if (!sName || sName.toLowerCase().includes('unknown')) continue
-      if (!assignedPairs.some((p) => p.class_id === ct.class_id && p.subject_id === ct.subject_id)) {
-        assignedPairs.push({
-          id: `${ct.class_id}_${ct.subject_id}`,
-          class_id: ct.class_id,
-          class_name: ct.classes?.name || 'Class',
-          subject_id: ct.subject_id,
-          subject_name: sName
-        })
-      }
-    }
 
     // Map student counts per class in memory
     const studentsPerClassMap = new Map<string, number>()
@@ -1670,6 +1754,17 @@ export const supabaseApi: Api = {
   // PLANNING & CURRICULUM IMPLEMENTATION
   // ----------------------------------------------------------------
 
+  // ---------------------------------------------------------------------------
+  // Subject Harmonization Helpers
+  // ---------------------------------------------------------------------------
+  // Normalises a subject name to a canonical token for fuzzy matching across
+  // workplans, syllabi, and timetable entries.  For example, "ICT", "Computing",
+  // and "Computer Science" all reduce to a common token so that a workplan and a
+  // separately-uploaded syllabus for the same subject are merged into a single
+  // curriculum scheme rather than creating duplicates.
+  //
+  // Subject alias groups – any name in a group maps to the group's canonical key.
+
   async listCurriculumSchemes(framework?: string): Promise<CurriculumScheme[]> {
     try {
       let q = db().from('curriculum_schemes').select('*').eq('is_active', true)
@@ -1752,13 +1847,32 @@ export const supabaseApi: Api = {
         const found = matchedSchemes.find((s: any) => s.year_group === input.year_group) || matchedSchemes[0]
         schemeId = found.id
       } else {
-        const { data: newScheme, error: sErr } = await db()
-          .from('curriculum_schemes')
-          .insert(schemePayload)
-          .select()
-          .single()
-        if (!sErr && newScheme) {
-          schemeId = newScheme.id
+        // 1b. Harmonization fallback: try to find an existing scheme by normalised subject name.
+        //     This handles cases where a workplan was imported with "Computing" code=0860 and
+        //     now a syllabus for "ICT" (no code) is being saved – they should share one scheme.
+        const { data: allSchemes } = await db().from('curriculum_schemes').select('*').eq('is_active', true)
+        if (allSchemes && allSchemes.length > 0) {
+          const nameMatch = allSchemes.find((s: any) => subjectNamesMatch(s.subject_name, input.subject_name))
+          if (nameMatch) {
+            schemeId = nameMatch.id
+            // If the matched scheme lacks a subject_code but this upload has one, back-fill it
+            if ((!nameMatch.subject_code || nameMatch.subject_code === '') && input.subject_code) {
+              await db().from('curriculum_schemes')
+                .update({ subject_code: input.subject_code })
+                .eq('id', schemeId)
+            }
+          }
+        }
+
+        if (!schemeId) {
+          const { data: newScheme, error: sErr } = await db()
+            .from('curriculum_schemes')
+            .insert(schemePayload)
+            .select()
+            .single()
+          if (!sErr && newScheme) {
+            schemeId = newScheme.id
+          }
         }
       }
 
@@ -1836,6 +1950,7 @@ export const supabaseApi: Api = {
     const currentList: CurriculumScheme[] = JSON.parse(localStorage.getItem('leera_curriculum_schemes') || '[]')
     let existingLocal = currentList.find((s) => s.subject_code === input.subject_code && s.year_group === input.year_group)
       || currentList.find((s) => s.subject_code === input.subject_code)
+      || currentList.find((s) => subjectNamesMatch(s.subject_name, input.subject_name)) // harmonize by name
 
     const localId = existingLocal ? existingLocal.id : `custom-scheme-${Date.now()}`
     const schemeObj: CurriculumScheme = existingLocal || {
@@ -1958,6 +2073,34 @@ export const supabaseApi: Api = {
   // ----------------------------------------------------------------
 
   async getTeacherTimetable(teacherId?: string): Promise<{ timetable: TeacherTimetable | null; slots: TeacherScheduleSlot[] }> {
+    if (teacherId === 'all') {
+      try {
+        const { data: slots } = await db()
+          .from('teacher_schedule_slots')
+          .select('*')
+          .order('day_of_week')
+          .order('period_number')
+        if (slots && slots.length > 0) {
+          return { timetable: null, slots: slots as TeacherScheduleSlot[] }
+        }
+      } catch (e) {
+        console.warn('getTeacherTimetable(all) fallback to local storage:', e)
+      }
+
+      try {
+        const allSlots: TeacherScheduleSlot[] = []
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i)
+          if (key && key.startsWith('leera_timetable_slots_')) {
+            const s = JSON.parse(localStorage.getItem(key) || '[]')
+            if (Array.isArray(s)) allSlots.push(...s)
+          }
+        }
+        return { timetable: null, slots: allSlots }
+      } catch {}
+      return { timetable: null, slots: [] }
+    }
+
     const tid = teacherId || (await uid())
     try {
       const { data: tt } = await db()
@@ -2414,6 +2557,11 @@ export const supabaseApi: Api = {
     try {
       // 3. Resolve or create Curriculum Scheme
       if (!schemeId) {
+        const subjects = await this.listSubjects().catch(() => [])
+        const subjName = subjects.find((s) => s.id === input.subject_id)?.name || 'Subject'
+        const framework = input.framework || (cleanCode.startsWith('9') ? 'CAMBRIDGE_AS_A_LEVEL' : cleanCode.startsWith('0') ? 'CAMBRIDGE_IGCSE' : 'CAMBRIDGE_LOWER_SECONDARY')
+
+        // 3a. Primary match: by subject_code
         const { data: matchedSchemes } = await db()
           .from('curriculum_schemes')
           .select('*')
@@ -2422,10 +2570,26 @@ export const supabaseApi: Api = {
         if (matchedSchemes && matchedSchemes.length > 0) {
           schemeId = matchedSchemes[0].id
         } else {
-          const subjects = await this.listSubjects().catch(() => [])
-          const subjName = subjects.find((s) => s.id === input.subject_id)?.name || 'Subject'
-          const framework = input.framework || (cleanCode.startsWith('9') ? 'CAMBRIDGE_AS_A_LEVEL' : cleanCode.startsWith('0') ? 'CAMBRIDGE_IGCSE' : 'CAMBRIDGE_LOWER_SECONDARY')
+          // 3b. Harmonization fallback: match by normalised subject name.
+          //     e.g. teacher has a syllabus saved as "ICT" (timetable name) but workplan
+          //     says "Computing" – they should map to the same curriculum scheme.
+          const { data: allSchemes } = await db().from('curriculum_schemes').select('*').eq('is_active', true)
+          if (allSchemes && allSchemes.length > 0) {
+            const nameMatch = allSchemes.find((s: any) => subjectNamesMatch(s.subject_name, subjName))
+            if (nameMatch) {
+              schemeId = nameMatch.id
+              // Back-fill the subject code on the existing scheme if it was missing
+              if ((!nameMatch.subject_code || nameMatch.subject_code === '') && cleanCode) {
+                await db().from('curriculum_schemes')
+                  .update({ subject_code: cleanCode })
+                  .eq('id', schemeId)
+              }
+            }
+          }
+        }
 
+        // 3c. Still no match – create a fresh scheme
+        if (!schemeId) {
           const { data: createdScheme } = await db()
             .from('curriculum_schemes')
             .insert({
@@ -2569,18 +2733,20 @@ export const supabaseApi: Api = {
 
     // Local Storage Fallback
     const localSchemes: CurriculumScheme[] = JSON.parse(localStorage.getItem('leera_curriculum_schemes') || '[]')
+    // Primary: match by subject_code; secondary: match by normalised subject name (harmonization)
+    const localSubjects = await this.listSubjects().catch(() => [])
+    const localSubjName = localSubjects.find((s) => s.id === input.subject_id)?.name || 'Subject'
     let foundScheme = localSchemes.find((s) => s.subject_code === cleanCode)
+      || localSchemes.find((s) => subjectNamesMatch(s.subject_name, localSubjName))
     if (!foundScheme) {
-      const subjects = await this.listSubjects().catch(() => [])
-      const subjName = subjects.find((s) => s.id === input.subject_id)?.name || 'Subject'
       foundScheme = {
         id: `scheme-${cleanCode}-${Date.now()}`,
         school_id: school?.id || null,
         framework: input.framework || (cleanCode.startsWith('9') ? 'CAMBRIDGE_AS_A_LEVEL' : cleanCode.startsWith('0') ? 'CAMBRIDGE_IGCSE' : 'CAMBRIDGE_LOWER_SECONDARY'),
         subject_code: cleanCode,
-        subject_name: subjName,
+        subject_name: localSubjName,
         year_group: 'General',
-        title: `${subjName} (${cleanCode})`,
+        title: `${localSubjName} (${cleanCode})`,
         syllabus_years: '2023-2027',
         is_active: true
       }

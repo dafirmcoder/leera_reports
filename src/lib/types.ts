@@ -395,6 +395,7 @@ export interface Api {
   setRole(userId: string, role: Role, classId: string | null, additionalRoles?: Role[]): Promise<void>
   inviteUser(input: { email: string; full_name: string; role: Role; class_id: string | null; additional_roles?: Role[] }): Promise<void>
   deleteTeacher(userId: string): Promise<void>
+  resetUserPassword(userId: string): Promise<string>
 
   // subject-teacher assignments
   listAssignments(classId?: string): Promise<Assignment[]>

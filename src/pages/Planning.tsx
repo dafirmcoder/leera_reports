@@ -47,20 +47,11 @@ export function isPastLessonSlot(dateStr: string, startTime?: string | null, end
   const now = new Date()
   const todayStr = formatDateISO(now)
 
-  if (dateStr < todayStr) return true
-  if (dateStr > todayStr) return false
-
-  // dateStr === todayStr: compare against start_time (or end_time)
-  const checkTime = startTime || endTime
-  if (!checkTime) return false
-
-  const [hh, mm] = checkTime.split(':').map((v) => parseInt(v, 10))
-  if (isNaN(hh) || isNaN(mm)) return false
-
-  const currentMinutes = now.getHours() * 60 + now.getMinutes()
-  const lessonMinutes = hh * 60 + mm
-
-  return lessonMinutes <= currentMinutes
+  // Planning closes at end of day: only strictly previous calendar dates are blocked.
+  // Today's lessons remain open for planning regardless of the current clock time.
+  // startTime / endTime are accepted for backward compatibility but not used for the gate.
+  void startTime; void endTime
+  return dateStr < todayStr
 }
 
 export function findMatchingLessonPlan(
@@ -297,8 +288,9 @@ export default function Planning() {
 
   const weekSlotStats = useMemo(() => {
     let totalSlots = 0
-    let plannedCount = 0
-    let unplannedCount = 0
+    let futurePlannedCount = 0
+    let pastPlannedCount = 0
+    let futureUnplannedCount = 0
     let pastUnplannedCount = 0
 
     for (let dayIdx = 0; dayIdx < 5; dayIdx++) {
@@ -310,18 +302,27 @@ export default function Planning() {
 
       for (const s of slots) {
         const isPlanned = !!findMatchingLessonPlan(s, dayDateStr, lessonPlans)
+        const isPast = isPastLessonSlot(dayDateStr, s.start_time, s.end_time)
+
         if (isPlanned) {
-          plannedCount++
+          if (isPast) pastPlannedCount++
+          else futurePlannedCount++
         } else {
-          unplannedCount++
-          if (isPastLessonSlot(dayDateStr, s.start_time, s.end_time)) {
-            pastUnplannedCount++
-          }
+          if (isPast) pastUnplannedCount++
+          else futureUnplannedCount++
         }
       }
     }
 
-    return { totalSlots, plannedCount, unplannedCount, pastUnplannedCount }
+    return {
+      totalSlots,
+      futurePlannedCount,
+      pastPlannedCount,
+      futureUnplannedCount,
+      pastUnplannedCount,
+      plannedCount: futurePlannedCount + pastPlannedCount,
+      unplannedCount: futureUnplannedCount + pastUnplannedCount
+    }
   }, [selectedWeekMonday, timetableSlots, lessonPlans])
 
   const openCreateLessonPlan = (
@@ -333,10 +334,10 @@ export default function Planning() {
   ) => {
     const targetDate = slotDate || formatDateISO(new Date())
 
-    // Strict validation: A teacher cannot create lesson plans for past lessons in both time and date
+    // Planning closes at end of day: block only previous calendar dates, not earlier slots on today
     if (isPastLessonSlot(targetDate, slotStartTime, slotEndTime)) {
       setError(
-        `Cannot plan past lesson: The scheduled period for ${slotClass || 'this class'} on ${targetDate} (${slotStartTime || ''}) is in the past. Lessons must be planned in advance.`
+        `Cannot plan a lesson on a past date: ${slotClass || 'This class'} on ${targetDate} is in the past. You can plan lessons for today or any future date.`
       )
       return
     }
@@ -727,9 +728,9 @@ export default function Planning() {
       return
     }
 
-    // Strict Enforcement: Cannot create lesson plans for past lessons in both time and date
+    // Planning closes at end of day: block past dates, but today's slots remain open
     if (isPastLessonSlot(lessonDate, startTime, endTime)) {
-      setError('Cannot create lesson plan: Lessons cannot be planned for past dates and times. Prospective lesson plans must be created in advance.')
+      setError('Cannot create lesson plan: Lesson plans can only be created for today or future dates. Planning for past dates is closed.')
       return
     }
 
@@ -1066,15 +1067,18 @@ export default function Planning() {
             <span style={{ background: '#e2e8f0', color: '#1e293b', padding: '3px 10px', borderRadius: 12, fontWeight: 600 }}>
               {weekSlotStats.totalSlots} Total Periods
             </span>
-            <span style={{ background: '#dcfce7', color: '#166534', padding: '3px 10px', borderRadius: 12, fontWeight: 700, border: '1px solid #86efac' }}>
-              ✓ {weekSlotStats.plannedCount} Planned
+            <span style={{ background: '#ecfccb', color: '#3f6212', padding: '3px 10px', borderRadius: 12, fontWeight: 700, border: '1.5px solid #84cc16' }}>
+              ✓ {weekSlotStats.futurePlannedCount} Future Planned (Lime)
             </span>
-            <span style={{ background: '#fee2e2', color: '#b91c1c', padding: '3px 10px', borderRadius: 12, fontWeight: 800, border: '1px solid #f87171' }}>
-              ⚠️ {weekSlotStats.unplannedCount} Unplanned (Red)
+            <span style={{ background: '#dcfce7', color: '#14532d', padding: '3px 10px', borderRadius: 12, fontWeight: 700, border: '1.5px solid #166534' }}>
+              ✓ {weekSlotStats.pastPlannedCount} Past Delivered (Deep Green)
+            </span>
+            <span style={{ background: '#dbeafe', color: '#1d4ed8', padding: '3px 10px', borderRadius: 12, fontWeight: 700, border: '1.5px solid #3b82f6' }}>
+              ⏱ {weekSlotStats.futureUnplannedCount} Future To Plan (Blue)
             </span>
             {weekSlotStats.pastUnplannedCount > 0 && (
-              <span style={{ background: '#fef2f2', color: '#991b1b', padding: '3px 8px', borderRadius: 12, fontSize: 11, fontWeight: 600 }}>
-                🔒 {weekSlotStats.pastUnplannedCount} Past (Closed)
+              <span style={{ background: '#fee2e2', color: '#991b1b', padding: '3px 10px', borderRadius: 12, fontWeight: 800, border: '2px solid #dc2626' }}>
+                ✘ {weekSlotStats.pastUnplannedCount} Past Missed (Sharp Red)
               </span>
             )}
           </div>
@@ -1157,18 +1161,56 @@ export default function Planning() {
                         const isPast = isPastLessonSlot(dayDateStr, s.start_time, s.end_time)
                         const isPlanned = !!matchingLp
 
+                        // Four-state color system:
+                        // • Future + Planned   → Lime green (#f7fee7 / #84cc16)
+                        // • Future + Unplanned → Blue (#eff6ff / #2563eb)
+                        // • Past   + Planned   → Deep green (#f0fdf4 / #15803d)
+                        // • Past   + Unplanned → Very sharp red (#fef2f2 / #dc2626)
+                        const slotBg = isPlanned
+                          ? (isPast ? '#f0fdf4' : '#f7fee7')
+                          : (isPast ? '#fef2f2' : '#eff6ff')
+                        const slotBdr = isPlanned
+                          ? (isPast ? '2px solid #15803d' : '2px solid #84cc16')
+                          : (isPast ? '2.5px solid #dc2626' : '2px solid #2563eb')
+                        const slotShadow = isPast && !isPlanned
+                          ? '0 0 0 1px #dc2626, 0 3px 6px rgba(220, 38, 38, 0.18)'
+                          : isPlanned
+                          ? (isPast ? '0 1px 2px rgba(21, 128, 61, 0.1)' : '0 1px 2px rgba(132, 204, 22, 0.15)')
+                          : '0 1px 2px rgba(37, 99, 235, 0.12)'
+
+                        const badgeBg = isPlanned
+                          ? (isPast ? '#dcfce7' : '#ecfccb')
+                          : (isPast ? '#fee2e2' : '#dbeafe')
+                        const badgeClr = isPlanned
+                          ? (isPast ? '#14532d' : '#3f6212')
+                          : (isPast ? '#991b1b' : '#1d4ed8')
+                        const badgeBdr = isPlanned
+                          ? (isPast ? '1px solid #86efac' : '1px solid #a3e635')
+                          : (isPast ? '1px solid #f87171' : '1px solid #93c5fd')
+
+                        const subjectClr = isPlanned
+                          ? (isPast ? '#064e3b' : '#1a2e05')
+                          : (isPast ? '#7f1d1d' : '#1e3a8a')
+                        const classClr = isPlanned
+                          ? (isPast ? '#166534' : '#4d7c0f')
+                          : (isPast ? '#b91c1c' : '#2563eb')
+                        const timeClr = isPlanned
+                          ? (isPast ? '#15803d' : '#4f772d')
+                          : (isPast ? '#991b1b' : '#475569')
+                        const dividerClr = isPlanned
+                          ? (isPast ? '#bbf7d0' : '#d9f99d')
+                          : (isPast ? '#fca5a5' : '#bfdbfe')
+
                         return (
                           <div
                             key={idx}
                             style={{
-                              background: isPlanned ? '#f0fdf4' : '#fef2f2',
-                              border: isPlanned ? '1.5px solid #22c55e' : '2px solid #ef4444',
+                              background: slotBg,
+                              border: slotBdr,
                               borderRadius: 6,
                               padding: 10,
                               fontSize: 12,
-                              boxShadow: isPlanned
-                                ? '0 1px 2px rgba(34, 197, 94, 0.08)'
-                                : '0 2px 4px rgba(239, 68, 68, 0.12)',
+                              boxShadow: slotShadow,
                               transition: 'all 0.15s ease'
                             }}
                           >
@@ -1182,37 +1224,40 @@ export default function Planning() {
                                   borderRadius: 4,
                                   textTransform: 'uppercase',
                                   letterSpacing: '0.3px',
-                                  background: isPlanned ? '#dcfce7' : '#fee2e2',
-                                  color: isPlanned ? '#15803d' : '#b91c1c'
+                                  background: badgeBg,
+                                  color: badgeClr,
+                                  border: badgeBdr
                                 }}
                               >
-                                {isPlanned ? `✓ Planned (${matchingLp.status})` : '⚠️ Unplanned Lesson'}
+                                {isPlanned
+                                  ? (isPast ? `✓ Delivered (${matchingLp.status})` : `✓ Planned (${matchingLp.status})`)
+                                  : (isPast ? '✘ Missed – Unplanned' : '⏱ Unplanned')}
                               </span>
-                              <span style={{ fontSize: 11, fontWeight: 700, color: '#64748b' }}>
+                              <span style={{ fontSize: 11, fontWeight: 700, color: timeClr }}>
                                 P{s.period_number}
                               </span>
                             </div>
 
                             {/* Subject & Class */}
-                            <div style={{ fontWeight: 800, color: '#0f172a', fontSize: 13 }}>
+                            <div style={{ fontWeight: 800, color: subjectClr, fontSize: 13 }}>
                               {s.subject_name}
                             </div>
-                            <div style={{ color: isPlanned ? '#15803d' : '#0369a1', fontWeight: 700, fontSize: 12 }}>
+                            <div style={{ color: classClr, fontWeight: 700, fontSize: 12 }}>
                               {s.class_name}
                             </div>
 
                             {/* Time & Room */}
-                            <div style={{ fontSize: 11, color: '#475569', marginTop: 2 }}>
+                            <div style={{ fontSize: 11, color: timeClr, marginTop: 2 }}>
                               ⏱ {s.start_time} – {s.end_time} {s.room ? `· 📍 ${s.room}` : ''}
                             </div>
 
                             {/* Planned Details or Unplanned Action */}
                             {isPlanned ? (
-                              <div style={{ marginTop: 6, borderTop: '1px solid #bbf7d0', paddingTop: 6 }}>
+                              <div style={{ marginTop: 6, borderTop: `1px solid ${dividerClr}`, paddingTop: 6 }}>
                                 <div
                                   style={{
                                     fontSize: 11,
-                                    color: '#166534',
+                                    color: isPast ? '#166534' : '#3f6212',
                                     fontWeight: 600,
                                     overflow: 'hidden',
                                     textOverflow: 'ellipsis',
@@ -1230,8 +1275,8 @@ export default function Planning() {
                                     fontSize: 11,
                                     padding: '3px 8px',
                                     width: '100%',
-                                    borderColor: '#86efac',
-                                    color: '#166534',
+                                    borderColor: isPast ? '#166534' : '#84cc16',
+                                    color: isPast ? '#14532d' : '#3f6212',
                                     fontWeight: 600,
                                     background: '#ffffff'
                                   }}
@@ -1241,20 +1286,21 @@ export default function Planning() {
                                 </button>
                               </div>
                             ) : (
-                              <div style={{ marginTop: 6, borderTop: '1px solid #fecaca', paddingTop: 6 }}>
+                              <div style={{ marginTop: 6, borderTop: `1px solid ${dividerClr}`, paddingTop: 6 }}>
                                 {isPast ? (
                                   <div
                                     style={{
                                       background: '#fee2e2',
                                       borderRadius: 4,
-                                      padding: '4px 6px',
+                                      padding: '5px 8px',
                                       color: '#991b1b',
                                       fontSize: 11,
-                                      fontWeight: 700,
-                                      textAlign: 'center'
+                                      fontWeight: 800,
+                                      textAlign: 'center',
+                                      border: '1px solid #ef4444'
                                     }}
                                   >
-                                    🔒 Past Lesson (Planning Closed)
+                                    🔒 Past Date (Planning Closed)
                                   </div>
                                 ) : (
                                   <button
@@ -1265,11 +1311,11 @@ export default function Planning() {
                                       fontSize: 11,
                                       padding: '4px 8px',
                                       fontWeight: 700,
-                                      background: '#dc2626',
+                                      background: '#2563eb',
                                       color: '#ffffff',
                                       border: 'none',
                                       cursor: 'pointer',
-                                      boxShadow: '0 1px 2px rgba(220, 38, 38, 0.2)'
+                                      boxShadow: '0 2px 4px rgba(37, 99, 235, 0.25)'
                                     }}
                                     onClick={() =>
                                       openCreateLessonPlan(
@@ -3105,7 +3151,7 @@ export default function Planning() {
                 >
                   <span style={{ fontSize: 16 }}>⚠️</span>
                   <div>
-                    <strong>Past Lesson Time (Planning Blocked):</strong> Lessons cannot be created for past dates and times. Please select an upcoming prospective lesson slot.
+                    <strong>Past Date (Planning Closed):</strong> Lesson plans cannot be created for previous calendar dates. You can still plan any lesson scheduled for today, even if the slot has already passed on the clock.
                   </div>
                 </div>
               )}

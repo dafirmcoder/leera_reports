@@ -13,6 +13,7 @@ import type {
   TeacherTestSummary,
   Assignment
 } from '../../lib/types'
+import LessonPlanComplianceCard from './LessonPlanComplianceCard'
 
 const today = () => new Date().toISOString().slice(0, 10)
 
@@ -370,6 +371,13 @@ export default function ExecutiveDashboard({ section = 'overview' }: DashboardPr
             </div>
             <div className="stat-meta">Average across all scored unit tests</div>
           </div>
+        </div>
+      )}
+
+      {/* School-wide Lesson Plan Compliance */}
+      {(activeSection === 'overview' || activeSection === 'teachers') && (
+        <div style={{ marginTop: 4 }}>
+          <LessonPlanComplianceCard title="School-wide Lesson Plan Compliance" />
         </div>
       )}
 

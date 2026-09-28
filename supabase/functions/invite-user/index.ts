@@ -37,10 +37,39 @@ Deno.serve(async (req: Request) => {
     if (callerErr || !caller.user) throw new Error('Unauthorized')
 
     const { data: callerProfile } = await admin
-      .from('profiles').select('role, school_id').eq('id', caller.user.id).single()
+      .from('profiles').select('role, additional_roles, school_id').eq('id', caller.user.id).single()
 
-    if (callerProfile?.role !== 'head_of_school' || !callerProfile.school_id) {
-      throw new Error('Only the Head of School can invite teachers')
+    const isAuthorized = callerProfile?.role === 'head_of_school'
+      || callerProfile?.role === 'curriculum_coordinator'
+      || (Array.isArray(callerProfile?.additional_roles) && callerProfile.additional_roles.includes('curriculum_coordinator'))
+      || callerProfile?.role === 'admin'
+      || callerProfile?.role === 'director'
+
+    if (!isAuthorized || !callerProfile?.school_id) {
+      throw new Error('Unauthorized: Only Head of School and Curriculum Coordinators can perform this action')
+    }
+
+    if (body.action === 'reset_password') {
+      if (!body.user_id) throw new Error('Missing user_id')
+      const { data: target, error: targetErr } = await admin
+        .from('profiles').select('id, role, school_id, email, full_name').eq('id', body.user_id).single()
+      if (targetErr || !target) throw new Error('User account not found')
+      if (callerProfile.school_id && target.school_id !== callerProfile.school_id) {
+        throw new Error('Only accounts in your school can be reset')
+      }
+
+      const defaultPassword = '00123456'
+      const { error: resetErr } = await admin.auth.admin.updateUserById(body.user_id, {
+        password: defaultPassword
+      })
+      if (resetErr) throw resetErr
+
+      return new Response(JSON.stringify({
+        ok: true,
+        message: `Password for ${target.full_name || target.email} has been reset to default (${defaultPassword}).`
+      }), {
+        headers: { ...cors, 'Content-Type': 'application/json' }
+      })
     }
 
     if (body.action === 'delete_teacher') {

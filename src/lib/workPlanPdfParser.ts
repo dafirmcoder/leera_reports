@@ -317,17 +317,26 @@ function tryParseTabularWorkPlan(
     )
     const candidateObjItems = breakdownIdx >= 0 ? colItems.slice(0, breakdownIdx) : colItems
 
+    // Regex that matches Cambridge LO codes: e.g. 9CS.01, 8Sc.01, 9DC.02, 0580.01
+    // Pattern: starts with letter or digit, has a dot+digits portion, optional trailing alphanum
+    const OBJ_CODE_RE = /^(?:[•*]\s*)?(\*?[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)*\.?\d{1,3}[A-Za-z0-9\-]*)\s*[:\-]?\s*(.*)/
+
     for (let j = 0; j < candidateObjItems.length; j++) {
       const it = candidateObjItems[j]
-      const codeMatch = it.str.match(/^(?:•\s*)?(\*?[A-Za-z0-9\.\-]{2,12}[0-9]+[A-Za-z0-9\.\-]*)\s*[:\-]?\s*(.*)/)
+      const codeMatch = it.str.match(OBJ_CODE_RE)
       if (codeMatch && !it.str.includes('Weekly Lesson Breakdown') && !it.str.startsWith('• Lesson')) {
         const code = codeMatch[1].replace(/^\*/, '').trim()
+        // Skip section/header words that match the code regex superficially
+        if (/^(?:UNIT|TOPIC|REVISION|SEMESTER|RESOURCES?|MONTH|WEEK|TERM|OBJECTIVES?)$/i.test(code)) continue
         let text = codeMatch[2].trim()
 
         let k = j + 1
         while (k < candidateObjItems.length) {
           const nextIt = candidateObjItems[k]
+          // Stop if next item is a new objective code, a bullet, or a section header
+          const isNextCode = OBJ_CODE_RE.test(nextIt.str)
           if (
+            isNextCode ||
             nextIt.str.startsWith('•') ||
             nextIt.str.includes('Weekly Lesson Breakdown') ||
             /^(?:UNIT|TOPIC|Learning Objectives)/i.test(nextIt.str)
@@ -338,9 +347,11 @@ function tryParseTabularWorkPlan(
           k++
         }
 
+        if (!text) continue // skip bare code with no description text
+
         objectives.push({
           code,
-          text: text.replace(/\s+/g, ' '),
+          text: text.replace(/\s+/g, ' ').trim(),
           is_met: false,
           topic_title: topic
         })
@@ -635,21 +646,31 @@ export async function parseWorkPlanPdf(file: File): Promise<ParsedWorkPlan> {
     }
 
     const objBulletMatch = rawLine.match(OBJECTIVE_BULLET_PATTERN)
-    const codeMatch = rawLine.match(/^(\*?[A-Za-z0-9\.\-]{2,12}[0-9]+[A-Za-z0-9\.\-]*)\s*[:\-]?\s+(.*)/)
+    // Improved code regex: matches Cambridge LO codes like 9CS.01, 8Sc.01, 0580.01
+    const SEQ_CODE_RE = /^(\*?[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)*\.?\d{1,3}[A-Za-z0-9\-]*)\s*[:\-]?\s+(.*)/
+    const codeMatch = rawLine.match(SEQ_CODE_RE)
 
     if (objBulletMatch || codeMatch) {
       let code = ''
       let text = ''
 
       if (codeMatch) {
-        code = codeMatch[1].replace(/^\*/, '').trim()
-        text = codeMatch[2].trim()
-      } else if (objBulletMatch) {
+        const candidateCode = codeMatch[1].replace(/^\*/, '').trim()
+        // Skip tokens that are header words and not real LO codes
+        if (/^(?:UNIT|TOPIC|REVISION|SEMESTER|RESOURCES?|MONTH|WEEK|TERM|OBJECTIVES?)$/i.test(candidateCode)) {
+          // Fall through to topic/remarks handling below
+        } else {
+          code = candidateCode
+          text = codeMatch[2].trim()
+        }
+      }
+
+      if (!code && objBulletMatch) {
         const afterBullet = objBulletMatch[1].trim()
         if (/^Lesson\s*\d+/i.test(afterBullet) || /Weekly Lesson Breakdown/i.test(afterBullet)) {
           continue
         }
-        const innerCodeMatch = afterBullet.match(/^(\*?[A-Za-z0-9\.\-]{2,12}[0-9]+[A-Za-z0-9\.\-]*)\s*[:\-]?\s+(.*)/)
+        const innerCodeMatch = afterBullet.match(SEQ_CODE_RE)
         if (innerCodeMatch) {
           code = innerCodeMatch[1].replace(/^\*/, '').trim()
           text = innerCodeMatch[2].trim()
@@ -660,7 +681,7 @@ export async function parseWorkPlanPdf(file: File): Promise<ParsedWorkPlan> {
         }
       }
 
-      if (text && !text.includes('Weekly Lesson Breakdown') && !code.startsWith('Lesson')) {
+      if (code && text && !text.includes('Weekly Lesson Breakdown') && !code.startsWith('Lesson')) {
         currentWeek.objectives = currentWeek.objectives || []
         currentWeek.objectives.push({
           code,

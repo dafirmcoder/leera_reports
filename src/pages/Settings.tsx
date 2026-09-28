@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
+import { Link } from 'react-router-dom'
 import { api } from '../lib/api'
 import { useSchool } from '../context/SchoolContext'
 import { useAuth } from '../context/AuthContext'
@@ -318,6 +319,27 @@ export default function SettingsPage() {
         {passwordMessage && <div className="notice notice-ok">{passwordMessage}</div>}
         <button className="btn btn-primary" disabled={passwordBusy}>{passwordBusy ? 'Changing…' : 'Change password'}</button>
       </form>
+
+      {/* Staff Password Reset for Coordinators & Head of School */}
+      {can(profile?.role, 'manageUsers', profile?.additional_roles) && (
+        <div className="card stack" style={{ borderLeft: '4px solid #f59e0b' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <h3 style={{ margin: 0 }}>🔑 Staff Password Reset</h3>
+            <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 10, background: '#fef3c7', color: '#b45309' }}>
+              Coordinators & Head of School
+            </span>
+          </div>
+          <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+            Need to reset a teacher or staff member's password? You can reset any account back to the default PIN (<code>00123456</code>) in the People tab.
+          </p>
+          <div>
+            <Link to="/people" className="btn btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <span>Go to People Management to Reset Passwords</span>
+              <span>→</span>
+            </Link>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

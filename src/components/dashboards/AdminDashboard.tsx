@@ -5,6 +5,7 @@ import { useAuth } from '../../context/AuthContext'
 import { downloadAttendanceCsv, downloadAttendanceExcel } from '../../lib/attendanceExport'
 import type { AdminDashboardData } from '../../lib/types'
 import LeeraLoader from '../LeeraLoader'
+import LessonPlanComplianceCard from './LessonPlanComplianceCard'
 
 const todayIso = () => new Date().toISOString().slice(0, 10)
 
@@ -244,8 +245,11 @@ export default function AdminDashboard() {
             }}>
               {allMarked ? '✓ All Classes Completed' : `${(todayAtt?.total_classes_count ?? 0) - (todayAtt?.marked_classes_count ?? 0)} Class Pending`}
             </span>
+            </div>
           </div>
-        </div>
+
+        {/* Lesson Plan Compliance */}
+        <LessonPlanComplianceCard title="Lesson Plan Compliance" />
       </div>
 
       {/* Quick Actions Panel */}
