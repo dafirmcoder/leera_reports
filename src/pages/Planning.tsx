@@ -83,6 +83,58 @@ export function findMatchingLessonPlan(
   })
 }
 
+export interface TeachingActivityStages {
+  starter: string
+  exposition: string
+  learnersActivity: string
+  plenary: string
+}
+
+export function parseActivityStages(rawText?: string | null): TeachingActivityStages {
+  if (!rawText) return { starter: '', exposition: '', learnersActivity: '', plenary: '' }
+
+  let starter = ''
+  let exposition = ''
+  let learnersActivity = ''
+  let plenary = ''
+
+  const stageRegex = /(?:^|\n)\s*(?:•\s*)?(Starter(?:\s*Activity)?(?:\s*\([^)]*\))?:?|Exposition(?:\s*\([^)]*\))?:?|Learner(?:s)?\s*(?:Activity|activity)?(?:\s*\([^)]*\))?:?|Plenary(?:\s*\([^)]*\))?:?|Main\s*Activity:?)/gi
+  const matches = [...rawText.matchAll(stageRegex)]
+
+  if (matches.length > 0) {
+    for (let i = 0; i < matches.length; i++) {
+      const match = matches[i]
+      const title = match[1].toLowerCase()
+      const startIndex = match.index! + match[0].length
+      const endIndex = i + 1 < matches.length ? matches[i + 1].index! : rawText.length
+      const body = rawText.slice(startIndex, endIndex).trim().replace(/^[-—:\s]+/, '')
+
+      if (title.includes('starter')) {
+        starter = body
+      } else if (title.includes('exposition') || title.includes('main activity')) {
+        exposition = body
+      } else if (title.includes('learner')) {
+        learnersActivity = body
+      } else if (title.includes('plenary')) {
+        plenary = body
+      }
+    }
+  } else {
+    learnersActivity = rawText.trim()
+  }
+
+  return { starter, exposition, learnersActivity, plenary }
+}
+
+export function formatActivityStages(stages: TeachingActivityStages): string {
+  const parts: string[] = []
+  if (stages.starter.trim()) parts.push(`Starter (10 min): ${stages.starter.trim()}`)
+  if (stages.exposition.trim()) parts.push(`Exposition (15 min): ${stages.exposition.trim()}`)
+  if (stages.learnersActivity.trim()) parts.push(`Learner activity (35 min): ${stages.learnersActivity.trim()}`)
+  if (stages.plenary.trim()) parts.push(`Plenary (10 min): ${stages.plenary.trim()}`)
+  return parts.join('\n\n')
+}
+
 export default function Planning() {
   const { profile, user } = useAuth()
   const { school, classes, subjects, refresh } = useSchool()
@@ -796,19 +848,25 @@ export default function Planning() {
 
     try {
       setLoading(true)
-      const id = await api.createLessonPlan({
-        class_id: classId,
-        subject_id: subjectId,
-        lesson_date: lessonDate,
-        start_time: startTime || null,
-        end_time: endTime || null,
-        topic_title: topicTitle.trim(),
-        challenge_title: challengeTitle.trim() || '',
-        main_teaching_activity: (form.get('main_teaching_activity') as string) || '',
-        assessment_ideas: (form.get('assessment_ideas') as string) || '',
-        resources: (form.get('resources') as string) || '',
-        objectives: chosenObjectives
-      })
+        const starter = (form.get('activity_starter') as string) || ''
+        const exposition = (form.get('activity_exposition') as string) || ''
+        const learnersActivity = (form.get('activity_learners') as string) || ''
+        const plenary = (form.get('activity_plenary') as string) || ''
+        const combinedActivity = formatActivityStages({ starter, exposition, learnersActivity, plenary }) || (form.get('main_teaching_activity') as string) || ''
+
+        const id = await api.createLessonPlan({
+          class_id: classId,
+          subject_id: subjectId,
+          lesson_date: lessonDate,
+          start_time: startTime || null,
+          end_time: endTime || null,
+          topic_title: topicTitle.trim(),
+          challenge_title: challengeTitle.trim() || '',
+          main_teaching_activity: combinedActivity,
+          assessment_ideas: (form.get('assessment_ideas') as string) || '',
+          resources: (form.get('resources') as string) || '',
+          objectives: chosenObjectives
+        })
       setShowCreateLessonPlanModal(false)
       setSelectedLpObjectiveCodes([])
       setCreateLpTopicTitle('')
@@ -2203,10 +2261,10 @@ export default function Planning() {
                       </div>
                     </div>
 
-                    {/* Row 3: Unit / Sub-Unit & Attendance */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {/* Row 3: Unit / Sub-Unit (Topic Title) spanning both columns */}
+                    <div style={{ gridColumn: 'span 2', display: 'flex', flexDirection: 'column', gap: 10 }}>
                       <div>
-                        <label className="field-label">Unit / Sub-Unit (Topic Title)</label>
+                        <label className="field-label" style={{ fontWeight: 700, color: '#0f172a' }}>Unit / Sub-Unit (Topic Title)</label>
                         <input
                           type="text"
                           className="field"
@@ -2242,68 +2300,15 @@ export default function Planning() {
                         </div>
                       </div>
                     </div>
-
-                    <div>
-                      <label className="field-label">Attendance (Post-Lesson Record)</label>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                        <div>
-                          <span style={{ fontSize: 11.5, color: '#334155', fontWeight: 700, display: 'block', marginBottom: 3 }}>Boys Present:</span>
-                          <input
-                            type="number"
-                            min={0}
-                            placeholder="0"
-                            className="field"
-                            style={{ width: '100%' }}
-                            value={selectedLessonPlan.boys_attendance ?? ''}
-                            onChange={(e) => setSelectedLessonPlan({ ...selectedLessonPlan, boys_attendance: e.target.value ? parseInt(e.target.value) : null })}
-                          />
-                        </div>
-                        <div>
-                          <span style={{ fontSize: 11.5, color: '#334155', fontWeight: 700, display: 'block', marginBottom: 3 }}>Girls Present:</span>
-                          <input
-                            type="number"
-                            min={0}
-                            placeholder="0"
-                            className="field"
-                            style={{ width: '100%' }}
-                            value={selectedLessonPlan.girls_attendance ?? ''}
-                            onChange={(e) => setSelectedLessonPlan({ ...selectedLessonPlan, girls_attendance: e.target.value ? parseInt(e.target.value) : null })}
-                          />
-                        </div>
-                      </div>
-                      <div style={{ fontSize: 11, color: '#64748b', marginTop: 6 }}>
-                        Rendered directly into the ATTENDANCE column of the PDF.
-                      </div>
-                    </div>
                   </div>
                 </div>
 
-                {/* ── 2. RESOURCES (Section 2 in PDF) ── */}
-                <div style={{ border: '1.5px solid #cbd5e1', borderRadius: 8, padding: 16, backgroundColor: '#ffffff', boxShadow: '0 1px 3px rgba(15, 23, 42, 0.05)' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, flexWrap: 'wrap', gap: 6 }}>
-                    <label className="field-label" style={{ fontSize: 14, color: '#4C2570', fontWeight: 800, margin: 0, textTransform: 'uppercase' }}>
-                      2. Resources
-                    </label>
-                    <span style={{ fontSize: 11.5, color: '#64748b' }}>
-                      Formatted into two columns in the PDF (e.g. Lesson Notes, Projector, Learner’s Book, Whiteboard)
-                    </span>
-                  </div>
-                  <textarea
-                    rows={3}
-                    className="field"
-                    style={{ width: '100%' }}
-                    placeholder="Lesson Notes&#10;Projector / Laptop&#10;Learner’s Book & Coursebook&#10;Whiteboard & Markers"
-                    value={selectedLessonPlan.resources || ''}
-                    onChange={(e) => setSelectedLessonPlan({ ...selectedLessonPlan, resources: e.target.value })}
-                  />
-                </div>
-
-                {/* ── 3. LEARNING OBJECTIVES (Section 3 in PDF) ── */}
+                {/* ── LEARNING OBJECTIVES (Directly below Topic / Unit) ── */}
                 <div style={{ background: '#f8fafc', padding: 16, borderRadius: 8, border: '1.5px solid #cbd5e1', boxShadow: '0 1px 3px rgba(15, 23, 42, 0.05)' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
                     <div>
                       <label className="field-label" style={{ fontSize: 14, color: '#4C2570', fontWeight: 800, margin: 0, textTransform: 'uppercase' }}>
-                        3. Learning Objectives ({(selectedLessonPlan.objectives || []).length})
+                        🎯 Learning Objectives ({(selectedLessonPlan.objectives || []).length})
                       </label>
                       <div style={{ fontSize: 11.5, color: '#475569', fontStyle: 'italic', marginTop: 2 }}>
                         "By the end of this lesson, learners should be able to:"
@@ -2416,89 +2421,214 @@ export default function Planning() {
                   )}
                 </div>
 
-                {/* ── 4. MAIN TEACHING ACTIVITIES & INQUIRY (Section 4 in PDF) ── */}
+                {/* ── MAIN TEACHING ACTIVITIES & INQUIRY (4 Dedicated Sub-Sections) ── */}
                 <div style={{ border: '1.5px solid #cbd5e1', borderRadius: 8, padding: 16, backgroundColor: '#ffffff', boxShadow: '0 1px 3px rgba(15, 23, 42, 0.05)' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, flexWrap: 'wrap', gap: 6 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 6 }}>
                     <div>
                       <label className="field-label" style={{ fontSize: 14, color: '#4C2570', fontWeight: 800, margin: 0, textTransform: 'uppercase' }}>
-                        4. Main Teaching Activity
+                        Main Teaching Activities &amp; Inquiry
                       </label>
                       <span style={{ fontSize: 11.5, color: '#64748b' }}>
-                        Structured sequence formatted as: Starter, Exposition, Learner activity, Plenary in the PDF
+                        4 instructional stages rendered directly into the PDF: Starter, Exposition, Learners Activity, and Plenary
                       </span>
                     </div>
+                  </div>
 
-                    {/* Quick Stage Insert Chips */}
-                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                      <span style={{ fontSize: 11, color: '#64748b', alignSelf: 'center', marginRight: 2 }}>Quick template:</span>
-                      {(['Starter (10 min):', 'Exposition (15 min):', 'Learner activity (35 min):', 'Plenary (10 min):'] as const).map((stage) => (
-                        <button
-                          key={stage}
-                          type="button"
-                          className="btn btn-ghost btn-small"
-                          style={{ fontSize: 10.5, padding: '2px 6px', background: '#f1f5f9', border: '1px solid #cbd5e1' }}
-                          onClick={() => {
-                            const current = selectedLessonPlan.main_teaching_activity || ''
-                            const prefix = current ? (current.endsWith('\n') ? '' : '\n\n') : ''
-                            setSelectedLessonPlan({
-                              ...selectedLessonPlan,
-                              main_teaching_activity: `${current}${prefix}${stage} `
-                            })
-                          }}
-                        >
-                          + {stage.split(' ')[0]}
-                        </button>
-                      ))}
+                  {(() => {
+                    const stages = parseActivityStages(selectedLessonPlan.main_teaching_activity)
+
+                    const updateStage = (key: keyof TeachingActivityStages, value: string) => {
+                      const updatedStages = { ...stages, [key]: value }
+                      const combined = formatActivityStages(updatedStages)
+                      setSelectedLessonPlan({ ...selectedLessonPlan, main_teaching_activity: combined })
+                    }
+
+                    return (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                        {/* Sub-section 1: Starter */}
+                        <div style={{ border: '1.5px solid #cbd5e1', borderRadius: 6, padding: 12, backgroundColor: '#f8fafc' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, flexWrap: 'wrap', gap: 4 }}>
+                            <label className="field-label" style={{ fontWeight: 800, margin: 0, color: '#15803d', fontSize: 13 }}>
+                              1. Starter (10 min)
+                            </label>
+                            <span style={{ fontSize: 11, color: '#15803d', background: '#dcfce7', padding: '1px 8px', borderRadius: 10, fontWeight: 700 }}>
+                              Inquiry Hook / Warm-up
+                            </span>
+                          </div>
+                          <textarea
+                            rows={3}
+                            className="field"
+                            style={{ width: '100%', backgroundColor: '#ffffff', lineHeight: 1.45 }}
+                            placeholder="e.g. Torch ON/OFF demo — “Computers only see two states; how do they show numbers, pictures and words?”; introduce the lesson question."
+                            value={stages.starter}
+                            onChange={(e) => updateStage('starter', e.target.value)}
+                          />
+                        </div>
+
+                        {/* Sub-section 2: Exposition */}
+                        <div style={{ border: '1.5px solid #cbd5e1', borderRadius: 6, padding: 12, backgroundColor: '#f8fafc' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, flexWrap: 'wrap', gap: 4 }}>
+                            <label className="field-label" style={{ fontWeight: 800, margin: 0, color: '#0369a1', fontSize: 13 }}>
+                              2. Exposition (15 min)
+                            </label>
+                            <span style={{ fontSize: 11, color: '#0369a1', background: '#e0f2fe', padding: '1px 8px', borderRadius: 10, fontWeight: 700 }}>
+                              Direct Instruction / Teacher Modeling
+                            </span>
+                          </div>
+                          <textarea
+                            rows={3}
+                            className="field"
+                            style={{ width: '100%', backgroundColor: '#ffffff', lineHeight: 1.45 }}
+                            placeholder="e.g. How computers represent data in binary (0,1) — patterns of switches; data measurement — bits, bytes, kilobytes and megabytes, making links to memory size and storage; version control..."
+                            value={stages.exposition}
+                            onChange={(e) => updateStage('exposition', e.target.value)}
+                          />
+                        </div>
+
+                        {/* Sub-section 3: Learners Activity */}
+                        <div style={{ border: '1.5px solid #cbd5e1', borderRadius: 6, padding: 12, backgroundColor: '#f8fafc' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, flexWrap: 'wrap', gap: 4 }}>
+                            <label className="field-label" style={{ fontWeight: 800, margin: 0, color: '#6b21a8', fontSize: 13 }}>
+                              3. Learners Activity (35 min)
+                            </label>
+                            <span style={{ fontSize: 11, color: '#6b21a8', background: '#f3e8ff', padding: '1px 8px', borderRadius: 10, fontWeight: 700 }}>
+                              Guided Tasks / Hands-on Practice
+                            </span>
+                          </div>
+                          <textarea
+                            rows={3}
+                            className="field"
+                            style={{ width: '100%', backgroundColor: '#ffffff', lineHeight: 1.45 }}
+                            placeholder="e.g. Three stations — (a) binary counting cards: hold up 0/1 cards to build given numbers and write binary patterns; (b) data-size ladder: order bit, byte, kilobyte, megabyte; (c) version control: edit a shared document..."
+                            value={stages.learnersActivity}
+                            onChange={(e) => updateStage('learnersActivity', e.target.value)}
+                          />
+                        </div>
+
+                        {/* Sub-section 4: Plenary */}
+                        <div style={{ border: '1.5px solid #cbd5e1', borderRadius: 6, padding: 12, backgroundColor: '#f8fafc' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, flexWrap: 'wrap', gap: 4 }}>
+                            <label className="field-label" style={{ fontWeight: 800, margin: 0, color: '#b45309', fontSize: 13 }}>
+                              4. Plenary (10 min)
+                            </label>
+                            <span style={{ fontSize: 11, color: '#b45309', background: '#fef3c7', padding: '1px 8px', borderRadius: 10, fontWeight: 700 }}>
+                              Exit Ticket / Lesson Synthesis
+                            </span>
+                          </div>
+                          <textarea
+                            rows={3}
+                            className="field"
+                            style={{ width: '100%', backgroundColor: '#ffffff', lineHeight: 1.45 }}
+                            placeholder="e.g. Exit ticket — read one binary pattern, answer one data-size question, and state one benefit of version control; preview Friday’s new unit on networks."
+                            value={stages.plenary}
+                            onChange={(e) => updateStage('plenary', e.target.value)}
+                          />
+                        </div>
+                      </div>
+                    )
+                  })()}
+                </div>
+
+                {/* ── ASSESSMENT IDEAS & RESOURCES (Two-Column Layout) ── */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 16 }}>
+                  {/* Assessment Ideas */}
+                  <div style={{ border: '1.5px solid #cbd5e1', borderRadius: 8, padding: 16, backgroundColor: '#ffffff', boxShadow: '0 1px 3px rgba(15, 23, 42, 0.05)' }}>
+                    <div style={{ marginBottom: 8 }}>
+                      <label className="field-label" style={{ fontSize: 14, color: '#4C2570', fontWeight: 800, margin: 0, textTransform: 'uppercase' }}>
+                        Assessment Ideas
+                      </label>
+                      <span style={{ fontSize: 11.5, color: '#64748b', display: 'block', marginTop: 2 }}>
+                        Formative checks, marked sheets, observation rubrics, exit tickets
+                      </span>
+                    </div>
+                    <textarea
+                      rows={4}
+                      className="field"
+                      style={{ width: '100%' }}
+                      placeholder="• Marked activity sheets and binary counting cards.&#10;• Completed data-size ladder and file-matching exercise.&#10;• Exit ticket checked and recorded."
+                      value={selectedLessonPlan.assessment_ideas || ''}
+                      onChange={(e) => setSelectedLessonPlan({ ...selectedLessonPlan, assessment_ideas: e.target.value })}
+                    />
+                  </div>
+
+                  {/* Resources & Differentiation */}
+                  <div style={{ border: '1.5px solid #cbd5e1', borderRadius: 8, padding: 16, backgroundColor: '#ffffff', boxShadow: '0 1px 3px rgba(15, 23, 42, 0.05)' }}>
+                    <div style={{ marginBottom: 8 }}>
+                      <label className="field-label" style={{ fontSize: 14, color: '#4C2570', fontWeight: 800, margin: 0, textTransform: 'uppercase' }}>
+                        Resources &amp; Differentiation
+                      </label>
+                      <span style={{ fontSize: 11.5, color: '#64748b', display: 'block', marginTop: 2 }}>
+                        Formatted into two columns in PDF (Lesson Notes, Projector, Learner's Book, Whiteboard)
+                      </span>
+                    </div>
+                    <textarea
+                      rows={4}
+                      className="field"
+                      style={{ width: '100%' }}
+                      placeholder="Lesson Notes&#10;Projector / Laptop&#10;Learner’s Book & Coursebook&#10;Whiteboard & Markers"
+                      value={selectedLessonPlan.resources || ''}
+                      onChange={(e) => setSelectedLessonPlan({ ...selectedLessonPlan, resources: e.target.value })}
+                    />
+                  </div>
+                </div>
+
+                {/* ── POST-LESSON DELIVERY & EVALUATION (Attendance & Reflections) ── */}
+                <div style={{ border: '1.5px solid #cbd5e1', borderRadius: 8, overflow: 'hidden', backgroundColor: '#ffffff', boxShadow: '0 1px 3px rgba(15, 23, 42, 0.05)' }}>
+                  <div style={{ backgroundColor: '#f8fafc', padding: '10px 16px', borderBottom: '1.5px solid #cbd5e1', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: 13, fontWeight: 800, color: '#4C2570', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                      Post-Lesson Delivery &amp; Evaluation
+                    </span>
+                    <span style={{ fontSize: 11.5, color: '#64748b' }}>Post-Lesson Attendance &amp; Teacher Reflections</span>
+                  </div>
+
+                  <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 14 }}>
+                    {/* Attendance Record */}
+                    <div>
+                      <label className="field-label" style={{ fontWeight: 700 }}>Attendance (Post-Lesson Record)</label>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                        <div>
+                          <span style={{ fontSize: 11.5, color: '#334155', fontWeight: 700, display: 'block', marginBottom: 3 }}>Boys Present:</span>
+                          <input
+                            type="number"
+                            min={0}
+                            placeholder="0"
+                            className="field"
+                            style={{ width: '100%' }}
+                            value={selectedLessonPlan.boys_attendance ?? ''}
+                            onChange={(e) => setSelectedLessonPlan({ ...selectedLessonPlan, boys_attendance: e.target.value ? parseInt(e.target.value) : null })}
+                          />
+                        </div>
+                        <div>
+                          <span style={{ fontSize: 11.5, color: '#334155', fontWeight: 700, display: 'block', marginBottom: 3 }}>Girls Present:</span>
+                          <input
+                            type="number"
+                            min={0}
+                            placeholder="0"
+                            className="field"
+                            style={{ width: '100%' }}
+                            value={selectedLessonPlan.girls_attendance ?? ''}
+                            onChange={(e) => setSelectedLessonPlan({ ...selectedLessonPlan, girls_attendance: e.target.value ? parseInt(e.target.value) : null })}
+                          />
+                        </div>
+                      </div>
+                      <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>
+                        Rendered directly into the ATTENDANCE column of the PDF.
+                      </div>
+                    </div>
+
+                    {/* Teacher Reflections & Evaluation */}
+                    <div>
+                      <label className="field-label" style={{ fontWeight: 700 }}>Teacher Reflections &amp; Evaluation</label>
+                      <textarea
+                        rows={3}
+                        className="field"
+                        style={{ width: '100%' }}
+                        placeholder="Reflections on lesson success, student understanding, scaffolds or pace adjustments for next session..."
+                        value={selectedLessonPlan.reflection_remarks || ''}
+                        onChange={(e) => setSelectedLessonPlan({ ...selectedLessonPlan, reflection_remarks: e.target.value })}
+                      />
                     </div>
                   </div>
-                  <textarea
-                    rows={6}
-                    className="field"
-                    style={{ width: '100%', fontFamily: 'inherit', lineHeight: 1.5 }}
-                    placeholder="Starter (10 min): Torch ON/OFF demo — introduce lesson inquiry question.&#10;&#10;Exposition (15 min): Exposition on binary data representation, bits, bytes and storage.&#10;&#10;Learner activity (35 min): Three stations — binary counting cards, data ladder, version control.&#10;&#10;Plenary (10 min): Exit ticket review and next session preview."
-                    value={selectedLessonPlan.main_teaching_activity || ''}
-                    onChange={(e) => setSelectedLessonPlan({ ...selectedLessonPlan, main_teaching_activity: e.target.value })}
-                  />
-                </div>
-
-                {/* ── 5. ASSESSMENT IDEAS (Section 5 in PDF) ── */}
-                <div style={{ border: '1.5px solid #cbd5e1', borderRadius: 8, padding: 16, backgroundColor: '#ffffff', boxShadow: '0 1px 3px rgba(15, 23, 42, 0.05)' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, flexWrap: 'wrap', gap: 6 }}>
-                    <label className="field-label" style={{ fontSize: 14, color: '#4C2570', fontWeight: 800, margin: 0, textTransform: 'uppercase' }}>
-                      5. Assessment Ideas
-                    </label>
-                    <span style={{ fontSize: 11.5, color: '#64748b' }}>
-                      Formative checks, marked sheets, observation rubrics, and exit tickets
-                    </span>
-                  </div>
-                  <textarea
-                    rows={3}
-                    className="field"
-                    style={{ width: '100%' }}
-                    placeholder="• Marked activity sheets and binary counting cards.&#10;• Completed data-size ladder and file-matching exercise.&#10;• Exit ticket checked and recorded."
-                    value={selectedLessonPlan.assessment_ideas || ''}
-                    onChange={(e) => setSelectedLessonPlan({ ...selectedLessonPlan, assessment_ideas: e.target.value })}
-                  />
-                </div>
-
-                {/* ── 6. NOTES / REMARKS (Section 6 in PDF) ── */}
-                <div style={{ border: '1.5px solid #cbd5e1', borderRadius: 8, padding: 16, backgroundColor: '#ffffff', boxShadow: '0 1px 3px rgba(15, 23, 42, 0.05)' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, flexWrap: 'wrap', gap: 6 }}>
-                    <label className="field-label" style={{ fontSize: 14, color: '#4C2570', fontWeight: 800, margin: 0, textTransform: 'uppercase' }}>
-                      6. Notes / Remarks
-                    </label>
-                    <span style={{ fontSize: 11.5, color: '#64748b' }}>
-                      Teacher reflections, lesson evaluation, student understanding, adjustments for next lesson
-                    </span>
-                  </div>
-                  <textarea
-                    rows={3}
-                    className="field"
-                    style={{ width: '100%' }}
-                    placeholder="Reflections on lesson success, student understanding, scaffolds or pace adjustments for next session..."
-                    value={selectedLessonPlan.reflection_remarks || ''}
-                    onChange={(e) => setSelectedLessonPlan({ ...selectedLessonPlan, reflection_remarks: e.target.value })}
-                  />
                 </div>
               </div>
             </div>
@@ -3402,7 +3532,37 @@ export default function Planning() {
                 </div>
               )}
 
-              {/* Learning Objectives Selection (Uncovered Only) */}
+              {/* Topic / Unit Title (Above Learning Objectives) */}
+              <div>
+                <label className="field-label" style={{ fontWeight: 700, color: '#0f172a' }}>Topic / Unit Title *</label>
+                <input
+                  type="text"
+                  name="topic_title"
+                  placeholder="e.g. Chemical Bonding / Fractions"
+                  className="field"
+                  value={createLpTopicTitle}
+                  onChange={(e) => setCreateLpTopicTitle(e.target.value)}
+                  required
+                  style={{ width: '100%' }}
+                />
+              </div>
+
+              {isCreateLpGlobalPerspectives && (
+                <div>
+                  <label className="field-label">Challenge (For Global Perspectives)</label>
+                  <input
+                    type="text"
+                    name="challenge_title"
+                    placeholder="e.g. Keeping Healthy / Digital World"
+                    className="field"
+                    value={createLpChallengeTitle}
+                    onChange={(e) => setCreateLpChallengeTitle(e.target.value)}
+                    style={{ width: '100%' }}
+                  />
+                </div>
+              )}
+
+              {/* Learning Objectives Selection (Uncovered Only) - Placed directly below Topic / Unit */}
               <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: 12 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, flexWrap: 'wrap', gap: 6 }}>
                   <label className="field-label" style={{ fontWeight: 700, margin: 0 }}>
@@ -3506,38 +3666,69 @@ export default function Planning() {
                 )}
               </div>
 
-              <div>
-                <label className="field-label">Topic / Unit Title</label>
-                <input
-                  type="text"
-                  name="topic_title"
-                  placeholder="e.g. Chemical Bonding / Fractions"
-                  className="field"
-                  value={createLpTopicTitle}
-                  onChange={(e) => setCreateLpTopicTitle(e.target.value)}
-                  required
-                  style={{ width: '100%' }}
-                />
-              </div>
-
-              {isCreateLpGlobalPerspectives && (
-                <div>
-                  <label className="field-label">Challenge (For Global Perspectives)</label>
-                  <input
-                    type="text"
-                    name="challenge_title"
-                    placeholder="e.g. Keeping Healthy / Digital World"
-                    className="field"
-                    value={createLpChallengeTitle}
-                    onChange={(e) => setCreateLpChallengeTitle(e.target.value)}
-                    style={{ width: '100%' }}
-                  />
+              <div style={{ border: '1.5px solid #cbd5e1', borderRadius: 8, padding: 12, backgroundColor: '#f8fafc' }}>
+                <div style={{ marginBottom: 8 }}>
+                  <label className="field-label" style={{ fontWeight: 800, color: '#4C2570', textTransform: 'uppercase', margin: 0, fontSize: 13 }}>
+                    Main Teaching Activities (4 Sub-Sections)
+                  </label>
+                  <span style={{ fontSize: 11, color: '#64748b' }}>
+                    Starter, Exposition, Learners Activity, and Plenary
+                  </span>
                 </div>
-              )}
 
-              <div>
-                <label className="field-label">Main Teaching Activities</label>
-                <textarea name="main_teaching_activity" rows={3} className="field" placeholder="Step-by-step instructional tasks..." style={{ width: '100%' }} />
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <div>
+                    <label className="field-label" style={{ fontSize: 11.5, fontWeight: 700, color: '#15803d', marginBottom: 2 }}>
+                      1. Starter (10 min)
+                    </label>
+                    <textarea
+                      name="activity_starter"
+                      rows={2}
+                      className="field"
+                      style={{ width: '100%', fontSize: 12, backgroundColor: '#ffffff' }}
+                      placeholder="Inquiry hook, warm-up question..."
+                    />
+                  </div>
+
+                  <div>
+                    <label className="field-label" style={{ fontSize: 11.5, fontWeight: 700, color: '#0369a1', marginBottom: 2 }}>
+                      2. Exposition (15 min)
+                    </label>
+                    <textarea
+                      name="activity_exposition"
+                      rows={2}
+                      className="field"
+                      style={{ width: '100%', fontSize: 12, backgroundColor: '#ffffff' }}
+                      placeholder="Concept explanation, teacher modeling..."
+                    />
+                  </div>
+
+                  <div>
+                    <label className="field-label" style={{ fontSize: 11.5, fontWeight: 700, color: '#6b21a8', marginBottom: 2 }}>
+                      3. Learners Activity (35 min)
+                    </label>
+                    <textarea
+                      name="activity_learners"
+                      rows={2}
+                      className="field"
+                      style={{ width: '100%', fontSize: 12, backgroundColor: '#ffffff' }}
+                      placeholder="Stations, tasks, collaborative practice..."
+                    />
+                  </div>
+
+                  <div>
+                    <label className="field-label" style={{ fontSize: 11.5, fontWeight: 700, color: '#b45309', marginBottom: 2 }}>
+                      4. Plenary (10 min)
+                    </label>
+                    <textarea
+                      name="activity_plenary"
+                      rows={2}
+                      className="field"
+                      style={{ width: '100%', fontSize: 12, backgroundColor: '#ffffff' }}
+                      placeholder="Exit ticket, learning review, preview..."
+                    />
+                  </div>
+                </div>
               </div>
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 10 }}>

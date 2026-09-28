@@ -289,14 +289,21 @@ function parseMainTeachingActivities(rawText?: string | null): TeachingActivityS
   }
 
   const stages: TeachingActivityStage[] = []
-  const stageRegex = /(?:^|\n)\s*(?:•\s*)?(Starter(?:\s*\([^)]*\))?:?|Exposition(?:\s*\([^)]*\))?:?|Learner\s*activity(?:\s*\([^)]*\))?:?|Plenary(?:\s*\([^)]*\))?:?)/gi
+  const stageRegex = /(?:^|\n)\s*(?:•\s*)?(Starter(?:\s*Activity)?(?:\s*\([^)]*\))?:?|Exposition(?:\s*\([^)]*\))?:?|Learner(?:s)?\s*(?:activity|Activity)?(?:\s*\([^)]*\))?:?|Plenary(?:\s*\([^)]*\))?:?|Main\s*Activity:?)/gi
   const matches = [...rawText.matchAll(stageRegex)]
 
   if (matches.length > 0) {
     for (let i = 0; i < matches.length; i++) {
       const match = matches[i]
-      const rawTitle = match[1].trim()
-      const title = rawTitle.endsWith(':') ? rawTitle : `${rawTitle}:`
+      let title = match[1].trim()
+      const lower = title.toLowerCase()
+      if (!title.includes('(')) {
+        if (lower.startsWith('starter')) title = 'Starter (10 min):'
+        else if (lower.startsWith('exposition') || lower.startsWith('main activity')) title = 'Exposition (15 min):'
+        else if (lower.startsWith('learner')) title = 'Learner activity (35 min):'
+        else if (lower.startsWith('plenary')) title = 'Plenary (10 min):'
+      }
+      if (!title.endsWith(':')) title = `${title}:`
       const startIndex = match.index! + match[0].length
       const endIndex = i + 1 < matches.length ? matches[i + 1].index! : rawText.length
       const body = rawText.slice(startIndex, endIndex).trim().replace(/^[-—:]\s*/, '')
