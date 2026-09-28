@@ -14,6 +14,7 @@ import type {
   CurriculumScheme,
   CurriculumTopic,
   LessonPlan,
+  Profile,
   Subject,
   TeacherScheduleSlot,
   WorkPlan,
@@ -21,8 +22,10 @@ import type {
   ParsedWorkPlan,
   ParsedWorkPlanWeek
 } from '../lib/types'
+import PlanningExecutiveDashboard from '../components/dashboards/PlanningExecutiveDashboard'
+import TeacherSyllabusCoverageCard from '../components/dashboards/TeacherSyllabusCoverageCard'
 
-type PlanningSubTab = 'work_plans' | 'lesson_plans' | 'timetable' | 'curriculum' | 'review'
+type PlanningSubTab = 'executive' | 'work_plans' | 'lesson_plans' | 'timetable' | 'curriculum' | 'review'
 
 const DAYS_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 
@@ -84,16 +87,35 @@ export default function Planning() {
   const { profile, user } = useAuth()
   const { school, classes, subjects, refresh } = useSchool()
 
-  const [activeTab, setActiveTab] = useState<PlanningSubTab>('work_plans')
+  // Roles & Capabilities
+  const isLeadership = can(profile?.role, 'viewDirectorDashboard', profile?.additional_roles)
+  const canManageCurriculum = can(profile?.role, 'manageCurriculum', profile?.additional_roles)
+  const isCoordinator = profile?.role === 'curriculum_coordinator' || Boolean(profile?.additional_roles && profile.additional_roles.includes('curriculum_coordinator'))
+  const isDirector = profile?.role === 'director' || Boolean(profile?.additional_roles && profile.additional_roles.includes('director'))
+  const isHeadOfSchool = profile?.role === 'head_of_school' || Boolean(profile?.additional_roles && profile.additional_roles.includes('head_of_school'))
+  const hasExecutiveAccess = isLeadership || isDirector || isHeadOfSchool || isCoordinator
+  const isTeacher = profile?.role === 'homeroom_teacher' || profile?.role === 'subject_teacher' || isCoordinator || !isLeadership
+
+  const [activeTab, setActiveTab] = useState<PlanningSubTab>(() => {
+    if (profile?.role === 'director' || profile?.role === 'head_of_school') {
+      return 'executive'
+    }
+    return 'work_plans'
+  })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
 
-  // Roles & Capabilities
-  const isLeadership = can(profile?.role, 'viewDirectorDashboard', profile?.additional_roles)
-  const canManageCurriculum = can(profile?.role, 'manageCurriculum', profile?.additional_roles)
-  const isCoordinator = profile?.role === 'curriculum_coordinator'
-  const isTeacher = profile?.role === 'homeroom_teacher' || profile?.role === 'subject_teacher' || isCoordinator || !isLeadership
+  // Profiles and school schedule slots for executive dashboard
+  const [profiles, setProfiles] = useState<Profile[]>([])
+  const [allTimetableSlots, setAllTimetableSlots] = useState<TeacherScheduleSlot[]>([])
+
+  // Auto-switch to executive tab for Director or Head of School once profile loads
+  useEffect(() => {
+    if ((profile?.role === 'director' || profile?.role === 'head_of_school') && activeTab === 'work_plans') {
+      setActiveTab('executive')
+    }
+  }, [profile?.role])
 
   // Work Plans State
   const [workPlans, setWorkPlans] = useState<WorkPlan[]>([])
@@ -176,7 +198,7 @@ export default function Planning() {
     setLoading(true)
     setError(null)
     try {
-      const teacherFilter = isLeadership ? undefined : { teacherId: profile?.id }
+      const teacherFilter = hasExecutiveAccess ? undefined : { teacherId: profile?.id }
 
       // Fetch Work Plans
       const wps = await api.listWorkPlans(teacherFilter)
@@ -186,9 +208,19 @@ export default function Planning() {
       const lps = await api.listLessonPlans(teacherFilter)
       setLessonPlans(lps)
 
-      // Fetch Timetable
+      // Fetch Timetable for current user
       const tt = await api.getTeacherTimetable(profile?.id)
       setTimetableSlots(tt.slots)
+
+      // If user has executive oversight access, fetch all staff profiles and all schedule slots
+      if (hasExecutiveAccess) {
+        const [allTt, profs] = await Promise.all([
+          api.getTeacherTimetable('all').catch(() => ({ timetable: null, slots: [] as TeacherScheduleSlot[] })),
+          api.listProfiles().catch(() => [] as Profile[])
+        ])
+        setAllTimetableSlots(allTt.slots || [])
+        setProfiles(profs || [])
+      }
 
       // One-time reset of legacy pre-seeded frameworks so curriculum library starts at 0
       if (localStorage.getItem('leera_curriculum_reset_v3') !== 'true') {
@@ -988,6 +1020,26 @@ export default function Planning() {
     }
   }
 
+  const handleApproveLessonPlanExecutive = async (planId: string) => {
+    try {
+      await api.reviewLessonPlan(planId, 'approved', '')
+      setSuccess('Lesson plan approved successfully.')
+      await loadAllPlanningData()
+    } catch (err: any) {
+      setError(err?.message || 'Failed to approve lesson plan.')
+    }
+  }
+
+  const handleReturnLessonPlanExecutive = async (planId: string, comment: string) => {
+    try {
+      await api.reviewLessonPlan(planId, 'returned', comment)
+      setSuccess('Lesson plan returned with feedback.')
+      await loadAllPlanningData()
+    } catch (err: any) {
+      setError(err?.message || 'Failed to return lesson plan.')
+    }
+  }
+
   // -------------------------------------------------------------------------
   // RENDER HELPERS
   // -------------------------------------------------------------------------
@@ -1400,6 +1452,15 @@ export default function Planning() {
 
       {/* Sub-tab Navigation */}
       <div className="seg" style={{ marginBottom: 20 }}>
+        {hasExecutiveAccess && (
+          <button
+            className={`seg-btn ${activeTab === 'executive' ? 'active' : ''}`}
+            onClick={() => setActiveTab('executive')}
+            style={activeTab === 'executive' ? { fontWeight: 700 } : undefined}
+          >
+            📊 Executive Compliance
+          </button>
+        )}
         <button
           className={`seg-btn ${activeTab === 'work_plans' ? 'active' : ''}`}
           onClick={() => { setActiveTab('work_plans'); setSelectedWorkPlan(null) }}
@@ -1435,10 +1496,43 @@ export default function Planning() {
       </div>
 
       {/* ===================================================================== */}
+      {/* 0. EXECUTIVE PLANNING DASHBOARD (Director, HOS, Coordinator)         */}
+      {/* ===================================================================== */}
+      {activeTab === 'executive' && hasExecutiveAccess && (
+        <PlanningExecutiveDashboard
+          profiles={profiles}
+          slots={allTimetableSlots.length > 0 ? allTimetableSlots : timetableSlots}
+          lessonPlans={lessonPlans}
+          workPlans={workPlans}
+          schemes={schemes}
+          assignments={assignments}
+          classes={classes}
+          subjects={subjects}
+          currentUserId={profile?.id}
+          isDirector={isDirector}
+          isHeadOfSchool={isHeadOfSchool}
+          isCoordinator={isCoordinator}
+          onPreviewLessonPlanPdf={handlePreviewLessonPlanPdf}
+          onApproveLessonPlan={handleApproveLessonPlanExecutive}
+          onReturnLessonPlan={handleReturnLessonPlanExecutive}
+        />
+      )}
+
+      {/* ===================================================================== */}
       {/* 1. WORK PLANS TAB                                                     */}
       {/* ===================================================================== */}
       {activeTab === 'work_plans' && (
         <div>
+          {!selectedWorkPlan && (
+            <TeacherSyllabusCoverageCard
+              teacherId={isDirector || isHeadOfSchool ? undefined : profile?.id}
+              workPlans={workPlans}
+              lessonPlans={lessonPlans}
+              schemes={schemes}
+              title={isDirector || isHeadOfSchool ? '🎯 School-Wide Syllabus Coverage' : '🎯 My Syllabus Coverage (Work Plans & Lessons)'}
+              style={{ marginBottom: 16 }}
+            />
+          )}
           {!selectedWorkPlan ? (
             (() => {
               const myWorkPlans = workPlans.filter((wp) => wp.teacher_id === profile?.id)
@@ -1877,6 +1971,16 @@ export default function Planning() {
       {/* ===================================================================== */}
       {activeTab === 'lesson_plans' && (
         <div>
+          {!selectedLessonPlan && (
+            <TeacherSyllabusCoverageCard
+              teacherId={isDirector || isHeadOfSchool ? undefined : profile?.id}
+              workPlans={workPlans}
+              lessonPlans={lessonPlans}
+              schemes={schemes}
+              title={isDirector || isHeadOfSchool ? '🎯 School-Wide Syllabus Coverage' : '🎯 My Syllabus Coverage Status'}
+              style={{ marginBottom: 16 }}
+            />
+          )}
           {!selectedLessonPlan ? (
             (() => {
               const myLessonPlans = lessonPlans.filter((lp) => lp.teacher_id === profile?.id)

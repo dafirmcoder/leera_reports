@@ -1,6 +1,7 @@
 import { jsPDF } from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import type { LessonPlan, School, WorkPlan } from './types'
+import { LEERA_LESSON_PLAN_LOGO_DATA_URL } from './lessonPlanLogo'
 
 // Helper for ordinal day formatting (e.g. 24 -> 24TH)
 function formatOrdinalDay(day: number): string {
@@ -205,210 +206,429 @@ export async function generateWorkPlanPdf(plan: WorkPlan, school: School): Promi
   return doc
 }
 
-/**
- * Generates Lesson Plan PDF matching CAMBRIFY's exact portrait layout with two-tone header bar.
- */
-export async function generateLessonPlanPdf(plan: LessonPlan, school: School): Promise<jsPDF> {
-  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' })
-  const pageW = 210
-  const pageH = 297
-  const leftM = 14
-  const rightM = 14
-  const usableW = pageW - leftM - rightM // 182mm
+// ---------------------------------------------------------------------------
+// LESSON PLAN PDF (MATCHES VERBATIM STRUCTURE, COLORS & LOGO PLACEMENT)
+// ---------------------------------------------------------------------------
 
-  // 1. TOP HEADER (School Name / Logo on left, Crimson red school + Deep Indigo title on right)
-  doc.setFont('helvetica', 'bold')
-  doc.setFontSize(10)
-  doc.setTextColor(15, 23, 42) // #0f172a
-  doc.text(school.name.toUpperCase(), leftM, 13)
-  doc.setFont('helvetica', 'italic')
-  doc.setFontSize(7.5)
-  doc.setTextColor(11, 79, 138) // #0B4F8A Cambridge blue
-  doc.text('Cambridge International School', leftM, 17)
+const BRAND_RED = [227, 10, 20] as const // #E30A14 Crimson Red
+const BRAND_PURPLE = [76, 37, 112] as const // #4C2570 Deep Purple
+const BRAND_PURPLE_LINE = [76, 37, 110] as const
+const CELL_BG = [255, 242, 204] as const // #FFF2CC Pale Cream Yellow
+const FOOTER_LIME = [149, 191, 32] as const // #95BF20 Brand Green
+const BORDER_COLOR = [0, 0, 0] as const
+const BORDER_DASH = [0.72, 0.72] as const
+const BORDER_LW = 0.72
 
-  // Header Right
-  doc.setFont('helvetica', 'bold')
-  doc.setFontSize(10.5)
-  doc.setTextColor(200, 16, 46) // #C8102E Crimson Red
-  doc.text(school.name.toUpperCase(), pageW - rightM, 13, { align: 'right' })
+function formatLessonPlanDate(dateStr?: string | null): string {
+  if (!dateStr) return 'TUESDAY 15TH SEPTEMBER 2026'
+  const d = new Date(dateStr)
+  if (isNaN(d.getTime())) return dateStr.toUpperCase()
 
-  doc.setFont('helvetica', 'bold')
-  doc.setFontSize(13)
-  doc.setTextColor(30, 27, 75) // #1E1B4B Deep Indigo
-  doc.text('LESSON PLAN', pageW - rightM, 19, { align: 'right' })
-
-  // 2. TWO-TONE ACCENT DIVIDER BAR (Red left 80mm, Indigo right 102mm)
-  const dividerY = 22
-  doc.setDrawColor(211, 18, 42) // #D3122A Red
-  doc.setLineWidth(1.2)
-  doc.line(leftM, dividerY, leftM + 80, dividerY)
-
-  doc.setDrawColor(46, 16, 101) // #2E1065 Indigo
-  doc.setLineWidth(0.8)
-  doc.line(leftM + 80, dividerY, pageW - rightM, dividerY)
-
-  // 3. CONTEXT & METADATA SECTION TABLE
-  const timeSlot = plan.start_time && plan.end_time ? `${plan.start_time} – ${plan.end_time}` : 'Scheduled Lesson'
-  const attendanceStr = plan.boys_attendance != null || plan.girls_attendance != null
-    ? `Boys: ${plan.boys_attendance ?? 0} | Girls: ${plan.girls_attendance ?? 0} | Total: ${(plan.boys_attendance ?? 0) + (plan.girls_attendance ?? 0)}`
-    : 'Pending Delivery'
-
-  const metaRows = [
-    [
-      { content: 'Subject:', styles: { fontStyle: 'bold' as const, cellWidth: 26 } },
-      { content: plan.subject_name || 'Subject', styles: { cellWidth: 65 } },
-      { content: 'Class / Stage:', styles: { fontStyle: 'bold' as const, cellWidth: 28 } },
-      { content: plan.class_name || 'Class', styles: { cellWidth: 63 } }
-    ],
-    [
-      { content: 'Date & Time:', styles: { fontStyle: 'bold' as const } },
-      { content: `${new Date(plan.lesson_date).toLocaleDateString()} (${timeSlot})` },
-      { content: 'Teacher:', styles: { fontStyle: 'bold' as const } },
-      { content: plan.teacher_name || 'Teacher' }
-    ],
-    [
-      { content: plan.challenge_title ? 'Challenge:' : 'Topic / Unit:', styles: { fontStyle: 'bold' as const } },
-      { content: plan.challenge_title ? `${plan.challenge_title} — ${plan.topic_title || ''}` : (plan.topic_title || 'Unit'), colSpan: 3 }
-    ],
-    [
-      { content: 'Attendance:', styles: { fontStyle: 'bold' as const } },
-      { content: attendanceStr, colSpan: 3 }
-    ]
+  const days = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY']
+  const months = [
+    'JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE',
+    'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER'
   ]
 
-  autoTable(doc, {
-    startY: dividerY + 3,
-    body: metaRows,
-    theme: 'grid',
-    margin: { left: leftM, right: rightM },
-    styles: {
-      fontSize: 8,
-      cellPadding: 2,
-      lineColor: [203, 213, 225],
-      lineWidth: 0.2
-    }
-  })
+  const dayOfWeek = days[d.getDay()]
+  const dayNum = d.getDate()
+  const monthName = months[d.getMonth()]
+  const year = d.getFullYear()
 
-  // 4. LEARNING OBJECTIVES SECTION
-  const currentY = (doc as any).lastAutoTable.finalY + 4
-  doc.setFont('helvetica', 'bold')
-  doc.setFontSize(9)
-  doc.setTextColor(11, 79, 138)
-  doc.text('1. LEARNING OBJECTIVES', leftM, currentY)
+  let suffix = 'TH'
+  if (dayNum % 10 === 1 && dayNum !== 11) suffix = 'ST'
+  else if (dayNum % 10 === 2 && dayNum !== 12) suffix = 'ND'
+  else if (dayNum % 10 === 3 && dayNum !== 13) suffix = 'RD'
 
-  const objRows: any[] = []
-  const objectives = plan.objectives || []
-  if (objectives.length > 0) {
-    objectives.forEach((o) => {
-      objRows.push([o.code_snapshot, o.text_snapshot])
-    })
-  } else {
-    objRows.push(['LO-01', 'General curriculum learning objectives and skills for this lesson.'])
+  return `${dayOfWeek} ${dayNum}${suffix} ${monthName} ${year}`
+}
+
+function drawDottedLine(doc: jsPDF, x1: number, y1: number, x2: number, y2: number) {
+  doc.saveGraphicsState()
+  doc.setDrawColor(...BORDER_COLOR)
+  doc.setLineWidth(BORDER_LW)
+  doc.setLineDashPattern([...BORDER_DASH], 0)
+  doc.line(x1, y1, x2, y2)
+  doc.restoreGraphicsState()
+}
+
+function drawDottedCell(doc: jsPDF, x: number, y: number, w: number, h: number) {
+  doc.setFillColor(...CELL_BG)
+  doc.rect(x, y, w, h, 'F')
+  drawDottedLine(doc, x, y, x + w, y)
+  drawDottedLine(doc, x, y + h, x + w, y + h)
+  drawDottedLine(doc, x, y, x, y + h)
+  drawDottedLine(doc, x + w, y, x + w, y + h)
+}
+
+interface TeachingActivityStage {
+  title: string
+  text: string
+}
+
+function parseMainTeachingActivities(rawText?: string | null): TeachingActivityStage[] {
+  if (!rawText || !rawText.trim()) {
+    return [
+      {
+        title: 'Starter (10 min):',
+        text: 'Torch ON/OFF demo — “Computers only see two states; how do they show numbers, pictures and words?”; introduce the lesson question.'
+      },
+      {
+        title: 'Exposition (15 min):',
+        text: 'How computers represent data in binary (0,1) — patterns of switches; data measurement — bits, bytes, kilobytes and megabytes, making links to memory size and storage; version control — how digital tools keep versions of an artefact so we can navigate between them.'
+      },
+      {
+        title: 'Learner activity (35 min):',
+        text: 'Three stations — (a) binary counting cards: hold up 0/1 cards to build given numbers and write binary patterns; (b) data-size ladder: order bit, byte, kilobyte, megabyte and match files (photo, song, essay) to the size that fits; (c) version control: edit a shared document, open its version history, navigate between versions and restore an earlier one.'
+      },
+      {
+        title: 'Plenary (10 min):',
+        text: 'Exit ticket — read one binary pattern, answer one data-size question, and state one benefit of version control; preview Friday’s new unit on networks.'
+      }
+    ]
   }
 
-  autoTable(doc, {
-    startY: currentY + 1.5,
-    head: [['Code', 'Objective & Key Skills']],
-    body: objRows,
-    theme: 'grid',
-    margin: { left: leftM, right: rightM },
-    headStyles: {
-      fillColor: [11, 79, 138],
-      textColor: [255, 255, 255],
-      fontSize: 8,
-      fontStyle: 'bold',
-      cellPadding: 1.8
-    },
-    styles: {
-      fontSize: 7.5,
-      cellPadding: 2,
-      lineColor: [203, 213, 225],
-      lineWidth: 0.2
-    },
-    columnStyles: {
-      0: { cellWidth: 28, fontStyle: 'bold' },
-      1: { cellWidth: usableW - 28 }
+  const stages: TeachingActivityStage[] = []
+  const stageRegex = /(?:^|\n)\s*(?:•\s*)?(Starter(?:\s*\([^)]*\))?:?|Exposition(?:\s*\([^)]*\))?:?|Learner\s*activity(?:\s*\([^)]*\))?:?|Plenary(?:\s*\([^)]*\))?:?)/gi
+  const matches = [...rawText.matchAll(stageRegex)]
+
+  if (matches.length > 0) {
+    for (let i = 0; i < matches.length; i++) {
+      const match = matches[i]
+      const rawTitle = match[1].trim()
+      const title = rawTitle.endsWith(':') ? rawTitle : `${rawTitle}:`
+      const startIndex = match.index! + match[0].length
+      const endIndex = i + 1 < matches.length ? matches[i + 1].index! : rawText.length
+      const body = rawText.slice(startIndex, endIndex).trim().replace(/^[-—:]\s*/, '')
+      stages.push({ title, text: body })
     }
-  })
+    return stages
+  }
 
-  // 5. INSTRUCTIONAL PROCEDURES & PEDAGOGY
-  const procY = (doc as any).lastAutoTable.finalY + 4
-  doc.setFont('helvetica', 'bold')
-  doc.setFontSize(9)
-  doc.setTextColor(11, 79, 138)
-  doc.text('2. INSTRUCTIONAL PROCEDURES & ACTIVITIES', leftM, procY)
+  const lines = rawText.split(/\n|•/).map(l => l.trim()).filter(l => l.length > 0)
+  if (lines.length > 0) {
+    return lines.map((line, idx) => {
+      const parts = line.split(/:\s*(.+)/)
+      if (parts.length > 1) {
+        return { title: `${parts[0]}:`, text: parts[1] }
+      }
+      return { title: `Activity ${idx + 1}:`, text: line }
+    })
+  }
 
-  const procRows = [
-    [
-      { content: 'Main Teaching Activities:\n(Teacher input, student tasks, inquiry)', styles: { fontStyle: 'bold' as const, cellWidth: 48 } },
-      { content: plan.main_teaching_activity || 'Interactive discussion, hands-on inquiry, and collaborative tasks.' }
-    ],
-    [
-      { content: 'Assessment Ideas & Plenary:\n(Formative checks, exit tickets)', styles: { fontStyle: 'bold' as const } },
-      { content: plan.assessment_ideas || 'Quick quiz, peer check, and recap of learning objectives.' }
-    ],
-    [
-      { content: 'Resources & Materials:', styles: { fontStyle: 'bold' as const } },
-      { content: plan.resources || 'Coursebook, worksheets, digital slides/devices.' }
-    ],
-    [
-      { content: 'Differentiation & Support:', styles: { fontStyle: 'bold' as const } },
-      { content: plan.differentiation || 'Scaffolded prompts for developing learners; extension challenges for advanced learners.' }
-    ]
+  return [
+    { title: 'Activity:', text: rawText }
   ]
+}
 
-  autoTable(doc, {
-    startY: procY + 1.5,
-    body: procRows,
-    theme: 'grid',
-    margin: { left: leftM, right: rightM },
-    styles: {
-      fontSize: 7.5,
-      cellPadding: 2.5,
-      lineColor: [203, 213, 225],
-      lineWidth: 0.2
+function renderSingleLessonPlanPage(doc: jsPDF, plan: LessonPlan, school: School) {
+  const pageW = 612
+  const pageH = 792
+  const leftM = 57.6
+  const contentW = 496.8
+
+  // 1. SCHOOL LOGO (TOP LEFT)
+  const logoUrl = (school as any).logo_url || LEERA_LESSON_PLAN_LOGO_DATA_URL
+  try {
+    doc.addImage(logoUrl, 'PNG', 62.3, 47.6, 128.9, 48.0)
+  } catch {
+    try {
+      doc.addImage(LEERA_LESSON_PLAN_LOGO_DATA_URL, 'PNG', 62.3, 47.6, 128.9, 48.0)
+    } catch {
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(14)
+      doc.setTextColor(...BRAND_RED)
+      doc.text(school.name.toUpperCase(), 62.3, 75)
     }
-  })
+  }
 
-  // 6. POST-LESSON REFLECTIONS & LEADERSHIP REVIEW
-  const refY = (doc as any).lastAutoTable.finalY + 4
+  // 2. HEADER RIGHT (Crimson red school name + Deep Purple LESSON PLAN title)
   doc.setFont('helvetica', 'bold')
-  doc.setFontSize(9)
-  doc.setTextColor(11, 79, 138)
-  doc.text('3. POST-LESSON DELIVERY & EVALUATION', leftM, refY)
+  doc.setFontSize(12)
+  doc.setTextColor(...BRAND_RED)
+  doc.text(school.name.toUpperCase(), 554.4, 61.2, { align: 'right' })
 
-  const refRows = [
-    [
-      { content: 'Teacher Reflections & Evaluation:\n(Student engagement, areas for review)', styles: { fontStyle: 'bold' as const, cellWidth: 48 } },
-      { content: plan.reflection_remarks || 'To be completed after lesson delivery.' }
-    ],
-    [
-      { content: 'Review Status & Comments:', styles: { fontStyle: 'bold' as const } },
-      { content: `Status: ${plan.status.toUpperCase()}${plan.review_comment ? ` — Note: ${plan.review_comment}` : ''}` }
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(12)
+  doc.setTextColor(...BRAND_PURPLE)
+  doc.text('LESSON PLAN', 554.4, 77.2, { align: 'right' })
+
+  // 3. TWO-TONE ACCENT DIVIDER BAR (Red left 236.6pt, Purple right line)
+  doc.setFillColor(...BRAND_RED)
+  doc.rect(58.0, 95.6, 236.6, 5.2, 'F')
+
+  doc.saveGraphicsState()
+  doc.setDrawColor(...BRAND_PURPLE_LINE)
+  doc.setLineWidth(2.25)
+  doc.line(292.3, 99.4, 556.0, 99.4)
+  doc.restoreGraphicsState()
+
+  // 4. CONTEXT & METADATA SECTION TABLE
+  let curY = 102.6
+  const row1H = 15.7
+  drawDottedCell(doc, leftM, curY, 248.4, row1H)
+  drawDottedCell(doc, leftM + 248.4, curY, 248.4, row1H)
+
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(9.96)
+  doc.setTextColor(0, 0, 0)
+  doc.text(`TEACHER: ${(plan.teacher_name || 'Teacher').toUpperCase()}`, leftM + 5.1, curY + 11)
+  doc.text(`CLASS: ${(plan.class_name || 'Class').toUpperCase()}`, leftM + 248.4 + 5.5, curY + 11)
+
+  curY += row1H
+  const row2H = 28.7
+  drawDottedCell(doc, leftM, curY, 248.4, row2H)
+  drawDottedCell(doc, leftM + 248.4, curY, 248.4, row2H)
+
+  doc.text(`SUBJECT: ${(plan.subject_name || 'Subject').toUpperCase()}`, leftM + 5.1, curY + 17.5)
+
+  const dateFormatted = formatLessonPlanDate(plan.lesson_date)
+  const timeFormatted = plan.start_time && plan.end_time
+    ? `${plan.start_time} – ${plan.end_time}`
+    : ''
+  const periodOrTime = timeFormatted ? `(${timeFormatted})` : ''
+  const dateFullStr = `DATE: ${dateFormatted} ${periodOrTime}`.trim()
+  const dateLines = doc.splitTextToSize(dateFullStr, 248.4 - 11)
+  if (dateLines.length > 1) {
+    doc.text(dateLines[0], leftM + 248.4 + 5.5, curY + 11)
+    doc.text(dateLines[1], leftM + 248.4 + 5.5, curY + 24.5)
+  } else {
+    doc.text(dateFullStr, leftM + 248.4 + 5.5, curY + 17.5)
+  }
+
+  curY += row2H
+  const row3H = 42.5
+  drawDottedCell(doc, leftM, curY, 248.4, row3H)
+  drawDottedCell(doc, leftM + 248.4, curY, 82.8, row3H)
+  drawDottedCell(doc, leftM + 248.4 + 82.8, curY, 165.6, 15.7)
+  drawDottedCell(doc, leftM + 248.4 + 82.8, curY + 15.7, 165.6, row3H - 15.7)
+
+  const challengeStr = plan.challenge_title ? `${plan.challenge_title.toUpperCase()} — ` : ''
+  const topicStr = plan.topic_title ? plan.topic_title.toUpperCase() : ''
+  const subtopicStr = plan.subtopic_title ? ` (${plan.subtopic_title})` : ''
+  let unitBody = (challengeStr + topicStr + subtopicStr).trim()
+  if (!unitBody) unitBody = 'CURRICULUM UNIT'
+
+  const unitFullStr = `UNIT/SUB-UNIT: ${unitBody}`
+  const unitLines = doc.splitTextToSize(unitFullStr, 248.4 - 10.2)
+  for (let u = 0; u < Math.min(unitLines.length, 3); u++) {
+    doc.text(unitLines[u], leftM + 5.1, curY + 12 + u * 13)
+  }
+
+  doc.text('ATTENDANCE:', leftM + 248.4 + 5.5, curY + 25)
+  const boysStr = plan.boys_attendance != null ? ` ${plan.boys_attendance}` : ''
+  const girlsStr = plan.girls_attendance != null ? ` ${plan.girls_attendance}` : ''
+  doc.text(`BOYS:${boysStr}`, leftM + 248.4 + 82.8 + 5.5, curY + 11.5)
+  doc.text(`GIRLS:${girlsStr}`, leftM + 248.4 + 82.8 + 5.5, curY + 29.5)
+
+  curY += row3H + 9.5
+
+  // 5. RESOURCES SECTION
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(9.96)
+  doc.setTextColor(...BRAND_PURPLE)
+  doc.text('RESOURCES', leftM, curY)
+  curY += 5.4
+
+  let userResources: string[] = []
+  if (plan.resources && plan.resources.trim()) {
+    userResources = plan.resources
+      .split(/\n|•|;/)
+      .map(r => r.trim())
+      .filter(r => r.length > 0)
+  }
+  const defaultLeft = ['Lesson Notes', 'Projector', 'Laptop']
+  const defaultRight = ['Learner’s Book', 'Teacher’s Resource', 'Whiteboard/marker']
+
+  const resColLeft: string[] = []
+  const resColRight: string[] = []
+  for (let i = 0; i < 3; i++) {
+    resColLeft.push(userResources[i * 2] || defaultLeft[i])
+    resColRight.push(userResources[i * 2 + 1] || defaultRight[i])
+  }
+
+  const resRowH = 15.4
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(9.96)
+  doc.setTextColor(0, 0, 0)
+
+  for (let r = 0; r < 3; r++) {
+    drawDottedCell(doc, leftM, curY, 248.4, resRowH)
+    drawDottedCell(doc, leftM + 248.4, curY, 248.4, resRowH)
+    doc.text(`• ${resColLeft[r].replace(/^•\s*/, '')}`, leftM + 5.1, curY + 11)
+    doc.text(`• ${resColRight[r].replace(/^•\s*/, '')}`, leftM + 248.4 + 5.5, curY + 11)
+    curY += resRowH
+  }
+
+  curY += 9.5
+
+  // 6. LEARNING OBJECTIVES SECTION
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(9.96)
+  doc.setTextColor(...BRAND_PURPLE)
+  doc.text('LEARNING OBJECTIVES', leftM, curY)
+  curY += 5.4
+
+  const loIntroH = 15.4
+  drawDottedCell(doc, leftM, curY, contentW, loIntroH)
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(9.96)
+  doc.setTextColor(0, 0, 0)
+  doc.text('By the end of this lesson, learners should be able to:', leftM + 5.1, curY + 11)
+  curY += loIntroH
+
+  const objectives = plan.objectives || []
+  const loList: string[] = []
+  if (objectives.length > 0) {
+    objectives.forEach(o => {
+      const codePart = o.code_snapshot ? `${o.code_snapshot}: ` : ''
+      loList.push(`• ${codePart}${o.text_snapshot}`)
+    })
+  } else {
+    loList.push('• General curriculum learning objectives and skills for this lesson.')
+  }
+
+  for (const loText of loList) {
+    const wrapped = doc.splitTextToSize(loText, contentW - 10.2)
+    const loH = Math.max(15.4, wrapped.length * 13.4 + 2)
+    drawDottedCell(doc, leftM, curY, contentW, loH)
+    for (let l = 0; l < wrapped.length; l++) {
+      doc.text(wrapped[l], leftM + 5.1, curY + 11 + l * 13.4)
+    }
+    curY += loH
+  }
+
+  curY += 9.5
+
+  // 7. MAIN TEACHING ACTIVITY SECTION
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(9.96)
+  doc.setTextColor(...BRAND_PURPLE)
+  doc.text('MAIN TEACHING ACTIVITY', leftM, curY)
+  curY += 5.4
+
+  const activities = parseMainTeachingActivities(plan.main_teaching_activity)
+  for (const act of activities) {
+    const titleW = doc.getTextWidth(act.title) + 5
+    const maxFirstLineW = contentW - 13.3 - titleW - 5.1
+    const firstLineWords = doc.splitTextToSize(act.text, maxFirstLineW)
+    const firstLine = firstLineWords[0] || ''
+    const remainingText = act.text.slice(firstLine.length).trim()
+    const restLines = remainingText ? doc.splitTextToSize(remainingText, contentW - 10.2) : []
+
+    const totalLines = 1 + restLines.length
+    const actH = Math.max(28.7, totalLines * 13.4 + 2)
+
+    drawDottedCell(doc, leftM, curY, contentW, actH)
+
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(9.96)
+    doc.setTextColor(0, 0, 0)
+    doc.text('•', leftM + 5.1, curY + 11)
+
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(...BRAND_PURPLE)
+    doc.text(act.title, leftM + 13.3, curY + 11)
+
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(0, 0, 0)
+    doc.text(firstLine, leftM + 13.3 + titleW, curY + 11)
+
+    for (let l = 0; l < restLines.length; l++) {
+      doc.text(restLines[l], leftM + 5.1, curY + 11 + (l + 1) * 13.4)
+    }
+
+    curY += actH
+  }
+
+  curY += 9.5
+
+  // 8. ASSESSMENT IDEAS SECTION
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(9.96)
+  doc.setTextColor(...BRAND_PURPLE)
+  doc.text('ASSESMENT IDEAS', leftM, curY)
+  curY += 5.4
+
+  let assessItems: string[] = []
+  if (plan.assessment_ideas && plan.assessment_ideas.trim()) {
+    assessItems = plan.assessment_ideas
+      .split(/\n|•|;/)
+      .map(a => a.trim())
+      .filter(a => a.length > 0)
+  }
+  if (assessItems.length === 0) {
+    assessItems = [
+      'Marked binary counting-card activity sheet.',
+      'Completed data-size ladder and file-matching sheet.',
+      'Version-history navigation checklist.',
+      'Exit ticket checked and recorded.'
     ]
-  ]
+  }
 
-  autoTable(doc, {
-    startY: refY + 1.5,
-    body: refRows,
-    theme: 'grid',
-    margin: { left: leftM, right: rightM, bottom: 15 },
-    styles: {
-      fontSize: 7.5,
-      cellPadding: 2.5,
-      lineColor: [203, 213, 225],
-      lineWidth: 0.2
-    }
-  })
+  const assessH = Math.max(50, assessItems.length * 15.4 + 0.6)
+  drawDottedCell(doc, leftM, curY, contentW, assessH)
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(9.96)
+  doc.setTextColor(0, 0, 0)
 
-  // 7. BOTTOM BRAND GREEN FOOTER BAR
-  const footerH = 8
-  doc.setFillColor(112, 176, 32) // #70B020 Brand Green footer bar matching CAMBRIFY
-  doc.rect(0, pageH - footerH, pageW, footerH, 'F')
+  for (let a = 0; a < assessItems.length; a++) {
+    doc.text(`• ${assessItems[a].replace(/^•\s*/, '')}`, leftM + 5.1, curY + 11 + a * 15.4)
+  }
+
+  curY += assessH + 9.5
+
+  // 9. NOTES/REMARKS SECTION
   doc.setFont('helvetica', 'bold')
-  doc.setFontSize(7)
+  doc.setFontSize(9.96)
+  doc.setTextColor(...BRAND_PURPLE)
+  doc.text('NOTES/REMARKS', leftM, curY)
+  curY += 5.4
+
+  const footerTop = pageH - 56.6 // 735.4
+  const notesH = Math.max(24.1, Math.min(40, footerTop - curY - 10))
+  drawDottedCell(doc, leftM, curY, contentW, notesH)
+  if (plan.reflection_remarks) {
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(9.96)
+    doc.setTextColor(0, 0, 0)
+    const remarksWrapped = doc.splitTextToSize(plan.reflection_remarks, contentW - 10.2)
+    for (let r = 0; r < remarksWrapped.length; r++) {
+      doc.text(remarksWrapped[r], leftM + 5.1, curY + 11 + r * 13.4)
+    }
+  }
+
+  // 10. BOTTOM BRAND GREEN FOOTER BAR
+  const footerH = 20.7
+  doc.setFillColor(...FOOTER_LIME)
+  doc.rect(0, footerTop, pageW, footerH, 'F')
+
+  const year = plan.lesson_date ? new Date(plan.lesson_date).getFullYear() : new Date().getFullYear()
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(8)
   doc.setTextColor(255, 255, 255)
-  doc.text(`© ${school.name.toUpperCase()} · CAMBRIDGE INTERNATIONAL CURRICULUM`, pageW / 2, pageH - 2.5, { align: 'center' })
+  doc.text(`© ${school.name.toUpperCase()} - ${year}`, pageW / 2, footerTop + 13.1, { align: 'center' })
+}
+
+/**
+ * Generates Lesson Plan PDF matching the exact verbatim structure, colors,
+ * arrangement, and school logo placement of LIS_YEAR_5_COMPUTING_WEEK_4_2026-2027.pdf.
+ * Supports both single LessonPlan and array of LessonPlans (1 page per lesson).
+ */
+export async function generateLessonPlanPdf(
+  planOrPlans: LessonPlan | LessonPlan[],
+  school: School
+): Promise<jsPDF> {
+  const plans = Array.isArray(planOrPlans) ? planOrPlans : [planOrPlans]
+  const doc = new jsPDF({ unit: 'pt', format: [612, 792], orientation: 'portrait' })
+
+  plans.forEach((plan, idx) => {
+    if (idx > 0) {
+      doc.addPage([612, 792], 'portrait')
+    }
+    renderSingleLessonPlanPage(doc, plan, school)
+  })
 
   return doc
 }
+
