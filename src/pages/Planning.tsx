@@ -127,12 +127,20 @@ export function parseActivityStages(rawText?: string | null): TeachingActivitySt
 }
 
 export function formatActivityStages(stages: TeachingActivityStages): string {
-  const parts: string[] = []
-  if (stages.starter.trim()) parts.push(`Starter (10 min): ${stages.starter.trim()}`)
-  if (stages.exposition.trim()) parts.push(`Exposition (15 min): ${stages.exposition.trim()}`)
-  if (stages.learnersActivity.trim()) parts.push(`Learner activity (35 min): ${stages.learnersActivity.trim()}`)
-  if (stages.plenary.trim()) parts.push(`Plenary (10 min): ${stages.plenary.trim()}`)
-  return parts.join('\n\n')
+  const hasAny = stages.starter.trim() || stages.exposition.trim() || stages.learnersActivity.trim() || stages.plenary.trim()
+  if (!hasAny) return ''
+
+  const starter = stages.starter.trim() || 'Inquiry discussion, recap of prior knowledge, and introduction of the lesson inquiry question.'
+  const exposition = stages.exposition.trim() || 'Direct instruction, concept explanation, key vocabulary, and guided teacher demonstration.'
+  const learnersActivity = stages.learnersActivity.trim() || 'Differentiated student tasks, collaborative problem-solving, and practical application exercises.'
+  const plenary = stages.plenary.trim() || 'Exit ticket — review key learning objectives, student self-reflection, and preview next session.'
+
+  return [
+    `Starter (10 min): ${starter}`,
+    `Exposition (15 min): ${exposition}`,
+    `Learner activity (35 min): ${learnersActivity}`,
+    `Plenary (10 min): ${plenary}`
+  ].join('\n\n')
 }
 
 export interface PredictedObjectiveItem {

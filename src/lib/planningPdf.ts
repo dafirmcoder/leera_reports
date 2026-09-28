@@ -252,7 +252,7 @@ function drawDottedLine(doc: jsPDF, x1: number, y1: number, x2: number, y2: numb
   doc.restoreGraphicsState()
 }
 
-function drawDottedCell(doc: jsPDF, x: number, y: number, w: number, h: number) {
+function drawDottedBox(doc: jsPDF, x: number, y: number, w: number, h: number) {
   doc.setFillColor(...CELL_BG)
   doc.rect(x, y, w, h, 'F')
   drawDottedLine(doc, x, y, x + w, y)
@@ -261,70 +261,106 @@ function drawDottedCell(doc: jsPDF, x: number, y: number, w: number, h: number) 
   drawDottedLine(doc, x + w, y, x + w, y + h)
 }
 
+function drawDottedCell(doc: jsPDF, x: number, y: number, w: number, h: number) {
+  drawDottedBox(doc, x, y, w, h)
+}
+
 interface TeachingActivityStage {
   title: string
   text: string
 }
 
+function cleanStageText(text: string, fallback: string): string {
+  const trimmed = (text || '').trim().replace(/^[-—•:\s.]+/, '').trim()
+  if (!trimmed || /^[\.\,\-\;\:]+$/.test(trimmed)) {
+    return fallback
+  }
+  return trimmed
+}
+
 function parseMainTeachingActivities(rawText?: string | null): TeachingActivityStage[] {
+  const defaultStages: TeachingActivityStage[] = [
+    {
+      title: 'Starter (10 min):',
+      text: 'Torch ON/OFF demo — “Computers only see two states; how do they show numbers, pictures and words?”; introduce the lesson question.'
+    },
+    {
+      title: 'Exposition (15 min):',
+      text: 'How computers represent data in binary (0,1) — patterns of switches; data measurement — bits, bytes, kilobytes and megabytes, making links to memory size and storage; version control — how digital tools keep versions of an artefact so we can navigate between them.'
+    },
+    {
+      title: 'Learner activity (35 min):',
+      text: 'Three stations — (a) binary counting cards: hold up 0/1 cards to build given numbers and write binary patterns; (b) data-size ladder: order bit, byte, kilobyte, megabyte and match files (photo, song, essay) to the size that fits; (c) version control: edit a shared document, open its version history, navigate between versions and restore an earlier one.'
+    },
+    {
+      title: 'Plenary (10 min):',
+      text: 'Exit ticket — read one binary pattern, answer one data-size question, and state one benefit of version control; preview Friday’s new unit on networks.'
+    }
+  ]
+
   if (!rawText || !rawText.trim()) {
-    return [
-      {
-        title: 'Starter (10 min):',
-        text: 'Torch ON/OFF demo — “Computers only see two states; how do they show numbers, pictures and words?”; introduce the lesson question.'
-      },
-      {
-        title: 'Exposition (15 min):',
-        text: 'How computers represent data in binary (0,1) — patterns of switches; data measurement — bits, bytes, kilobytes and megabytes, making links to memory size and storage; version control — how digital tools keep versions of an artefact so we can navigate between them.'
-      },
-      {
-        title: 'Learner activity (35 min):',
-        text: 'Three stations — (a) binary counting cards: hold up 0/1 cards to build given numbers and write binary patterns; (b) data-size ladder: order bit, byte, kilobyte, megabyte and match files (photo, song, essay) to the size that fits; (c) version control: edit a shared document, open its version history, navigate between versions and restore an earlier one.'
-      },
-      {
-        title: 'Plenary (10 min):',
-        text: 'Exit ticket — read one binary pattern, answer one data-size question, and state one benefit of version control; preview Friday’s new unit on networks.'
-      }
-    ]
+    return defaultStages
   }
 
-  const stages: TeachingActivityStage[] = []
-  const stageRegex = /(?:^|\n)\s*(?:•\s*)?(Starter(?:\s*Activity)?(?:\s*\([^)]*\))?:?|Exposition(?:\s*\([^)]*\))?:?|Learner(?:s)?\s*(?:activity|Activity)?(?:\s*\([^)]*\))?:?|Plenary(?:\s*\([^)]*\))?:?|Main\s*Activity:?)/gi
+  const stageMap: Record<'starter' | 'exposition' | 'learner' | 'plenary', string> = {
+    starter: '',
+    exposition: '',
+    learner: '',
+    plenary: ''
+  }
+
+  const stageRegex = /(?:^|\n)\s*(?:•\s*)?(Starter(?:\s*Activity)?(?:\s*\([^)]*\))?:?|Exposition(?:\s*\([^)]*\))?:?|Learner(?:s)?\s*(?:Activity|activity)?(?:\s*\([^)]*\))?:?|Plenary(?:\s*\([^)]*\))?:?|Main\s*Activity:?)/gi
   const matches = [...rawText.matchAll(stageRegex)]
 
   if (matches.length > 0) {
     for (let i = 0; i < matches.length; i++) {
       const match = matches[i]
-      let title = match[1].trim()
-      const lower = title.toLowerCase()
-      if (!title.includes('(')) {
-        if (lower.startsWith('starter')) title = 'Starter (10 min):'
-        else if (lower.startsWith('exposition') || lower.startsWith('main activity')) title = 'Exposition (15 min):'
-        else if (lower.startsWith('learner')) title = 'Learner activity (35 min):'
-        else if (lower.startsWith('plenary')) title = 'Plenary (10 min):'
-      }
-      if (!title.endsWith(':')) title = `${title}:`
+      const lower = match[1].toLowerCase()
       const startIndex = match.index! + match[0].length
       const endIndex = i + 1 < matches.length ? matches[i + 1].index! : rawText.length
-      const body = rawText.slice(startIndex, endIndex).trim().replace(/^[-—:]\s*/, '')
-      stages.push({ title, text: body })
-    }
-    return stages
-  }
+      const body = rawText.slice(startIndex, endIndex).trim().replace(/^[-—:\s]+/, '')
 
-  const lines = rawText.split(/\n|•/).map(l => l.trim()).filter(l => l.length > 0)
-  if (lines.length > 0) {
-    return lines.map((line, idx) => {
-      const parts = line.split(/:\s*(.+)/)
-      if (parts.length > 1) {
-        return { title: `${parts[0]}:`, text: parts[1] }
+      if (lower.startsWith('starter')) {
+        stageMap.starter = body
+      } else if (lower.startsWith('exposition') || lower.startsWith('main activity')) {
+        stageMap.exposition = body
+      } else if (lower.startsWith('learner')) {
+        stageMap.learner = body
+      } else if (lower.startsWith('plenary')) {
+        stageMap.plenary = body
       }
-      return { title: `Activity ${idx + 1}:`, text: line }
-    })
+    }
+  } else {
+    // If no explicit stage labels found, check for bullet points or assign to learner activity
+    const lines = rawText.split(/\n|•/).map(l => l.trim()).filter(l => l.length > 0)
+    if (lines.length >= 4) {
+      stageMap.starter = lines[0]
+      stageMap.exposition = lines[1]
+      stageMap.learner = lines.slice(2, lines.length - 1).join('\n')
+      stageMap.plenary = lines[lines.length - 1]
+    } else {
+      stageMap.learner = rawText.trim()
+    }
   }
 
+  // Canonical Cambridge 4-stage instructional model: ALWAYS guaranteed in order
   return [
-    { title: 'Activity:', text: rawText }
+    {
+      title: 'Starter (10 min):',
+      text: cleanStageText(stageMap.starter, 'Inquiry discussion, recap of prior knowledge, and introduction of the lesson inquiry question.')
+    },
+    {
+      title: 'Exposition (15 min):',
+      text: cleanStageText(stageMap.exposition, 'Direct instruction, concept explanation, key vocabulary, and guided teacher demonstration.')
+    },
+    {
+      title: 'Learner activity (35 min):',
+      text: cleanStageText(stageMap.learner, 'Differentiated student tasks, collaborative problem-solving, and practical application exercises.')
+    },
+    {
+      title: 'Plenary (10 min):',
+      text: cleanStageText(stageMap.plenary, 'Exit ticket — review key learning objectives, student self-reflection, and preview next session.')
+    }
   ]
 }
 
@@ -373,8 +409,12 @@ function renderSingleLessonPlanPage(doc: jsPDF, plan: LessonPlan, school: School
   // 4. CONTEXT & METADATA SECTION TABLE
   let curY = 102.6
   const row1H = 15.7
-  drawDottedCell(doc, leftM, curY, 248.4, row1H)
-  drawDottedCell(doc, leftM + 248.4, curY, 248.4, row1H)
+  const row2H = 28.7
+  const row3H = 42.5
+  const totalContextH = row1H + row2H + row3H
+
+  // Outer container box with dotted border - no internal grid lines
+  drawDottedBox(doc, leftM, curY, contentW, totalContextH)
 
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(9.96)
@@ -382,12 +422,7 @@ function renderSingleLessonPlanPage(doc: jsPDF, plan: LessonPlan, school: School
   doc.text(`TEACHER: ${(plan.teacher_name || 'Teacher').toUpperCase()}`, leftM + 5.1, curY + 11)
   doc.text(`CLASS: ${(plan.class_name || 'Class').toUpperCase()}`, leftM + 248.4 + 5.5, curY + 11)
 
-  curY += row1H
-  const row2H = 28.7
-  drawDottedCell(doc, leftM, curY, 248.4, row2H)
-  drawDottedCell(doc, leftM + 248.4, curY, 248.4, row2H)
-
-  doc.text(`SUBJECT: ${(plan.subject_name || 'Subject').toUpperCase()}`, leftM + 5.1, curY + 17.5)
+  doc.text(`SUBJECT: ${(plan.subject_name || 'Subject').toUpperCase()}`, leftM + 5.1, curY + row1H + 17.5)
 
   const dateFormatted = formatLessonPlanDate(plan.lesson_date)
   const timeFormatted = plan.start_time && plan.end_time
@@ -397,19 +432,13 @@ function renderSingleLessonPlanPage(doc: jsPDF, plan: LessonPlan, school: School
   const dateFullStr = `DATE: ${dateFormatted} ${periodOrTime}`.trim()
   const dateLines = doc.splitTextToSize(dateFullStr, 248.4 - 11)
   if (dateLines.length > 1) {
-    doc.text(dateLines[0], leftM + 248.4 + 5.5, curY + 11)
-    doc.text(dateLines[1], leftM + 248.4 + 5.5, curY + 24.5)
+    doc.text(dateLines[0], leftM + 248.4 + 5.5, curY + row1H + 11)
+    doc.text(dateLines[1], leftM + 248.4 + 5.5, curY + row1H + 24.5)
   } else {
-    doc.text(dateFullStr, leftM + 248.4 + 5.5, curY + 17.5)
+    doc.text(dateFullStr, leftM + 248.4 + 5.5, curY + row1H + 17.5)
   }
 
-  curY += row2H
-  const row3H = 42.5
-  drawDottedCell(doc, leftM, curY, 248.4, row3H)
-  drawDottedCell(doc, leftM + 248.4, curY, 82.8, row3H)
-  drawDottedCell(doc, leftM + 248.4 + 82.8, curY, 165.6, 15.7)
-  drawDottedCell(doc, leftM + 248.4 + 82.8, curY + 15.7, 165.6, row3H - 15.7)
-
+  const row3Top = curY + row1H + row2H
   const challengeStr = plan.challenge_title ? `${plan.challenge_title.toUpperCase()} — ` : ''
   const topicStr = plan.topic_title ? plan.topic_title.toUpperCase() : ''
   const subtopicStr = plan.subtopic_title ? ` (${plan.subtopic_title})` : ''
@@ -419,16 +448,16 @@ function renderSingleLessonPlanPage(doc: jsPDF, plan: LessonPlan, school: School
   const unitFullStr = `UNIT/SUB-UNIT: ${unitBody}`
   const unitLines = doc.splitTextToSize(unitFullStr, 248.4 - 10.2)
   for (let u = 0; u < Math.min(unitLines.length, 3); u++) {
-    doc.text(unitLines[u], leftM + 5.1, curY + 12 + u * 13)
+    doc.text(unitLines[u], leftM + 5.1, row3Top + 12 + u * 13)
   }
 
-  doc.text('ATTENDANCE:', leftM + 248.4 + 5.5, curY + 25)
+  doc.text('ATTENDANCE:', leftM + 248.4 + 5.5, row3Top + 25)
   const boysStr = plan.boys_attendance != null ? ` ${plan.boys_attendance}` : ''
   const girlsStr = plan.girls_attendance != null ? ` ${plan.girls_attendance}` : ''
-  doc.text(`BOYS:${boysStr}`, leftM + 248.4 + 82.8 + 5.5, curY + 11.5)
-  doc.text(`GIRLS:${girlsStr}`, leftM + 248.4 + 82.8 + 5.5, curY + 29.5)
+  doc.text(`BOYS:${boysStr}`, leftM + 248.4 + 82.8 + 5.5, row3Top + 11.5)
+  doc.text(`GIRLS:${girlsStr}`, leftM + 248.4 + 82.8 + 5.5, row3Top + 29.5)
 
-  curY += row3H + 9.5
+  curY += totalContextH + 9.5
 
   // 5. RESOURCES SECTION
   doc.setFont('helvetica', 'bold')
@@ -455,19 +484,21 @@ function renderSingleLessonPlanPage(doc: jsPDF, plan: LessonPlan, school: School
   }
 
   const resRowH = 15.4
+  const totalResH = 3 * resRowH
+  // Single outer box for resources - no internal cell grid lines
+  drawDottedBox(doc, leftM, curY, contentW, totalResH)
+
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(9.96)
   doc.setTextColor(0, 0, 0)
 
   for (let r = 0; r < 3; r++) {
-    drawDottedCell(doc, leftM, curY, 248.4, resRowH)
-    drawDottedCell(doc, leftM + 248.4, curY, 248.4, resRowH)
-    doc.text(`• ${resColLeft[r].replace(/^•\s*/, '')}`, leftM + 5.1, curY + 11)
-    doc.text(`• ${resColRight[r].replace(/^•\s*/, '')}`, leftM + 248.4 + 5.5, curY + 11)
-    curY += resRowH
+    const textY = curY + 11 + r * resRowH
+    doc.text(`• ${resColLeft[r].replace(/^•\s*/, '')}`, leftM + 5.1, textY)
+    doc.text(`• ${resColRight[r].replace(/^•\s*/, '')}`, leftM + 248.4 + 5.5, textY)
   }
 
-  curY += 9.5
+  curY += totalResH + 9.5
 
   // 6. LEARNING OBJECTIVES SECTION
   doc.setFont('helvetica', 'bold')
@@ -477,13 +508,6 @@ function renderSingleLessonPlanPage(doc: jsPDF, plan: LessonPlan, school: School
   curY += 5.4
 
   const loIntroH = 15.4
-  drawDottedCell(doc, leftM, curY, contentW, loIntroH)
-  doc.setFont('helvetica', 'normal')
-  doc.setFontSize(9.96)
-  doc.setTextColor(0, 0, 0)
-  doc.text('By the end of this lesson, learners should be able to:', leftM + 5.1, curY + 11)
-  curY += loIntroH
-
   const objectives = plan.objectives || []
   const loList: string[] = []
   if (objectives.length > 0) {
@@ -495,19 +519,32 @@ function renderSingleLessonPlanPage(doc: jsPDF, plan: LessonPlan, school: School
     loList.push('• General curriculum learning objectives and skills for this lesson.')
   }
 
-  for (const loText of loList) {
+  const loItemWraps = loList.map(loText => {
     const wrapped = doc.splitTextToSize(loText, contentW - 10.2)
-    const loH = Math.max(15.4, wrapped.length * 13.4 + 2)
-    drawDottedCell(doc, leftM, curY, contentW, loH)
-    for (let l = 0; l < wrapped.length; l++) {
-      doc.text(wrapped[l], leftM + 5.1, curY + 11 + l * 13.4)
+    const h = Math.max(15.4, wrapped.length * 13.4 + 2)
+    return { wrapped, h }
+  })
+
+  const totalLoH = loIntroH + loItemWraps.reduce((sum, item) => sum + item.h, 0)
+  // Single outer box for learning objectives - no internal grid lines
+  drawDottedBox(doc, leftM, curY, contentW, totalLoH)
+
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(9.96)
+  doc.setTextColor(0, 0, 0)
+  doc.text('By the end of this lesson, learners should be able to:', leftM + 5.1, curY + 11)
+
+  let loY = curY + loIntroH
+  for (const item of loItemWraps) {
+    for (let l = 0; l < item.wrapped.length; l++) {
+      doc.text(item.wrapped[l], leftM + 5.1, loY + 11 + l * 13.4)
     }
-    curY += loH
+    loY += item.h
   }
 
-  curY += 9.5
+  curY += totalLoH + 9.5
 
-  // 7. MAIN TEACHING ACTIVITY SECTION
+  // 7. MAIN TEACHING ACTIVITY SECTION (Always 4 stages: Starter, Exposition, Learner activity, Plenary)
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(9.96)
   doc.setTextColor(...BRAND_PURPLE)
@@ -515,40 +552,45 @@ function renderSingleLessonPlanPage(doc: jsPDF, plan: LessonPlan, school: School
   curY += 5.4
 
   const activities = parseMainTeachingActivities(plan.main_teaching_activity)
-  for (const act of activities) {
+  const preparedStages = activities.map(act => {
     const titleW = doc.getTextWidth(act.title) + 5
     const maxFirstLineW = contentW - 13.3 - titleW - 5.1
     const firstLineWords = doc.splitTextToSize(act.text, maxFirstLineW)
     const firstLine = firstLineWords[0] || ''
     const remainingText = act.text.slice(firstLine.length).trim()
     const restLines = remainingText ? doc.splitTextToSize(remainingText, contentW - 10.2) : []
-
     const totalLines = 1 + restLines.length
     const actH = Math.max(28.7, totalLines * 13.4 + 2)
+    return { act, titleW, firstLine, restLines, actH }
+  })
 
-    drawDottedCell(doc, leftM, curY, contentW, actH)
+  const totalActH = preparedStages.reduce((sum, s) => sum + s.actH, 0)
+  // Single outer box for all main teaching activities - no internal grid lines
+  drawDottedBox(doc, leftM, curY, contentW, totalActH)
 
+  let stageY = curY
+  for (const s of preparedStages) {
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(9.96)
     doc.setTextColor(0, 0, 0)
-    doc.text('•', leftM + 5.1, curY + 11)
+    doc.text('•', leftM + 5.1, stageY + 11)
 
     doc.setFont('helvetica', 'bold')
     doc.setTextColor(...BRAND_PURPLE)
-    doc.text(act.title, leftM + 13.3, curY + 11)
+    doc.text(s.act.title, leftM + 13.3, stageY + 11)
 
     doc.setFont('helvetica', 'normal')
     doc.setTextColor(0, 0, 0)
-    doc.text(firstLine, leftM + 13.3 + titleW, curY + 11)
+    doc.text(s.firstLine, leftM + 13.3 + s.titleW, stageY + 11)
 
-    for (let l = 0; l < restLines.length; l++) {
-      doc.text(restLines[l], leftM + 5.1, curY + 11 + (l + 1) * 13.4)
+    for (let l = 0; l < s.restLines.length; l++) {
+      doc.text(s.restLines[l], leftM + 5.1, stageY + 11 + (l + 1) * 13.4)
     }
 
-    curY += actH
+    stageY += s.actH
   }
 
-  curY += 9.5
+  curY += totalActH + 9.5
 
   // 8. ASSESSMENT IDEAS SECTION
   doc.setFont('helvetica', 'bold')
@@ -574,7 +616,8 @@ function renderSingleLessonPlanPage(doc: jsPDF, plan: LessonPlan, school: School
   }
 
   const assessH = Math.max(50, assessItems.length * 15.4 + 0.6)
-  drawDottedCell(doc, leftM, curY, contentW, assessH)
+  // Single outer box for assessment ideas - no internal grid lines
+  drawDottedBox(doc, leftM, curY, contentW, assessH)
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(9.96)
   doc.setTextColor(0, 0, 0)
@@ -594,7 +637,8 @@ function renderSingleLessonPlanPage(doc: jsPDF, plan: LessonPlan, school: School
 
   const footerTop = pageH - 56.6 // 735.4
   const notesH = Math.max(24.1, Math.min(40, footerTop - curY - 10))
-  drawDottedCell(doc, leftM, curY, contentW, notesH)
+  // Single outer box for notes - no internal grid lines
+  drawDottedBox(doc, leftM, curY, contentW, notesH)
   if (plan.reflection_remarks) {
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(9.96)
