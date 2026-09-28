@@ -135,6 +135,132 @@ export function formatActivityStages(stages: TeachingActivityStages): string {
   return parts.join('\n\n')
 }
 
+export interface PredictedObjectiveItem {
+  id?: string
+  objective_id?: string | null
+  code_snapshot: string
+  text_snapshot: string
+  is_met?: boolean
+  week_sequence: number
+  week_topic?: string | null
+  week_challenge?: string | null
+  week_label?: string | null
+  is_already_planned?: boolean
+}
+
+export interface SmartPredictionResult {
+  predictedObjectives: PredictedObjectiveItem[]
+  reason: 'date_matched_week' | 'earliest_unplanned_week' | 'unmet_fallback' | 'all_covered'
+  weekSequence?: number
+  weekTopic?: string
+  weekChallenge?: string
+}
+
+export function predictNextUnusedObjectives(
+  workPlan: WorkPlan | null,
+  existingLessonPlans: LessonPlan[],
+  classId: string,
+  subjectId: string,
+  targetDate?: string,
+  currentLessonPlanId?: string
+): SmartPredictionResult {
+  if (!workPlan || !workPlan.weeks || workPlan.weeks.length === 0) {
+    return { predictedObjectives: [], reason: 'all_covered' }
+  }
+
+  // Set of codes already planned in other lesson plans for this class and subject
+  const plannedCodes = new Set(
+    existingLessonPlans
+      .filter((lp) => lp.class_id === classId && lp.subject_id === subjectId && lp.id !== currentLessonPlanId)
+      .flatMap((lp) => (lp.objectives || []).map((o) => o.code_snapshot))
+  )
+
+  const sortedWeeks = [...workPlan.weeks].sort((a, b) => a.sequence - b.sequence)
+
+  // 1. Try date-matching: check if targetDate falls into a week's start_date and end_date
+  if (targetDate) {
+    const matchedWeek = sortedWeeks.find((w) => {
+      if (w.start_date && w.end_date) {
+        return targetDate >= w.start_date && targetDate <= w.end_date
+      }
+      return false
+    })
+
+    if (matchedWeek) {
+      const weekUnused = (matchedWeek.objectives || [])
+        .filter((o) => !o.is_met && !plannedCodes.has(o.code_snapshot))
+        .map((o) => ({
+          ...o,
+          week_sequence: matchedWeek.sequence,
+          week_label: matchedWeek.week_label,
+          week_topic: matchedWeek.topic_title,
+          week_challenge: matchedWeek.challenge_title,
+          is_already_planned: false
+        }))
+
+      if (weekUnused.length > 0) {
+        return {
+          predictedObjectives: weekUnused,
+          reason: 'date_matched_week',
+          weekSequence: matchedWeek.sequence,
+          weekTopic: matchedWeek.topic_title || undefined,
+          weekChallenge: matchedWeek.challenge_title || undefined
+        }
+      }
+    }
+  }
+
+  // 2. Sequential search: Find earliest week in sequence with unused (not met & not planned) objectives
+  for (const w of sortedWeeks) {
+    const unusedInWeek = (w.objectives || [])
+      .filter((o) => !o.is_met && !plannedCodes.has(o.code_snapshot))
+      .map((o) => ({
+        ...o,
+        week_sequence: w.sequence,
+        week_label: w.week_label,
+        week_topic: w.topic_title,
+        week_challenge: w.challenge_title,
+        is_already_planned: false
+      }))
+
+    if (unusedInWeek.length > 0) {
+      return {
+        predictedObjectives: unusedInWeek,
+        reason: 'earliest_unplanned_week',
+        weekSequence: w.sequence,
+        weekTopic: w.topic_title || undefined,
+        weekChallenge: w.challenge_title || undefined
+      }
+    }
+  }
+
+  // 3. Fallback: If all objectives have been planned in some lesson plan, but some are still !is_met
+  for (const w of sortedWeeks) {
+    const unmetInWeek = (w.objectives || [])
+      .filter((o) => !o.is_met)
+      .map((o) => ({
+        ...o,
+        week_sequence: w.sequence,
+        week_label: w.week_label,
+        week_topic: w.topic_title,
+        week_challenge: w.challenge_title,
+        is_already_planned: plannedCodes.has(o.code_snapshot)
+      }))
+
+    if (unmetInWeek.length > 0) {
+      return {
+        predictedObjectives: unmetInWeek,
+        reason: 'unmet_fallback',
+        weekSequence: w.sequence,
+        weekTopic: w.topic_title || undefined,
+        weekChallenge: w.challenge_title || undefined
+      }
+    }
+  }
+
+  return { predictedObjectives: [], reason: 'all_covered' }
+}
+
 export default function Planning() {
   const { profile, user } = useAuth()
   const { school, classes, subjects, refresh } = useSchool()
@@ -471,7 +597,24 @@ export default function Planning() {
           const fullWp = await api.getWorkPlan(match.id)
           if (active) {
             setMatchingWorkPlanForLp(fullWp)
-            setSelectedLpObjectiveCodes([])
+            // Smart Prediction: Auto-predict next unused objective for this lesson slot
+            const pred = predictNextUnusedObjectives(
+              fullWp,
+              lessonPlans,
+              createLpClassId,
+              createLpSubjectId,
+              createLpDate
+            )
+            if (pred.predictedObjectives.length > 0) {
+              const topObj = pred.predictedObjectives[0]
+              setSelectedLpObjectiveCodes([topObj.code_snapshot])
+              setCreateLpTopicTitle((prev) => prev || pred.weekTopic || topObj.week_topic || topObj.text_snapshot)
+              if (pred.weekChallenge || topObj.week_challenge) {
+                setCreateLpChallengeTitle((prev) => prev || pred.weekChallenge || topObj.week_challenge || '')
+              }
+            } else {
+              setSelectedLpObjectiveCodes([])
+            }
           }
         } else {
           if (active) {
@@ -531,6 +674,57 @@ export default function Planning() {
   )
   const uncoveredLpObjectives = availableLpObjectives.filter((o) => !o.is_met)
   const coveredLpObjectives = availableLpObjectives.filter((o) => o.is_met)
+
+  // Smart Prediction for Create Lesson Plan Modal
+  const smartPredictionForCreate = useMemo(() => {
+    return predictNextUnusedObjectives(
+      matchingWorkPlanForLp,
+      lessonPlans,
+      createLpClassId,
+      createLpSubjectId,
+      createLpDate
+    )
+  }, [matchingWorkPlanForLp, lessonPlans, createLpClassId, createLpSubjectId, createLpDate])
+
+  // Smart Prediction for Selected Lesson Plan Editor
+  const smartPredictionForSelected = useMemo(() => {
+    if (!selectedLessonPlan) return null
+    return predictNextUnusedObjectives(
+      matchingWpForSelectedLp,
+      lessonPlans,
+      selectedLessonPlan.class_id,
+      selectedLessonPlan.subject_id,
+      selectedLessonPlan.lesson_date,
+      selectedLessonPlan.id
+    )
+  }, [matchingWpForSelectedLp, lessonPlans, selectedLessonPlan])
+
+  const plannedCodesForCreate = useMemo(() => {
+    return new Set(
+      lessonPlans
+        .filter((lp) => lp.class_id === createLpClassId && lp.subject_id === createLpSubjectId)
+        .flatMap((lp) => (lp.objectives || []).map((o) => o.code_snapshot))
+    )
+  }, [lessonPlans, createLpClassId, createLpSubjectId])
+
+  const predictedCodesSetForCreate = useMemo(() => {
+    return new Set((smartPredictionForCreate?.predictedObjectives || []).map((o) => o.code_snapshot))
+  }, [smartPredictionForCreate])
+
+  // Sort uncovered objectives: Smart Predicted first, then other unplanned, then previously planned
+  const sortedUncoveredLpObjectives = useMemo(() => {
+    return [...uncoveredLpObjectives].sort((a, b) => {
+      const aPred = predictedCodesSetForCreate.has(a.code_snapshot) ? 1 : 0
+      const bPred = predictedCodesSetForCreate.has(b.code_snapshot) ? 1 : 0
+      if (aPred !== bPred) return bPred - aPred
+
+      const aPlanned = plannedCodesForCreate.has(a.code_snapshot) ? 1 : 0
+      const bPlanned = plannedCodesForCreate.has(b.code_snapshot) ? 1 : 0
+      if (aPlanned !== bPlanned) return aPlanned - bPlanned
+
+      return a.week_sequence - b.week_sequence
+    })
+  }, [uncoveredLpObjectives, predictedCodesSetForCreate, plannedCodesForCreate])
 
   const selectedCreateSubject = subjects.find((s) => s.id === createLpSubjectId)
   const isCreateLpGlobalPerspectives = !!(
@@ -2324,22 +2518,34 @@ export default function Planning() {
                           .map((o) => ({ ...o, week_sequence: w.sequence }))
                       )
 
+                      const predictedCodes = new Set((smartPredictionForSelected?.predictedObjectives || []).map((p) => p.code_snapshot))
+
+                      const sortedAvailable = [...availableUncovered].sort((a, b) => {
+                        const aPred = predictedCodes.has(a.code_snapshot) ? 1 : 0
+                        const bPred = predictedCodes.has(b.code_snapshot) ? 1 : 0
+                        if (aPred !== bPred) return bPred - aPred
+                        return a.week_sequence - b.week_sequence
+                      })
+
                       return (
                         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                          {availableUncovered.length > 0 ? (
+                          {sortedAvailable.length > 0 ? (
                             <>
                               <select
                                 className="field select"
-                                style={{ fontSize: 12, padding: '5px 10px', maxWidth: 300 }}
+                                style={{ fontSize: 12, padding: '5px 10px', maxWidth: 320 }}
                                 value={addObjectiveCodeForSelectedLp}
                                 onChange={(e) => setAddObjectiveCodeForSelectedLp(e.target.value)}
                               >
                                 <option value="">-- Add Uncovered Objective from Work Plan --</option>
-                                {availableUncovered.map((o, idx) => (
-                                  <option key={idx} value={o.code_snapshot}>
-                                    [W{o.week_sequence}] {o.code_snapshot}: {o.text_snapshot.substring(0, 35)}...
-                                  </option>
-                                ))}
+                                {sortedAvailable.map((o, idx) => {
+                                  const isPred = predictedCodes.has(o.code_snapshot)
+                                  return (
+                                    <option key={idx} value={o.code_snapshot}>
+                                      {isPred ? '✨ [RECOMMENDED NEXT] ' : ''}[W{o.week_sequence}] {o.code_snapshot}: {o.text_snapshot.substring(0, 35)}...
+                                    </option>
+                                  )
+                                })}
                               </select>
                               <button
                                 type="button"
@@ -2347,7 +2553,7 @@ export default function Planning() {
                                 style={{ fontSize: 12, padding: '5px 10px', fontWeight: 700 }}
                                 disabled={!addObjectiveCodeForSelectedLp}
                                 onClick={() => {
-                                  const targetObj = availableUncovered.find((o) => o.code_snapshot === addObjectiveCodeForSelectedLp)
+                                  const targetObj = sortedAvailable.find((o) => o.code_snapshot === addObjectiveCodeForSelectedLp)
                                   if (targetObj) {
                                     const updated = [...(selectedLessonPlan.objectives || [])]
                                     updated.push({
@@ -2374,6 +2580,45 @@ export default function Planning() {
                       )
                     })()}
                   </div>
+
+                  {/* Smart Prediction Suggestion Banner if no objectives are attached yet */}
+                  {smartPredictionForSelected && smartPredictionForSelected.predictedObjectives.length > 0 && (selectedLessonPlan.objectives || []).length === 0 && (
+                    <div style={{ background: '#f0fdf4', border: '1.5px solid #86efac', borderRadius: 8, padding: '10px 14px', marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                        <span style={{ fontSize: 18 }}>✨</span>
+                        <div>
+                          <div style={{ fontSize: 13, fontWeight: 800, color: '#166534', display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span>Smart Default Prediction:</span>
+                            <span style={{ background: '#16a34a', color: '#fff', fontSize: 11, padding: '1px 6px', borderRadius: 4 }}>
+                              Week {smartPredictionForSelected.weekSequence} · {smartPredictionForSelected.predictedObjectives[0].code_snapshot}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: 11.5, color: '#15803d', marginTop: 2 }}>
+                            {smartPredictionForSelected.predictedObjectives[0].text_snapshot}
+                          </div>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn btn-primary btn-small"
+                        style={{ fontSize: 12, padding: '5px 12px', fontWeight: 700 }}
+                        onClick={() => {
+                          const targetObj = smartPredictionForSelected.predictedObjectives[0]
+                          const updated = [...(selectedLessonPlan.objectives || [])]
+                          updated.push({
+                            id: `lpo-${Date.now()}`,
+                            lesson_plan_id: selectedLessonPlan.id,
+                            objective_id: targetObj.objective_id || null,
+                            code_snapshot: targetObj.code_snapshot,
+                            text_snapshot: targetObj.text_snapshot
+                          })
+                          setSelectedLessonPlan({ ...selectedLessonPlan, objectives: updated })
+                        }}
+                      >
+                        + Attach Predicted Objective
+                      </button>
+                    </div>
+                  )}
 
                   {(selectedLessonPlan.objectives || []).length === 0 ? (
                     <div style={{ fontSize: 12.5, color: '#64748b', fontStyle: 'italic', background: '#fff', padding: 12, borderRadius: 6, border: '1.5px dashed #cbd5e1' }}>
@@ -3595,12 +3840,61 @@ export default function Planning() {
                     )
                   ) : (
                     <div>
+                      {/* Smart Prediction Banner */}
+                      {smartPredictionForCreate && smartPredictionForCreate.predictedObjectives.length > 0 && (
+                        <div style={{ background: '#f0fdf4', border: '1.5px solid #86efac', borderRadius: 8, padding: '10px 12px', marginBottom: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                            <span style={{ fontSize: 18, marginTop: 1 }}>✨</span>
+                            <div>
+                              <div style={{ fontSize: 12.5, fontWeight: 800, color: '#166534', display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                <span>Smart Default Prediction:</span>
+                                <span style={{ background: '#16a34a', color: '#fff', fontSize: 11, padding: '1px 6px', borderRadius: 4 }}>
+                                  Week {smartPredictionForCreate.weekSequence} · {smartPredictionForCreate.predictedObjectives[0].code_snapshot}
+                                </span>
+                              </div>
+                              <div style={{ fontSize: 11, color: '#15803d', marginTop: 2 }}>
+                                {smartPredictionForCreate.reason === 'date_matched_week'
+                                  ? `Matched to Week ${smartPredictionForCreate.weekSequence} by scheduled lesson date.`
+                                  : `Next sequential unused learning objective in Semester Work Plan.`}
+                                {smartPredictionForCreate.weekTopic ? ` (Topic: ${smartPredictionForCreate.weekTopic})` : ''}
+                              </div>
+                            </div>
+                          </div>
+                          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                            <button
+                              type="button"
+                              className="btn btn-secondary btn-small"
+                              style={{ fontSize: 11, padding: '4px 8px', fontWeight: 700, backgroundColor: '#dcfce7', color: '#166534', borderColor: '#86efac' }}
+                              onClick={() => {
+                                const codes = smartPredictionForCreate.predictedObjectives.map((o) => o.code_snapshot)
+                                setSelectedLpObjectiveCodes(codes)
+                                if (smartPredictionForCreate.weekTopic) setCreateLpTopicTitle(smartPredictionForCreate.weekTopic)
+                                if (smartPredictionForCreate.weekChallenge) setCreateLpChallengeTitle(smartPredictionForCreate.weekChallenge)
+                              }}
+                            >
+                              ✓ Select All for Week {smartPredictionForCreate.weekSequence}
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-ghost btn-small"
+                              style={{ fontSize: 11, padding: '4px 6px', color: '#64748b' }}
+                              onClick={() => setSelectedLpObjectiveCodes([])}
+                            >
+                              Clear
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
                       <div style={{ fontSize: 11, color: '#475569', marginBottom: 6 }}>
                         Select the uncovered objective(s) to teach in this lesson. Checking an objective auto-fills the topic:
                       </div>
                       <div style={{ maxHeight: 180, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                        {uncoveredLpObjectives.map((obj, idx) => {
+                        {sortedUncoveredLpObjectives.map((obj, idx) => {
                           const isChecked = selectedLpObjectiveCodes.includes(obj.code_snapshot)
+                          const isPredicted = predictedCodesSetForCreate.has(obj.code_snapshot)
+                          const isPlannedInOther = plannedCodesForCreate.has(obj.code_snapshot)
+
                           return (
                             <label
                               key={idx}
@@ -3610,8 +3904,8 @@ export default function Planning() {
                                 gap: 8,
                                 padding: 8,
                                 borderRadius: 6,
-                                background: isChecked ? '#f0fdf4' : '#ffffff',
-                                border: isChecked ? '1.5px solid #16a34a' : '1px solid #e2e8f0',
+                                background: isChecked ? '#f0fdf4' : (isPredicted ? '#fbfcfe' : '#ffffff'),
+                                border: isChecked ? '1.5px solid #16a34a' : (isPredicted ? '1.5px solid #86efac' : '1px solid #e2e8f0'),
                                 cursor: 'pointer',
                                 fontSize: 12
                               }}
@@ -3635,11 +3929,21 @@ export default function Planning() {
                                 style={{ marginTop: 2 }}
                               />
                               <div style={{ flex: 1 }}>
-                                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                                <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
                                   <strong style={{ color: '#0f172a' }}>{obj.code_snapshot}</strong>
+                                  {isPredicted && (
+                                    <span className="chip" style={{ fontSize: 9.5, padding: '1px 6px', background: '#dcfce7', color: '#166534', fontWeight: 800, border: '1px solid #86efac' }}>
+                                      ✨ PREDICTED NEXT
+                                    </span>
+                                  )}
                                   <span className="chip" style={{ fontSize: 9.5, padding: '1px 5px', background: '#fef3c7', color: '#b45309', fontWeight: 700 }}>
                                     ⏳ UNCOVERED
                                   </span>
+                                  {isPlannedInOther && (
+                                    <span className="chip" style={{ fontSize: 9.5, padding: '1px 5px', background: '#f1f5f9', color: '#64748b', fontWeight: 600 }}>
+                                      📋 Planned in another lesson
+                                    </span>
+                                  )}
                                   <span style={{ fontSize: 10, color: '#64748b' }}>
                                     Week {obj.week_sequence}
                                   </span>

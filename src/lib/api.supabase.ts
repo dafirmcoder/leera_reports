@@ -3101,7 +3101,8 @@ export const supabaseApi: Api = {
         *,
         classes:class_id(name),
         subjects:subject_id(name),
-        profiles:teacher_id(full_name)
+        profiles:teacher_id(full_name),
+        objectives:lesson_plan_objectives(*)
       `).order('lesson_date', { ascending: false })
 
       if (filter?.teacherId) q = q.eq('teacher_id', filter.teacherId)
@@ -3115,7 +3116,8 @@ export const supabaseApi: Api = {
           ...d,
           class_name: d.classes?.name || 'Class',
           subject_name: d.subjects?.name || 'Subject',
-          teacher_name: d.profiles?.full_name || 'Teacher'
+          teacher_name: d.profiles?.full_name || 'Teacher',
+          objectives: d.objectives || []
         })) as LessonPlan[]
       }
     } catch (e) {
