@@ -244,11 +244,12 @@ export default function PlanningExecutiveDashboard({
       <div
         className="card"
         style={{
-          padding: '14px 18px',
+          padding: '12px 18px',
           marginBottom: 16,
           backgroundColor: '#ffffff',
-          border: '1px solid #e2e8f0',
-          borderRadius: 8,
+          border: '1.5px solid #cbd5e1',
+          borderRadius: 10,
+          boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
@@ -263,24 +264,38 @@ export default function PlanningExecutiveDashboard({
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             style={{
-              padding: '6px 12px',
-              borderRadius: 6,
-              border: '1px solid #cbd5e1',
-              fontSize: 13,
-              minWidth: 240,
+              padding: '9px 14px',
+              borderRadius: 8,
+              border: '1.5px solid #94a3b8',
+              fontSize: 13.5,
+              fontWeight: 500,
+              color: '#0f172a',
+              backgroundColor: '#ffffff',
+              boxShadow: '0 1px 2px rgba(15, 23, 42, 0.05)',
+              minWidth: 260,
               flex: 1
             }}
           />
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           {/* Tier Filter */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span style={{ fontSize: 12, color: '#64748b', fontWeight: 600 }}>Compliance:</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontSize: 13, color: '#0f172a', fontWeight: 700 }}>Compliance:</span>
             <select
               value={selectedTier}
               onChange={(e) => setSelectedTier(e.target.value as any)}
-              style={{ padding: '5px 10px', borderRadius: 6, border: '1px solid #cbd5e1', fontSize: 12 }}
+              style={{
+                padding: '8px 12px',
+                borderRadius: 8,
+                border: '1.5px solid #94a3b8',
+                fontSize: 13,
+                fontWeight: 600,
+                color: '#0f172a',
+                backgroundColor: '#ffffff',
+                boxShadow: '0 1px 2px rgba(15, 23, 42, 0.05)',
+                cursor: 'pointer'
+              }}
             >
               <option value="all">All Tiers ({analytics.totalTeachers})</option>
               <option value="at_risk">🔴 At Risk (&lt;50%) ({analytics.atRiskTeachersCount})</option>
@@ -290,12 +305,22 @@ export default function PlanningExecutiveDashboard({
           </div>
 
           {/* Role Filter */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span style={{ fontSize: 12, color: '#64748b', fontWeight: 600 }}>Role:</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontSize: 13, color: '#0f172a', fontWeight: 700 }}>Role:</span>
             <select
               value={selectedRole}
               onChange={(e) => setSelectedRole(e.target.value as any)}
-              style={{ padding: '5px 10px', borderRadius: 6, border: '1px solid #cbd5e1', fontSize: 12 }}
+              style={{
+                padding: '8px 12px',
+                borderRadius: 8,
+                border: '1.5px solid #94a3b8',
+                fontSize: 13,
+                fontWeight: 600,
+                color: '#0f172a',
+                backgroundColor: '#ffffff',
+                boxShadow: '0 1px 2px rgba(15, 23, 42, 0.05)',
+                cursor: 'pointer'
+              }}
             >
               <option value="all">All Staff</option>
               <option value="coordinator">Curriculum Coordinators</option>

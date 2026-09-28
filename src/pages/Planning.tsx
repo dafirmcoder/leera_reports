@@ -1890,7 +1890,7 @@ export default function Planning() {
                               min={0}
                               max={10}
                               className="field"
-                              style={{ width: 45, fontSize: 11, padding: 2 }}
+                              style={{ width: 54, fontSize: 13, padding: '4px 6px', fontWeight: 700, textAlign: 'center', border: '1.5px solid #94a3b8', borderRadius: 6, backgroundColor: '#ffffff', color: '#0f172a' }}
                               value={week.lessons_per_week || 1}
                               onChange={(e) => {
                                 const updated = [...(selectedWorkPlan.weeks || [])]
@@ -1903,7 +1903,7 @@ export default function Planning() {
                             placeholder="Remarks / Coverage comments (e.g. Covered, Not covered)..."
                             className="field"
                             rows={2}
-                            style={{ width: '100%', fontSize: 11, padding: 4 }}
+                            style={{ width: '100%', fontSize: 12.5, padding: '6px 8px', border: '1.5px solid #94a3b8', borderRadius: 6, backgroundColor: '#ffffff', color: '#0f172a', fontWeight: 500 }}
                             value={week.remarks || ''}
                             onChange={(e) => {
                               const updated = [...(selectedWorkPlan.weeks || [])]
