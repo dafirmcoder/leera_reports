@@ -309,7 +309,7 @@ function parseMainTeachingActivities(rawText?: string | null): TeachingActivityS
     plenary: ''
   }
 
-  const stageRegex = /(?:^|\n)\s*(?:•\s*)?(Starter(?:\s*Activity)?(?:\s*\([^)]*\))?:?|Exposition(?:\s*\([^)]*\))?:?|Learner(?:s)?\s*(?:Activity|activity)?(?:\s*\([^)]*\))?:?|Plenary(?:\s*\([^)]*\))?:?|Main\s*Activity:?)/gi
+  const stageRegex = /(?:^|\n)\s*(?:•\s*)?(Starter(?:\s*Activity)?(?:\s*\([^)]*\))?:?|Exposition(?:\s*(?:Methods|methods)?(?:\s*\([^)]*\))?)?:?|Learner(?:s)?\s*(?:Activity|activity)?(?:\s*\([^)]*\))?:?|Plenary(?:\s*\([^)]*\))?:?|Main\s*Activity:?)/gi
   const matches = [...rawText.matchAll(stageRegex)]
 
   if (matches.length > 0) {
@@ -354,7 +354,7 @@ function parseMainTeachingActivities(rawText?: string | null): TeachingActivityS
       text: cleanStageText(stageMap.exposition, 'Direct instruction, concept explanation, key vocabulary, and guided teacher demonstration.')
     },
     {
-      title: 'Learner activity (35 min):',
+      title: 'Learners Activity (35 min):',
       text: cleanStageText(stageMap.learner, 'Differentiated student tasks, collaborative problem-solving, and practical application exercises.')
     },
     {
@@ -544,11 +544,11 @@ function renderSingleLessonPlanPage(doc: jsPDF, plan: LessonPlan, school: School
 
   curY += totalLoH + 9.5
 
-  // 7. MAIN TEACHING ACTIVITY SECTION (Always 4 stages: Starter, Exposition, Learner activity, Plenary)
+  // 7. MAIN TEACHING ACTIVITIES & INQUIRY SECTION (Always 4 stages: Starter, Exposition, Learners Activity, Plenary)
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(9.96)
   doc.setTextColor(...BRAND_PURPLE)
-  doc.text('MAIN TEACHING ACTIVITY', leftM, curY)
+  doc.text('MAIN TEACHING ACTIVITIES & INQUIRY', leftM, curY)
   curY += 5.4
 
   const activities = parseMainTeachingActivities(plan.main_teaching_activity)
@@ -558,7 +558,7 @@ function renderSingleLessonPlanPage(doc: jsPDF, plan: LessonPlan, school: School
     const firstLineWords = doc.splitTextToSize(act.text, maxFirstLineW)
     const firstLine = firstLineWords[0] || ''
     const remainingText = act.text.slice(firstLine.length).trim()
-    const restLines = remainingText ? doc.splitTextToSize(remainingText, contentW - 10.2) : []
+    const restLines = remainingText ? doc.splitTextToSize(remainingText, contentW - 18.4) : []
     const totalLines = 1 + restLines.length
     const actH = Math.max(28.7, totalLines * 13.4 + 2)
     return { act, titleW, firstLine, restLines, actH }
@@ -584,7 +584,7 @@ function renderSingleLessonPlanPage(doc: jsPDF, plan: LessonPlan, school: School
     doc.text(s.firstLine, leftM + 13.3 + s.titleW, stageY + 11)
 
     for (let l = 0; l < s.restLines.length; l++) {
-      doc.text(s.restLines[l], leftM + 5.1, stageY + 11 + (l + 1) * 13.4)
+      doc.text(s.restLines[l], leftM + 13.3, stageY + 11 + (l + 1) * 13.4)
     }
 
     stageY += s.actH

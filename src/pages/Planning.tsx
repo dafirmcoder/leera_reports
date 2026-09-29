@@ -24,6 +24,13 @@ import type {
 } from '../lib/types'
 import PlanningExecutiveDashboard from '../components/dashboards/PlanningExecutiveDashboard'
 import TeacherSyllabusCoverageCard from '../components/dashboards/TeacherSyllabusCoverageCard'
+import { AiStageButton } from '../components/AiStageButton'
+import { GeminiApiKeyModal } from '../components/GeminiApiKeyModal'
+import {
+  generateAllStages,
+  hasGeminiApiKey,
+  type LessonContext
+} from '../lib/gemini'
 
 type PlanningSubTab = 'executive' | 'work_plans' | 'lesson_plans' | 'timetable' | 'curriculum' | 'review'
 
@@ -98,7 +105,7 @@ export function parseActivityStages(rawText?: string | null): TeachingActivitySt
   let learnersActivity = ''
   let plenary = ''
 
-  const stageRegex = /(?:^|\n)\s*(?:•\s*)?(Starter(?:\s*Activity)?(?:\s*\([^)]*\))?:?|Exposition(?:\s*\([^)]*\))?:?|Learner(?:s)?\s*(?:Activity|activity)?(?:\s*\([^)]*\))?:?|Plenary(?:\s*\([^)]*\))?:?|Main\s*Activity:?)/gi
+  const stageRegex = /(?:^|\n)\s*(?:•\s*)?(Starter(?:\s*Activity)?(?:\s*\([^)]*\))?:?|Exposition(?:\s*(?:Methods|methods)?(?:\s*\([^)]*\))?)?:?|Learner(?:s)?\s*(?:Activity|activity)?(?:\s*\([^)]*\))?:?|Plenary(?:\s*\([^)]*\))?:?|Main\s*Activity:?)/gi
   const matches = [...rawText.matchAll(stageRegex)]
 
   if (matches.length > 0) {
@@ -138,7 +145,7 @@ export function formatActivityStages(stages: TeachingActivityStages): string {
   return [
     `Starter (10 min): ${starter}`,
     `Exposition (15 min): ${exposition}`,
-    `Learner activity (35 min): ${learnersActivity}`,
+    `Learners Activity (35 min): ${learnersActivity}`,
     `Plenary (10 min): ${plenary}`
   ].join('\n\n')
 }
@@ -341,6 +348,14 @@ export default function Planning() {
   const [selectedLpObjectiveCodes, setSelectedLpObjectiveCodes] = useState<string[]>([])
   const [matchingWpForSelectedLp, setMatchingWpForSelectedLp] = useState<WorkPlan | null>(null)
   const [addObjectiveCodeForSelectedLp, setAddObjectiveCodeForSelectedLp] = useState('')
+
+  // Gemini AI Lesson Plan Generation State
+  const [createLpStarter, setCreateLpStarter] = useState('')
+  const [createLpExposition, setCreateLpExposition] = useState('')
+  const [createLpLearners, setCreateLpLearners] = useState('')
+  const [createLpPlenary, setCreateLpPlenary] = useState('')
+  const [showGeminiApiKeyModal, setShowGeminiApiKeyModal] = useState(false)
+  const [generatingAllStages, setGeneratingAllStages] = useState(false)
 
   // Teaching Assignments State
   const [assignments, setAssignments] = useState<Assignment[]>([])
@@ -586,6 +601,10 @@ export default function Planning() {
     setCreateLpTopicTitle('')
     setCreateLpChallengeTitle('')
     setSelectedLpObjectiveCodes([])
+    setCreateLpStarter('')
+    setCreateLpExposition('')
+    setCreateLpLearners('')
+    setCreateLpPlenary('')
     setShowCreateLessonPlanModal(true)
   }
 
@@ -1050,10 +1069,10 @@ export default function Planning() {
 
     try {
       setLoading(true)
-        const starter = (form.get('activity_starter') as string) || ''
-        const exposition = (form.get('activity_exposition') as string) || ''
-        const learnersActivity = (form.get('activity_learners') as string) || ''
-        const plenary = (form.get('activity_plenary') as string) || ''
+        const starter = createLpStarter || (form.get('activity_starter') as string) || ''
+        const exposition = createLpExposition || (form.get('activity_exposition') as string) || ''
+        const learnersActivity = createLpLearners || (form.get('activity_learners') as string) || ''
+        const plenary = createLpPlenary || (form.get('activity_plenary') as string) || ''
         const combinedActivity = formatActivityStages({ starter, exposition, learnersActivity, plenary }) || (form.get('main_teaching_activity') as string) || ''
 
         const id = await api.createLessonPlan({
@@ -1073,6 +1092,10 @@ export default function Planning() {
       setSelectedLpObjectiveCodes([])
       setCreateLpTopicTitle('')
       setCreateLpChallengeTitle('')
+      setCreateLpStarter('')
+      setCreateLpExposition('')
+      setCreateLpLearners('')
+      setCreateLpPlenary('')
       setSuccess('Lesson Plan created successfully with attached uncovered objectives.')
       await handleSelectLessonPlan(id)
       await loadAllPlanningData()
@@ -1093,6 +1116,114 @@ export default function Planning() {
       setError(err?.message || 'Failed to save lesson plan.')
     } finally {
       setLoading(false)
+    }
+  }
+
+  // Build lesson context for Gemini AI activity generation in Edit Form
+  const getContextForSelectedLp = (): LessonContext => {
+    const currentStages = parseActivityStages(selectedLessonPlan?.main_teaching_activity)
+    const objList = (selectedLessonPlan?.objectives || []).map((o) => ({
+      code: o.code_snapshot,
+      text: o.text_snapshot
+    }))
+
+    return {
+      subject: selectedLessonPlan?.subject_name,
+      className: selectedLessonPlan?.class_name,
+      topic: selectedLessonPlan?.topic_title,
+      challenge: selectedLessonPlan?.challenge_title,
+      subtopic: selectedLessonPlan?.subtopic_title,
+      objectives: objList,
+      existingStages: {
+        starter: currentStages.starter,
+        exposition: currentStages.exposition,
+        learnersActivity: currentStages.learnersActivity,
+        plenary: currentStages.plenary
+      }
+    }
+  }
+
+  // Build lesson context for Gemini AI activity generation in Create Modal
+  const getContextForCreateLp = (): LessonContext => {
+    const matchingClass = classes.find((c) => c.id === createLpClassId)
+    const matchingSubject = subjects.find((s) => s.id === createLpSubjectId)
+    const chosenObjectives = uncoveredLpObjectives
+      .filter((o) => selectedLpObjectiveCodes.includes(o.code_snapshot))
+      .map((o) => ({
+        code: o.code_snapshot,
+        text: o.text_snapshot
+      }))
+
+    return {
+      subject: matchingSubject?.name || 'General',
+      className: matchingClass?.name || 'Class',
+      topic: createLpTopicTitle || 'Lesson Inquiry',
+      challenge: createLpChallengeTitle,
+      objectives: chosenObjectives,
+      existingStages: {
+        starter: createLpStarter,
+        exposition: createLpExposition,
+        learnersActivity: createLpLearners,
+        plenary: createLpPlenary
+      }
+    }
+  }
+
+  // Generate all 4 instructional stages for the selected lesson plan
+  const handleGenerateAllForSelectedLp = async () => {
+    if (!hasGeminiApiKey()) {
+      setShowGeminiApiKeyModal(true)
+      return
+    }
+    if (!selectedLessonPlan) return
+
+    try {
+      setGeneratingAllStages(true)
+      const context = getContextForSelectedLp()
+      const all = await generateAllStages(context)
+      const combined = formatActivityStages({
+        starter: all.starter,
+        exposition: all.exposition,
+        learnersActivity: all.learnersActivity,
+        plenary: all.plenary
+      })
+      setSelectedLessonPlan({ ...selectedLessonPlan, main_teaching_activity: combined })
+      setSuccess('Generated all 4 teaching stages with Gemini AI.')
+    } catch (err: any) {
+      if (err?.message === 'MISSING_API_KEY') {
+        setShowGeminiApiKeyModal(true)
+      } else {
+        setError(err?.message || 'Failed to generate teaching stages with Gemini AI.')
+      }
+    } finally {
+      setGeneratingAllStages(false)
+    }
+  }
+
+  // Generate all 4 instructional stages for the new lesson plan modal
+  const handleGenerateAllForCreateLp = async () => {
+    if (!hasGeminiApiKey()) {
+      setShowGeminiApiKeyModal(true)
+      return
+    }
+
+    try {
+      setGeneratingAllStages(true)
+      const context = getContextForCreateLp()
+      const all = await generateAllStages(context)
+      setCreateLpStarter(all.starter)
+      setCreateLpExposition(all.exposition)
+      setCreateLpLearners(all.learnersActivity)
+      setCreateLpPlenary(all.plenary)
+      setSuccess('Generated all 4 teaching stages with Gemini AI.')
+    } catch (err: any) {
+      if (err?.message === 'MISSING_API_KEY') {
+        setShowGeminiApiKeyModal(true)
+      } else {
+        setError(err?.message || 'Failed to generate teaching stages with Gemini AI.')
+      }
+    } finally {
+      setGeneratingAllStages(false)
     }
   }
 
@@ -2676,7 +2807,7 @@ export default function Planning() {
 
                 {/* ── MAIN TEACHING ACTIVITIES & INQUIRY (4 Dedicated Sub-Sections) ── */}
                 <div style={{ border: '1.5px solid #cbd5e1', borderRadius: 8, padding: 16, backgroundColor: '#ffffff', boxShadow: '0 1px 3px rgba(15, 23, 42, 0.05)' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 6 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
                     <div>
                       <label className="field-label" style={{ fontSize: 14, color: '#4C2570', fontWeight: 800, margin: 0, textTransform: 'uppercase' }}>
                         Main Teaching Activities &amp; Inquiry
@@ -2684,6 +2815,34 @@ export default function Planning() {
                       <span style={{ fontSize: 11.5, color: '#64748b' }}>
                         4 instructional stages rendered directly into the PDF: Starter, Exposition, Learners Activity, and Plenary
                       </span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-small"
+                        onClick={() => setShowGeminiApiKeyModal(true)}
+                        style={{ fontSize: 11.5, display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                        title="Configure Google Gemini API Key"
+                      >
+                        <span>{hasGeminiApiKey() ? '🔑 Gemini Key ✓' : '🔑 Set Gemini Key'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-small"
+                        disabled={generatingAllStages}
+                        onClick={handleGenerateAllForSelectedLp}
+                        style={{
+                          fontSize: 11.5,
+                          fontWeight: 700,
+                          background: generatingAllStages ? '#94a3b8' : 'linear-gradient(135deg, #7c3aed 0%, #4C2570 100%)',
+                          color: '#ffffff',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 6
+                        }}
+                      >
+                        {generatingAllStages ? 'Generating All 4 Stages...' : '✨ Generate All 4 Stages (AI)'}
+                      </button>
                     </div>
                   </div>
 
@@ -2701,12 +2860,21 @@ export default function Planning() {
                         {/* Sub-section 1: Starter */}
                         <div style={{ border: '1.5px solid #cbd5e1', borderRadius: 6, padding: 12, backgroundColor: '#f8fafc' }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, flexWrap: 'wrap', gap: 4 }}>
-                            <label className="field-label" style={{ fontWeight: 800, margin: 0, color: '#15803d', fontSize: 13 }}>
-                              1. Starter (10 min)
-                            </label>
-                            <span style={{ fontSize: 11, color: '#15803d', background: '#dcfce7', padding: '1px 8px', borderRadius: 10, fontWeight: 700 }}>
-                              Inquiry Hook / Warm-up
-                            </span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <label className="field-label" style={{ fontWeight: 800, margin: 0, color: '#15803d', fontSize: 13 }}>
+                                1. Starter (10 min)
+                              </label>
+                              <span style={{ fontSize: 11, color: '#15803d', background: '#dcfce7', padding: '1px 8px', borderRadius: 10, fontWeight: 700 }}>
+                                Inquiry Hook / Warm-up
+                              </span>
+                            </div>
+                            <AiStageButton
+                              stage="starter"
+                              onGenerated={(text) => updateStage('starter', text)}
+                              getContext={getContextForSelectedLp}
+                              onPromptApiKey={() => setShowGeminiApiKeyModal(true)}
+                              onError={(msg) => setError(msg)}
+                            />
                           </div>
                           <textarea
                             rows={3}
@@ -2721,12 +2889,21 @@ export default function Planning() {
                         {/* Sub-section 2: Exposition */}
                         <div style={{ border: '1.5px solid #cbd5e1', borderRadius: 6, padding: 12, backgroundColor: '#f8fafc' }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, flexWrap: 'wrap', gap: 4 }}>
-                            <label className="field-label" style={{ fontWeight: 800, margin: 0, color: '#0369a1', fontSize: 13 }}>
-                              2. Exposition (15 min)
-                            </label>
-                            <span style={{ fontSize: 11, color: '#0369a1', background: '#e0f2fe', padding: '1px 8px', borderRadius: 10, fontWeight: 700 }}>
-                              Direct Instruction / Teacher Modeling
-                            </span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <label className="field-label" style={{ fontWeight: 800, margin: 0, color: '#0369a1', fontSize: 13 }}>
+                                2. Exposition (15 min)
+                              </label>
+                              <span style={{ fontSize: 11, color: '#0369a1', background: '#e0f2fe', padding: '1px 8px', borderRadius: 10, fontWeight: 700 }}>
+                                Direct Instruction / Teacher Modeling
+                              </span>
+                            </div>
+                            <AiStageButton
+                              stage="exposition"
+                              onGenerated={(text) => updateStage('exposition', text)}
+                              getContext={getContextForSelectedLp}
+                              onPromptApiKey={() => setShowGeminiApiKeyModal(true)}
+                              onError={(msg) => setError(msg)}
+                            />
                           </div>
                           <textarea
                             rows={3}
@@ -2741,12 +2918,21 @@ export default function Planning() {
                         {/* Sub-section 3: Learners Activity */}
                         <div style={{ border: '1.5px solid #cbd5e1', borderRadius: 6, padding: 12, backgroundColor: '#f8fafc' }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, flexWrap: 'wrap', gap: 4 }}>
-                            <label className="field-label" style={{ fontWeight: 800, margin: 0, color: '#6b21a8', fontSize: 13 }}>
-                              3. Learners Activity (35 min)
-                            </label>
-                            <span style={{ fontSize: 11, color: '#6b21a8', background: '#f3e8ff', padding: '1px 8px', borderRadius: 10, fontWeight: 700 }}>
-                              Guided Tasks / Hands-on Practice
-                            </span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <label className="field-label" style={{ fontWeight: 800, margin: 0, color: '#6b21a8', fontSize: 13 }}>
+                                3. Learners Activity (35 min)
+                              </label>
+                              <span style={{ fontSize: 11, color: '#6b21a8', background: '#f3e8ff', padding: '1px 8px', borderRadius: 10, fontWeight: 700 }}>
+                                Guided Tasks / Hands-on Practice
+                              </span>
+                            </div>
+                            <AiStageButton
+                              stage="learnersActivity"
+                              onGenerated={(text) => updateStage('learnersActivity', text)}
+                              getContext={getContextForSelectedLp}
+                              onPromptApiKey={() => setShowGeminiApiKeyModal(true)}
+                              onError={(msg) => setError(msg)}
+                            />
                           </div>
                           <textarea
                             rows={3}
@@ -2761,12 +2947,21 @@ export default function Planning() {
                         {/* Sub-section 4: Plenary */}
                         <div style={{ border: '1.5px solid #cbd5e1', borderRadius: 6, padding: 12, backgroundColor: '#f8fafc' }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, flexWrap: 'wrap', gap: 4 }}>
-                            <label className="field-label" style={{ fontWeight: 800, margin: 0, color: '#b45309', fontSize: 13 }}>
-                              4. Plenary (10 min)
-                            </label>
-                            <span style={{ fontSize: 11, color: '#b45309', background: '#fef3c7', padding: '1px 8px', borderRadius: 10, fontWeight: 700 }}>
-                              Exit Ticket / Lesson Synthesis
-                            </span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <label className="field-label" style={{ fontWeight: 800, margin: 0, color: '#b45309', fontSize: 13 }}>
+                                4. Plenary (10 min)
+                              </label>
+                              <span style={{ fontSize: 11, color: '#b45309', background: '#fef3c7', padding: '1px 8px', borderRadius: 10, fontWeight: 700 }}>
+                                Exit Ticket / Lesson Synthesis
+                              </span>
+                            </div>
+                            <AiStageButton
+                              stage="plenary"
+                              onGenerated={(text) => updateStage('plenary', text)}
+                              getContext={getContextForSelectedLp}
+                              onPromptApiKey={() => setShowGeminiApiKeyModal(true)}
+                              onError={(msg) => setError(msg)}
+                            />
                           </div>
                           <textarea
                             rows={3}
@@ -3979,65 +4174,141 @@ export default function Planning() {
               </div>
 
               <div style={{ border: '1.5px solid #cbd5e1', borderRadius: 8, padding: 12, backgroundColor: '#f8fafc' }}>
-                <div style={{ marginBottom: 8 }}>
-                  <label className="field-label" style={{ fontWeight: 800, color: '#4C2570', textTransform: 'uppercase', margin: 0, fontSize: 13 }}>
-                    Main Teaching Activities (4 Sub-Sections)
-                  </label>
-                  <span style={{ fontSize: 11, color: '#64748b' }}>
-                    Starter, Exposition, Learners Activity, and Plenary
-                  </span>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, flexWrap: 'wrap', gap: 6 }}>
+                  <div>
+                    <label className="field-label" style={{ fontWeight: 800, color: '#4C2570', textTransform: 'uppercase', margin: 0, fontSize: 13 }}>
+                      Main Teaching Activities &amp; Inquiry
+                    </label>
+                    <span style={{ fontSize: 11, color: '#64748b' }}>
+                      Starter, Exposition, Learners Activity, and Plenary
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-small"
+                      onClick={() => setShowGeminiApiKeyModal(true)}
+                      style={{ fontSize: 10.5, padding: '3px 8px' }}
+                      title="Configure Google Gemini API Key"
+                    >
+                      {hasGeminiApiKey() ? '🔑 Key ✓' : '🔑 Set Key'}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-small"
+                      disabled={generatingAllStages}
+                      onClick={handleGenerateAllForCreateLp}
+                      style={{
+                        fontSize: 10.5,
+                        padding: '3px 9px',
+                        fontWeight: 700,
+                        background: generatingAllStages ? '#94a3b8' : 'linear-gradient(135deg, #7c3aed 0%, #4C2570 100%)',
+                        color: '#ffffff'
+                      }}
+                    >
+                      {generatingAllStages ? 'Generating...' : '✨ Generate All (AI)'}
+                    </button>
+                  </div>
                 </div>
 
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                   <div>
-                    <label className="field-label" style={{ fontSize: 11.5, fontWeight: 700, color: '#15803d', marginBottom: 2 }}>
-                      1. Starter (10 min)
-                    </label>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 }}>
+                      <label className="field-label" style={{ fontSize: 11.5, fontWeight: 700, color: '#15803d', margin: 0 }}>
+                        1. Starter (10 min)
+                      </label>
+                      <AiStageButton
+                        stage="starter"
+                        onGenerated={(val) => setCreateLpStarter(val)}
+                        getContext={getContextForCreateLp}
+                        onPromptApiKey={() => setShowGeminiApiKeyModal(true)}
+                        compact
+                        onError={(msg) => setError(msg)}
+                      />
+                    </div>
                     <textarea
                       name="activity_starter"
                       rows={2}
                       className="field"
                       style={{ width: '100%', fontSize: 12, backgroundColor: '#ffffff' }}
                       placeholder="Inquiry hook, warm-up question..."
+                      value={createLpStarter}
+                      onChange={(e) => setCreateLpStarter(e.target.value)}
                     />
                   </div>
 
                   <div>
-                    <label className="field-label" style={{ fontSize: 11.5, fontWeight: 700, color: '#0369a1', marginBottom: 2 }}>
-                      2. Exposition (15 min)
-                    </label>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 }}>
+                      <label className="field-label" style={{ fontSize: 11.5, fontWeight: 700, color: '#0369a1', margin: 0 }}>
+                        2. Exposition (15 min)
+                      </label>
+                      <AiStageButton
+                        stage="exposition"
+                        onGenerated={(val) => setCreateLpExposition(val)}
+                        getContext={getContextForCreateLp}
+                        onPromptApiKey={() => setShowGeminiApiKeyModal(true)}
+                        compact
+                        onError={(msg) => setError(msg)}
+                      />
+                    </div>
                     <textarea
                       name="activity_exposition"
                       rows={2}
                       className="field"
                       style={{ width: '100%', fontSize: 12, backgroundColor: '#ffffff' }}
                       placeholder="Concept explanation, teacher modeling..."
+                      value={createLpExposition}
+                      onChange={(e) => setCreateLpExposition(e.target.value)}
                     />
                   </div>
 
                   <div>
-                    <label className="field-label" style={{ fontSize: 11.5, fontWeight: 700, color: '#6b21a8', marginBottom: 2 }}>
-                      3. Learners Activity (35 min)
-                    </label>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 }}>
+                      <label className="field-label" style={{ fontSize: 11.5, fontWeight: 700, color: '#6b21a8', margin: 0 }}>
+                        3. Learners Activity (35 min)
+                      </label>
+                      <AiStageButton
+                        stage="learnersActivity"
+                        onGenerated={(val) => setCreateLpLearners(val)}
+                        getContext={getContextForCreateLp}
+                        onPromptApiKey={() => setShowGeminiApiKeyModal(true)}
+                        compact
+                        onError={(msg) => setError(msg)}
+                      />
+                    </div>
                     <textarea
                       name="activity_learners"
                       rows={2}
                       className="field"
                       style={{ width: '100%', fontSize: 12, backgroundColor: '#ffffff' }}
                       placeholder="Stations, tasks, collaborative practice..."
+                      value={createLpLearners}
+                      onChange={(e) => setCreateLpLearners(e.target.value)}
                     />
                   </div>
 
                   <div>
-                    <label className="field-label" style={{ fontSize: 11.5, fontWeight: 700, color: '#b45309', marginBottom: 2 }}>
-                      4. Plenary (10 min)
-                    </label>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 }}>
+                      <label className="field-label" style={{ fontSize: 11.5, fontWeight: 700, color: '#b45309', margin: 0 }}>
+                        4. Plenary (10 min)
+                      </label>
+                      <AiStageButton
+                        stage="plenary"
+                        onGenerated={(val) => setCreateLpPlenary(val)}
+                        getContext={getContextForCreateLp}
+                        onPromptApiKey={() => setShowGeminiApiKeyModal(true)}
+                        compact
+                        onError={(msg) => setError(msg)}
+                      />
+                    </div>
                     <textarea
                       name="activity_plenary"
                       rows={2}
                       className="field"
                       style={{ width: '100%', fontSize: 12, backgroundColor: '#ffffff' }}
                       placeholder="Exit ticket, learning review, preview..."
+                      value={createLpPlenary}
+                      onChange={(e) => setCreateLpPlenary(e.target.value)}
                     />
                   </div>
                 </div>
@@ -4338,6 +4609,14 @@ export default function Planning() {
           </div>
         </div>
       )}
+
+      {/* ===================================================================== */}
+      {/* MODAL: GEMINI API KEY CONFIGURATION                                   */}
+      {/* ===================================================================== */}
+      <GeminiApiKeyModal
+        isOpen={showGeminiApiKeyModal}
+        onClose={() => setShowGeminiApiKeyModal(false)}
+      />
     </div>
   )
 }
