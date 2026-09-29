@@ -3543,8 +3543,9 @@ export const supabaseApi: Api = {
       if (!isLessonTimeInPast(existing.lesson_date, existing.end_time, existing.start_time)) {
         throw new Error(`Cannot submit lesson plan: The scheduled lesson time has not passed yet (${existing.lesson_date}${existing.end_time ? ` at ${existing.end_time}` : ''}). Lesson plans can only be submitted after the lesson has concluded and reflections are recorded.`)
       }
-      if (!existing.reflection_remarks || !existing.reflection_remarks.trim()) {
-        throw new Error('Remarks (Teacher Reflections & Evaluation) must be filled before submitting a lesson plan for review.')
+      const remarksLength = (existing.reflection_remarks || '').length
+      if (remarksLength < 16) {
+        throw new Error('Cannot submit lesson plan: Please provide a complete Teacher Reflections & Evaluation before submitting for review.')
       }
     }
     await this.updateLessonPlan(id, {

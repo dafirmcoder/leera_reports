@@ -1394,8 +1394,9 @@ export default function Planning() {
         setError(`Cannot submit lesson plan: The scheduled lesson time has not passed yet (${plan.lesson_date}${plan.end_time ? ` at ${plan.end_time}` : ''}). Lesson plans can only be submitted after the lesson has concluded and reflections are recorded.`)
         return
       }
-      if (!plan.reflection_remarks || !plan.reflection_remarks.trim()) {
-        setError('Cannot submit lesson plan: Remarks (Teacher Reflections & Evaluation) must be filled before submitting for review.')
+      const remarksLength = (plan.reflection_remarks || '').length
+      if (remarksLength < 16) {
+        setError('Cannot submit lesson plan: Please provide a complete Teacher Reflections & Evaluation before submitting for review.')
         return
       }
     }
@@ -2667,22 +2668,24 @@ export default function Planning() {
                             </button>
                             {(lp.status === 'draft' || lp.status === 'returned') && (() => {
                               const isPast = isLessonTimeInPast(lp.lesson_date, lp.end_time, lp.start_time)
-                              const hasRemarks = Boolean(lp.reflection_remarks && lp.reflection_remarks.trim())
+                              const remarksLength = (lp.reflection_remarks || '').length
+                              const hasRemarks = remarksLength >= 16
                               const canSubmit = isPast && hasRemarks
 
                               return (
                                 <button
                                   className="btn btn-primary btn-small"
-                                  onClick={() => handleSubmitLessonPlan(lp.id)}
+                                  disabled={!canSubmit}
+                                  onClick={() => canSubmit && handleSubmitLessonPlan(lp.id)}
                                   title={
                                     !isPast
                                       ? 'Cannot submit yet: Scheduled lesson time has not passed.'
                                       : !hasRemarks
-                                      ? 'Cannot submit yet: Remarks (Teacher Reflections) must be filled.'
+                                      ? 'Cannot submit yet: Please complete Teacher Reflections & Evaluation.'
                                       : 'Submit for review'
                                   }
                                   style={{
-                                    opacity: canSubmit ? 1 : 0.6,
+                                    opacity: canSubmit ? 1 : 0.5,
                                     cursor: canSubmit ? 'pointer' : 'not-allowed'
                                   }}
                                 >
@@ -2725,25 +2728,27 @@ export default function Planning() {
                   </button>
                   {(selectedLessonPlan.status === 'draft' || selectedLessonPlan.status === 'returned') && (() => {
                     const isPast = isLessonTimeInPast(selectedLessonPlan.lesson_date, selectedLessonPlan.end_time, selectedLessonPlan.start_time)
-                    const hasRemarks = Boolean(selectedLessonPlan.reflection_remarks && selectedLessonPlan.reflection_remarks.trim())
+                    const remarksLength = (selectedLessonPlan.reflection_remarks || '').length
+                    const hasRemarks = remarksLength >= 16
                     const canSubmit = isPast && hasRemarks
 
                     return (
                       <button
                         className="btn btn-small"
+                        disabled={!canSubmit}
                         style={{
                           background: canSubmit ? '#10b981' : '#94a3b8',
                           color: '#fff',
                           fontWeight: 700,
                           cursor: canSubmit ? 'pointer' : 'not-allowed',
-                          opacity: canSubmit ? 1 : 0.75
+                          opacity: canSubmit ? 1 : 0.65
                         }}
-                        onClick={() => handleSubmitLessonPlan(selectedLessonPlan.id)}
+                        onClick={() => canSubmit && handleSubmitLessonPlan(selectedLessonPlan.id)}
                         title={
                           !isPast
                             ? 'Cannot submit yet: Scheduled lesson time has not passed.'
                             : !hasRemarks
-                            ? 'Cannot submit yet: Teacher Reflections & Evaluation must be filled below before submitting.'
+                            ? 'Cannot submit yet: Please complete Teacher Reflections & Evaluation below.'
                             : 'Submit this lesson plan for leadership review'
                         }
                       >
@@ -3344,6 +3349,8 @@ export default function Planning() {
                         </label>
                         {(() => {
                           const isPast = isLessonTimeInPast(selectedLessonPlan.lesson_date, selectedLessonPlan.end_time, selectedLessonPlan.start_time)
+                          const remarksLength = (selectedLessonPlan.reflection_remarks || '').length
+                          const hasRemarks = remarksLength >= 16
                           return (
                             <span
                               style={{
@@ -3351,12 +3358,13 @@ export default function Planning() {
                                 fontWeight: 700,
                                 padding: '2px 8px',
                                 borderRadius: 4,
-                                backgroundColor: isPast ? '#dcfce7' : '#fef3c7',
-                                color: isPast ? '#15803d' : '#b45309',
-                                border: isPast ? '1px solid #bbf7d0' : '1px solid #fde68a'
+                                backgroundColor: !isPast ? '#fef3c7' : hasRemarks ? '#dcfce7' : '#fef3c7',
+                                color: !isPast ? '#b45309' : hasRemarks ? '#15803d' : '#b45309',
+                                border: !isPast ? '1px solid #fde68a' : hasRemarks ? '1px solid #bbf7d0' : '1px solid #fde68a',
+                                transition: 'all 0.25s ease'
                               }}
                             >
-                              {isPast ? '🔓 Unlocked (Lesson Concluded)' : '🔒 Locked until Lesson Concludes'}
+                              {!isPast ? '🔒 Locked until Lesson Concludes' : hasRemarks ? '✅ Reflections Complete' : '⚠️ Reflections Required'}
                             </span>
                           )
                         })()}
@@ -3364,7 +3372,8 @@ export default function Planning() {
 
                       {(() => {
                         const isPast = isLessonTimeInPast(selectedLessonPlan.lesson_date, selectedLessonPlan.end_time, selectedLessonPlan.start_time)
-                        const hasRemarks = Boolean(selectedLessonPlan.reflection_remarks && selectedLessonPlan.reflection_remarks.trim())
+                        const remarksLength = (selectedLessonPlan.reflection_remarks || '').length
+                        const hasRemarks = remarksLength >= 16
 
                         if (!isPast) {
                           return (
@@ -3379,45 +3388,78 @@ export default function Planning() {
 
                         if (!hasRemarks) {
                           return (
-                            <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 6, padding: '8px 12px', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8, color: '#1e40af', fontSize: 12 }}>
+                            <div style={{ background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 6, padding: '8px 12px', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8, color: '#92400e', fontSize: 12, transition: 'all 0.25s ease' }}>
                               <span style={{ fontSize: 16 }}>📝</span>
                               <span>
-                                <strong>Required for Submission:</strong> The scheduled lesson time has concluded. Please fill your reflections and evaluation below to enable submission for leadership review.
+                                <strong>Required for Submission:</strong> The scheduled lesson time has concluded. Please provide your reflections and evaluation below to activate the Submit button.
                               </span>
                             </div>
                           )
                         }
 
                         return (
-                          <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 6, padding: '6px 12px', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8, color: '#166534', fontSize: 12 }}>
-                            <span style={{ fontSize: 14 }}>✅</span>
-                            <span>Reflections recorded. This plan is eligible for review submission.</span>
+                          <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 6, padding: '8px 12px', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8, color: '#166534', fontSize: 12, transition: 'all 0.25s ease' }}>
+                            <span style={{ fontSize: 16 }}>✅</span>
+                            <span>Reflections recorded. The Submit button is active.</span>
                           </div>
                         )
                       })()}
 
                       {(() => {
                         const isPast = isLessonTimeInPast(selectedLessonPlan.lesson_date, selectedLessonPlan.end_time, selectedLessonPlan.start_time)
+                        const remarksLength = (selectedLessonPlan.reflection_remarks || '').length
+                        const hasRemarks = remarksLength >= 16
                         return (
-                          <textarea
-                            rows={3}
-                            className="field"
-                            style={{
-                              width: '100%',
-                              backgroundColor: !isPast ? '#f8fafc' : '#ffffff',
-                              cursor: !isPast ? 'not-allowed' : 'text',
-                              color: !isPast ? '#64748b' : '#0f172a',
-                              borderColor: !isPast ? '#cbd5e1' : undefined
-                            }}
-                            disabled={!isPast}
-                            placeholder={
-                              !isPast
-                                ? 'Locked: Teacher Reflections & Evaluation can only be recorded after the scheduled lesson has concluded...'
-                                : 'Reflections on lesson success, student understanding, scaffolds or pace adjustments for next session (Mandatory before submitting for review)...'
-                            }
-                            value={selectedLessonPlan.reflection_remarks || ''}
-                            onChange={(e) => setSelectedLessonPlan({ ...selectedLessonPlan, reflection_remarks: e.target.value })}
-                          />
+                          <div>
+                            <textarea
+                              rows={3}
+                              className="field"
+                              style={{
+                                width: '100%',
+                                backgroundColor: !isPast ? '#f8fafc' : '#ffffff',
+                                cursor: !isPast ? 'not-allowed' : 'text',
+                                color: !isPast ? '#64748b' : '#0f172a',
+                                border: !isPast
+                                  ? '1.5px solid #cbd5e1'
+                                  : hasRemarks
+                                  ? '1.5px solid #10b981'
+                                  : '1.5px solid #f59e0b',
+                                boxShadow: !isPast
+                                  ? 'none'
+                                  : hasRemarks
+                                  ? '0 0 0 1px rgba(16, 185, 129, 0.25)'
+                                  : '0 0 0 1px rgba(245, 158, 11, 0.25)',
+                                transition: 'border-color 0.25s ease, box-shadow 0.25s ease'
+                              }}
+                              disabled={!isPast}
+                              placeholder={
+                                !isPast
+                                  ? 'Locked: Teacher Reflections & Evaluation can only be recorded after the scheduled lesson has concluded...'
+                                  : 'Reflections on lesson success, student understanding, scaffolds or pace adjustments for next session...'
+                              }
+                              value={selectedLessonPlan.reflection_remarks || ''}
+                              onChange={(e) => setSelectedLessonPlan({ ...selectedLessonPlan, reflection_remarks: e.target.value })}
+                            />
+                            {isPast && (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 5, fontSize: 11.5, fontWeight: 600, color: hasRemarks ? '#15803d' : '#b45309', transition: 'color 0.25s ease' }}>
+                                <span
+                                  style={{
+                                    width: 8,
+                                    height: 8,
+                                    borderRadius: '50%',
+                                    backgroundColor: hasRemarks ? '#10b981' : '#f59e0b',
+                                    display: 'inline-block',
+                                    transition: 'background-color 0.25s ease'
+                                  }}
+                                />
+                                <span>
+                                  {hasRemarks
+                                    ? 'Reflections completed — Submit button active'
+                                    : 'Reflections in progress — complete your reflection to activate Submit'}
+                                </span>
+                              </div>
+                            )}
+                          </div>
                         )
                       })()}
                     </div>
