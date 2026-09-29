@@ -432,6 +432,7 @@ export interface Api {
   listAttendance(classId: string, date: string): Promise<AttendanceRow[]>
   saveAttendance(rows: Array<Pick<AttendanceRow, 'class_id' | 'student_id' | 'attendance_date' | 'status' | 'reason'>>): Promise<void>
   listAttendanceSummary(date: string): Promise<AttendanceSummary[]>
+  getClassAttendanceGenderCount(classId: string, date: string): Promise<{ boysPresent: number; girlsPresent: number; totalPresent: number; recorded: boolean }>
   getAttendancePeriodSummary(period: 'daily' | 'weekly' | 'monthly', date: string): Promise<AttendanceAggregatedSummary>
   getDetailedAttendanceReport(period: 'daily' | 'weekly' | 'monthly', date: string): Promise<DetailedAttendanceExport>
 

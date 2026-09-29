@@ -267,6 +267,39 @@ function cleanGeneratedText(raw: string): string {
 }
 
 /**
+ * Normalizes exposition text to imperative lesson planning action style (e.g. "Explain...").
+ * Automatically strips passive meta-phrasing like "Direct instruction covers..." or "The teacher explains...".
+ */
+export function cleanExpositionText(raw: string): string {
+  let text = cleanGeneratedText(raw).replace(/["“”]/g, '').trim()
+
+  // Replace leading "Direct instruction covers/introduces/details/explores/focuses on (the)..." with "Explain "
+  text = text.replace(/^Direct\s+instruction\s+(?:methods\s+)?(?:covers|details|outlines|focuses\s+on|introduces|explores)\s+(?:the\s+)?/i, 'Explain ')
+
+  // Replace "The teacher [verb]..." with imperative verbs
+  text = text.replace(/(?:^|\.\s+)The\s+teacher\s+(?:will\s+)?(?:explains?|breaks?\s+down|models?|demonstrates?)\s+/gi, (match) => {
+    const isNewSent = match.startsWith('.')
+    let verb = 'demonstrate '
+    if (/break/i.test(match)) verb = 'demonstrate '
+    else if (/model/i.test(match)) verb = 'model '
+    else if (/demonstrat/i.test(match)) verb = 'demonstrate '
+    else verb = 'explain '
+    return isNewSent ? `, ${verb}` : verb.charAt(0).toUpperCase() + verb.slice(1)
+  })
+
+  // Replace "A rapid hinge check uses..." with "and check understanding with..."
+  text = text.replace(/(?:^|\.\s+)(?:A\s+)?(?:rapid\s+)?hinge\s+check\s+uses\s+/gi, (match) => {
+    return match.startsWith('.') ? ', and check understanding with ' : 'Check understanding with '
+  })
+
+  if (text.length > 0) {
+    text = text.charAt(0).toUpperCase() + text.slice(1)
+  }
+
+  return text.trim()
+}
+
+/**
  * Builds the pedagogical prompt for a single instructional stage.
  */
 function buildStagePrompt(stage: InstructionalStage, context: LessonContext): string {
@@ -278,12 +311,20 @@ function buildStagePrompt(stage: InstructionalStage, context: LessonContext): st
 
   let stageSpecificInstructions = ''
   if (stage === 'exposition') {
-    stageSpecificInstructions = `CRITICAL STYLE & VOICE REQUIREMENTS FOR EXPOSITION:
-1. CLEAR, NEUTRAL INSTRUCTIONAL DELIVERY: Write direct, professional teacher exposition instructions starting with neutral action verbs (e.g., "Explain that...", "Explain the network topologies...", "Explain algebraic expressions and provide solved examples...", "Demonstrate on the whiteboard...", "Model step-by-step...", "Break down key vocabulary...").
-2. ABSOLUTELY NO QUOTES OR SIMULATED DIALOGUE: Do NOT use quotation marks ("..." or '...' or “...”) or simulated speech dialogue (do NOT write: I say: "Look at this..."). Keep it neutral and instructional (e.g. Explain network topologies (bus, ring, star) with board diagrams, demonstrate how packets flow, give solved examples comparing failure points, and check understanding).
-3. WHITEBOARD MODELING & SOLVED EXAMPLES: Explicitly describe the concrete solved examples, formulas, diagrams, or step-by-step breakdown shown on the board.
-4. STRICT OBJECTIVE & GRADE ALIGNMENT: Explicitly teach the specific knowledge in the selected Cambridge objective(s) and use vocabulary calibrated strictly for ${context.className || 'the specified year level'}.
-5. HINGE CHECK: End with a rapid diagnostic check to gauge understanding before students transition to independent or group work.`
+    stageSpecificInstructions = `CRITICAL GRAMMATICAL & STYLE REQUIREMENTS FOR EXPOSITION:
+1. MUST BE IN IMPERATIVE MOOD (ACTION VERBS ONLY):
+   - Start immediately with an imperative action verb: "Explain...", "Demonstrate...", "Model...", "Illustrate...", or "Give solved examples of...".
+   - Follow this EXACT lesson plan action style:
+     "Explain [concept] with [board diagrams/visuals], demonstrate [process/flow/steps], give solved examples [comparing/calculating/showing X], and check understanding with [a quick hinge question/mini-whiteboards]."
+   - TARGET REAL-WORLD EXAMPLE:
+     "Explain network topologies (bus, ring, star) with board diagrams, demonstrate how packets flow through each layout, give solved examples comparing failure points, and check understanding with a quick hinge question."
+2. ABSOLUTELY FORBIDDEN PHRASES (DO NOT USE):
+   - NEVER start with: "Direct instruction covers...", "Direct instruction introduces...", "In this stage...", "The lesson begins with...".
+   - NEVER write in third person: "The teacher explains...", "The teacher breaks down...", "The teacher demonstrates...", "A rapid hinge check uses...".
+   - NEVER use quotation marks or dialogue ("..." or '...' or “...”).
+3. WHITEBOARD MODELING & SOLVED EXAMPLES: Explicitly include concrete worked/solved examples and visual board representations.
+4. STRICT OBJECTIVE & GRADE ALIGNMENT: Explicitly teach the selected Cambridge objective(s) for ${context.className || 'the specified year level'}.
+5. HINGE CHECK: Conclude with checking understanding with a quick hinge question before independent practice.`
   } else if (stage === 'starter') {
     stageSpecificInstructions = `CRITICAL REQUIREMENTS FOR STARTER (10 MIN):
 1. CLASSROOM REALISM: A fast-paced, high-energy 10-minute hook with minimal teacher talk and immediate pupil action.
@@ -364,7 +405,7 @@ export async function generateStageContent(
 
   const prompt = buildStagePrompt(stage, context)
   const result = await callGeminiApi(prompt, apiKey)
-  return stage === 'exposition' ? result.replace(/["“”]/g, '').trim() : result
+  return stage === 'exposition' ? cleanExpositionText(result) : cleanGeneratedText(result)
 }
 
 /**
@@ -401,7 +442,14 @@ MANDATORY INSTRUCTIONS:
 
 PEDAGOGICAL & STYLE REQUIREMENTS FOR EACH FIELD:
 1. starter: Practical, high-energy warm-up (10 min). Concrete classroom hook (mini-whiteboard, physical prop or puzzling visual on board, think-pair-share). Fast-paced, low teacher talk, activates prerequisite knowledge.
-2. exposition: Direct instruction & teacher modeling (15 min). Clear, neutral instructional delivery (e.g. "Explain network topologies (bus, ring, star) with board diagrams...", "Explain algebraic expressions and provide solved examples..."). Model step-by-step on the whiteboard, provide clear solved examples, and include a rapid hinge check. DO NOT USE QUOTATION MARKS OR SCRIPTED DIALOGUE. Keep it neutral and professional.
+2. exposition: Direct teacher exposition action instructions (15 min).
+   - MANDATORY GRAMMATICAL FORM: Write in the IMPERATIVE MOOD starting immediately with action verbs: "Explain...", "Demonstrate...", "Model...", "Give solved examples of...".
+   - EXACT TARGET PATTERN:
+     "Explain network topologies (bus, ring, star) with board diagrams, demonstrate how packets flow through each layout, give solved examples comparing failure points, and check understanding with a quick hinge question."
+   - STRICTLY FORBIDDEN (DO NOT WRITE):
+     • NEVER write "Direct instruction covers..." or "Direct instruction introduces...".
+     • NEVER write third-person summaries like "The teacher explains...", "The teacher breaks down...", or "A rapid hinge check uses...".
+     • NEVER use quotation marks or dialogue.
 3. learnersActivity: Differentiated hands-on classroom tasks (35 min). Realistic group work, stations, or tiered practice with explicit scaffolding: Support (scaffolded sentence frames/hints), Core (hands-on investigation/worksheet meeting Cambridge objective), and Extension (critical analysis/stretch challenge).
 4. plenary: Sharp lesson synthesis & exit ticket (10 min). Concrete classroom check (mini-whiteboard showdown, 2-question exit ticket, or 3-2-1 summary) evaluating achievement against the lesson objective.
 5. assessmentIdeas: At least 2 to 3 distinct, concrete classroom assessment methods (format with bullet points: • ...). Must directly evaluate student mastery of the selected learning objective (e.g. marked sheet, exit ticket, paired rubric).
@@ -409,7 +457,7 @@ PEDAGOGICAL & STYLE REQUIREMENTS FOR EACH FIELD:
 Output must be in JSON format matching exactly this schema:
 {
   "starter": "string (2 to 4 concise sentences)",
-  "exposition": "string (2 to 4 concise sentences describing teacher explanation and solved examples, NO quotation marks or dialogue)",
+  "exposition": "string (MUST start with an imperative verb like 'Explain...'. E.g. 'Explain network topologies (bus, ring, star) with board diagrams, demonstrate how packets flow through each layout, give solved examples comparing failure points, and check understanding with a quick hinge question.' NO third-person 'The teacher explains' or 'Direct instruction covers'. NO quotation marks.)",
   "learnersActivity": "string (2 to 4 concise sentences with Support, Core, Extension differentiation)",
   "plenary": "string (2 to 4 concise sentences with concrete exit check)",
   "assessmentIdeas": "• Assessment idea 1...\\n• Assessment idea 2..."
@@ -426,10 +474,9 @@ Do NOT wrap with markdown other than \`\`\`json. Return only the valid JSON obje
       jsonStr = jsonMatch[0]
     }
     const parsed = JSON.parse(jsonStr)
-    const expClean = cleanGeneratedText(parsed.exposition || '').replace(/["“”]/g, '').trim()
     return {
       starter: cleanGeneratedText(parsed.starter || ''),
-      exposition: expClean,
+      exposition: cleanExpositionText(parsed.exposition || ''),
       learnersActivity: cleanGeneratedText(parsed.learnersActivity || parsed.learners || ''),
       plenary: cleanGeneratedText(parsed.plenary || ''),
       assessmentIdeas: cleanGeneratedText(parsed.assessmentIdeas || parsed.assessment_ideas || '')

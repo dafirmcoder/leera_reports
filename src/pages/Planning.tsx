@@ -64,6 +64,16 @@ export function isPastLessonSlot(dateStr: string, startTime?: string | null, end
   return dateStr < todayStr
 }
 
+export function normalizeTimeString(t?: string | null): string {
+  if (!t) return ''
+  const trimmed = t.trim()
+  const parts = trimmed.split(':')
+  if (parts.length >= 2) {
+    return `${parts[0].padStart(2, '0')}:${parts[1].padStart(2, '0')}`
+  }
+  return trimmed
+}
+
 export function findMatchingLessonPlan(
   slot: TeacherScheduleSlot,
   dateStr: string,
@@ -71,6 +81,11 @@ export function findMatchingLessonPlan(
 ): LessonPlan | undefined {
   return plans.find((lp) => {
     if (lp.lesson_date !== dateStr) return false
+
+    // Direct schedule slot match
+    if (slot.id && lp.schedule_slot_id && slot.id === lp.schedule_slot_id) {
+      return true
+    }
 
     const classMatches =
       (slot.class_id && lp.class_id === slot.class_id) ||
@@ -83,7 +98,7 @@ export function findMatchingLessonPlan(
     if (!classMatches || !subjectMatches) return false
 
     if (slot.start_time && lp.start_time) {
-      return slot.start_time === lp.start_time
+      return normalizeTimeString(slot.start_time) === normalizeTimeString(lp.start_time)
     }
 
     return true
@@ -338,6 +353,7 @@ export default function Planning() {
   const [showCreateLessonPlanModal, setShowCreateLessonPlanModal] = useState(false)
   const [createLpClassId, setCreateLpClassId] = useState('')
   const [createLpSubjectId, setCreateLpSubjectId] = useState('')
+  const [createLpSlotId, setCreateLpSlotId] = useState<string | null>(null)
   const [createLpDate, setCreateLpDate] = useState(() => formatDateISO(new Date()))
   const [createLpStartTime, setCreateLpStartTime] = useState('08:30')
   const [createLpEndTime, setCreateLpEndTime] = useState('09:15')
@@ -357,6 +373,7 @@ export default function Planning() {
   const [createLpAssessmentIdeas, setCreateLpAssessmentIdeas] = useState('')
   const [showGeminiApiKeyModal, setShowGeminiApiKeyModal] = useState(false)
   const [generatingAllStages, setGeneratingAllStages] = useState(false)
+  const [syncingAttendance, setSyncingAttendance] = useState(false)
 
   // Teaching Assignments State
   const [assignments, setAssignments] = useState<Assignment[]>([])
@@ -564,9 +581,29 @@ export default function Planning() {
     slotSubject?: string,
     slotStartTime?: string,
     slotEndTime?: string,
-    slotDate?: string
+    slotDate?: string,
+    slotId?: string
   ) => {
     const targetDate = slotDate || formatDateISO(new Date())
+
+    // If a plan already exists for this slot & date, reopen it directly instead of showing a blank modal!
+    if (slotClass && slotSubject) {
+      const existing = lessonPlans.find((lp) => {
+        if (lp.lesson_date !== targetDate) return false
+        if (slotId && lp.schedule_slot_id === slotId) return true
+        const cMatches = (slotClass && lp.class_name && lp.class_name.toLowerCase().trim() === slotClass.toLowerCase().trim())
+        const sMatches = (slotSubject && lp.subject_name && lp.subject_name.toLowerCase().trim() === slotSubject.toLowerCase().trim())
+        if (!cMatches || !sMatches) return false
+        if (slotStartTime && lp.start_time) {
+          return normalizeTimeString(slotStartTime) === normalizeTimeString(lp.start_time)
+        }
+        return true
+      })
+      if (existing) {
+        handleSelectLessonPlan(existing.id)
+        return
+      }
+    }
 
     // Planning closes at end of day: block only previous calendar dates, not earlier slots on today
     if (isPastLessonSlot(targetDate, slotStartTime, slotEndTime)) {
@@ -594,11 +631,12 @@ export default function Planning() {
       const allowed = getAllowedSubjectsForClass(cId)
       if (allowed.length === 1) sId = allowed[0].id
     }
+    setCreateLpSlotId(slotId || null)
     setCreateLpClassId(cId)
     setCreateLpSubjectId(sId)
     setCreateLpDate(targetDate)
-    setCreateLpStartTime(slotStartTime || '08:30')
-    setCreateLpEndTime(slotEndTime || '09:15')
+    setCreateLpStartTime(slotStartTime ? normalizeTimeString(slotStartTime) : '08:30')
+    setCreateLpEndTime(slotEndTime ? normalizeTimeString(slotEndTime) : '09:15')
     setCreateLpTopicTitle('')
     setCreateLpChallengeTitle('')
     setSelectedLpObjectiveCodes([])
@@ -606,6 +644,7 @@ export default function Planning() {
     setCreateLpExposition('')
     setCreateLpLearners('')
     setCreateLpPlenary('')
+    setCreateLpAssessmentIdeas('')
     setShowCreateLessonPlanModal(true)
   }
 
@@ -1010,11 +1049,48 @@ export default function Planning() {
     setLoading(true)
     try {
       const lp = await api.getLessonPlan(id)
+      if (lp) {
+        // Auto-fill attendance from daily register if not already recorded or both 0
+        if (lp.boys_attendance === null || lp.boys_attendance === undefined || (lp.boys_attendance === 0 && lp.girls_attendance === 0)) {
+          try {
+            const att = await api.getClassAttendanceGenderCount(lp.class_id, lp.lesson_date)
+            if (att.recorded) {
+              lp.boys_attendance = att.boysPresent
+              lp.girls_attendance = att.girlsPresent
+            }
+          } catch {
+            // Silently fall through
+          }
+        }
+      }
       setSelectedLessonPlan(lp)
+      setActiveTab('lesson_plans')
     } catch (e: any) {
       setError(e?.message || 'Failed to load lesson plan details.')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleSyncAttendanceForSelectedLp = async () => {
+    if (!selectedLessonPlan) return
+    setSyncingAttendance(true)
+    try {
+      const att = await api.getClassAttendanceGenderCount(selectedLessonPlan.class_id, selectedLessonPlan.lesson_date)
+      if (att.recorded) {
+        setSelectedLessonPlan({
+          ...selectedLessonPlan,
+          boys_attendance: att.boysPresent,
+          girls_attendance: att.girlsPresent
+        })
+        setSuccess(`Attendance auto-filled: ${att.boysPresent} Boys, ${att.girlsPresent} Girls present (${att.totalPresent} total).`)
+      } else {
+        setError(`No attendance register found for this class on ${selectedLessonPlan.lesson_date}. Please record attendance in the Attendance module first.`)
+      }
+    } catch (err: any) {
+      setError(err?.message || 'Failed to fetch attendance for this class and date.')
+    } finally {
+      setSyncingAttendance(false)
     }
   }
 
@@ -1077,9 +1153,23 @@ export default function Planning() {
         const combinedActivity = formatActivityStages({ starter, exposition, learnersActivity, plenary }) || (form.get('main_teaching_activity') as string) || ''
         const assessmentIdeas = createLpAssessmentIdeas || (form.get('assessment_ideas') as string) || ''
 
+        // Auto-fetch attendance for class on this date if recorded
+        let initialBoys: number | null = null
+        let initialGirls: number | null = null
+        try {
+          const att = await api.getClassAttendanceGenderCount(classId, lessonDate)
+          if (att.recorded) {
+            initialBoys = att.boysPresent
+            initialGirls = att.girlsPresent
+          }
+        } catch {
+          // silent fallback
+        }
+
         const id = await api.createLessonPlan({
           class_id: classId,
           subject_id: subjectId,
+          schedule_slot_id: createLpSlotId || null,
           lesson_date: lessonDate,
           start_time: startTime || null,
           end_time: endTime || null,
@@ -1088,9 +1178,12 @@ export default function Planning() {
           main_teaching_activity: combinedActivity,
           assessment_ideas: assessmentIdeas,
           resources: (form.get('resources') as string) || '',
+          boys_attendance: initialBoys,
+          girls_attendance: initialGirls,
           objectives: chosenObjectives
         })
       setShowCreateLessonPlanModal(false)
+      setCreateLpSlotId(null)
       setSelectedLpObjectiveCodes([])
       setCreateLpTopicTitle('')
       setCreateLpChallengeTitle('')
@@ -1100,8 +1193,8 @@ export default function Planning() {
       setCreateLpPlenary('')
       setCreateLpAssessmentIdeas('')
       setSuccess('Lesson Plan created successfully with attached uncovered objectives.')
-      await handleSelectLessonPlan(id)
       await loadAllPlanningData()
+      await handleSelectLessonPlan(id)
     } catch (err: any) {
       setError(err?.message || 'Could not create lesson plan.')
     } finally {
@@ -1115,6 +1208,11 @@ export default function Planning() {
       setLoading(true)
       await api.updateLessonPlan(selectedLessonPlan.id, selectedLessonPlan)
       setSuccess('Lesson Plan saved successfully.')
+      await loadAllPlanningData()
+      const refreshed = await api.getLessonPlan(selectedLessonPlan.id)
+      if (refreshed) {
+        setSelectedLessonPlan(refreshed)
+      }
     } catch (err: any) {
       setError(err?.message || 'Failed to save lesson plan.')
     } finally {
@@ -1778,7 +1876,8 @@ export default function Planning() {
                                         s.subject_name,
                                         s.start_time,
                                         s.end_time,
-                                        dayDateStr
+                                        dayDateStr,
+                                        s.id
                                       )
                                     }
                                   >
@@ -3053,7 +3152,30 @@ export default function Planning() {
                   <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 14 }}>
                     {/* Attendance Record */}
                     <div>
-                      <label className="field-label" style={{ fontWeight: 700 }}>Attendance (Post-Lesson Record)</label>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                        <label className="field-label" style={{ fontWeight: 700, marginBottom: 0 }}>Attendance (Post-Lesson Record)</label>
+                        <button
+                          type="button"
+                          onClick={handleSyncAttendanceForSelectedLp}
+                          disabled={syncingAttendance}
+                          className="btn btn-secondary btn-sm"
+                          style={{
+                            fontSize: 11,
+                            padding: '3px 8px',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 4,
+                            backgroundColor: '#f1f5f9',
+                            borderColor: '#cbd5e1',
+                            color: '#334155',
+                            cursor: syncingAttendance ? 'not-allowed' : 'pointer'
+                          }}
+                          title="Auto-fill boys and girls attendance from the official daily register for this class & date"
+                        >
+                          <span style={{ fontSize: 12 }}>{syncingAttendance ? '⏳' : '🔄'}</span>
+                          {syncingAttendance ? 'Syncing...' : 'Auto-fill from Daily Attendance'}
+                        </button>
+                      </div>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                         <div>
                           <span style={{ fontSize: 11.5, color: '#334155', fontWeight: 700, display: 'block', marginBottom: 3 }}>Boys Present:</span>
@@ -3080,8 +3202,11 @@ export default function Planning() {
                           />
                         </div>
                       </div>
-                      <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>
-                        Rendered directly into the ATTENDANCE column of the PDF.
+                      <div style={{ fontSize: 11, color: '#64748b', marginTop: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span>Rendered directly into the ATTENDANCE column of the PDF.</span>
+                        <span style={{ color: '#0369a1', fontWeight: 600 }}>
+                          Total: {((selectedLessonPlan.boys_attendance || 0) + (selectedLessonPlan.girls_attendance || 0))} present
+                        </span>
                       </div>
                     </div>
 

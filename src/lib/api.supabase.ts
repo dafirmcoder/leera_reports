@@ -666,6 +666,45 @@ export const supabaseApi: Api = {
     return [...grouped.values()].sort((a, b) => a.class_name.localeCompare(b.class_name))
   },
 
+  async getClassAttendanceGenderCount(
+    classId: string,
+    date: string
+  ): Promise<{ boysPresent: number; girlsPresent: number; totalPresent: number; recorded: boolean }> {
+    const { data, error } = await db()
+      .from('attendance')
+      .select('status, students(gender)')
+      .eq('class_id', classId)
+      .eq('attendance_date', date)
+
+    if (error) throw new Error(error.message)
+    const rows = (data ?? []) as any[]
+    if (rows.length === 0) {
+      return { boysPresent: 0, girlsPresent: 0, totalPresent: 0, recorded: false }
+    }
+
+    const isBoy = (g: string) => g?.trim().toUpperCase() === 'M' || g?.trim().toLowerCase().startsWith('m') || g?.trim().toLowerCase() === 'boy'
+    const isGirl = (g: string) => g?.trim().toUpperCase() === 'F' || g?.trim().toLowerCase().startsWith('f') || g?.trim().toLowerCase() === 'girl'
+
+    let boysPresent = 0
+    let girlsPresent = 0
+    let totalPresent = 0
+
+    for (const r of rows) {
+      const isPresent = String(r.status || '').toUpperCase() === 'P' || /present/i.test(String(r.status || ''))
+      if (isPresent) {
+        totalPresent++
+        const gender = r.students?.gender || ''
+        if (isBoy(gender)) {
+          boysPresent++
+        } else if (isGirl(gender)) {
+          girlsPresent++
+        }
+      }
+    }
+
+    return { boysPresent, girlsPresent, totalPresent, recorded: true }
+  },
+
   async listUnitTests(classId: string): Promise<UnitTest[]> {
     const { data, error } = await db()
       .from('unit_tests')
@@ -3112,8 +3151,16 @@ export const supabaseApi: Api = {
 
       const { data, error } = await q
       if (!error && data) {
+        const formatHHMM = (t?: string | null) => {
+          if (!t) return null
+          const p = t.trim().split(':')
+          return p.length >= 2 ? `${p[0].padStart(2, '0')}:${p[1].padStart(2, '0')}` : t
+        }
+
         return data.map((d: any) => ({
           ...d,
+          start_time: formatHHMM(d.start_time),
+          end_time: formatHHMM(d.end_time),
           class_name: d.classes?.name || 'Class',
           subject_name: d.subjects?.name || 'Subject',
           teacher_name: d.profiles?.full_name || 'Teacher',
@@ -3152,8 +3199,16 @@ export const supabaseApi: Api = {
           .select('*')
           .eq('lesson_plan_id', id)
 
+        const formatHHMM = (t?: string | null) => {
+          if (!t) return null
+          const p = t.trim().split(':')
+          return p.length >= 2 ? `${p[0].padStart(2, '0')}:${p[1].padStart(2, '0')}` : t
+        }
+
         return {
           ...data,
+          start_time: formatHHMM(data.start_time),
+          end_time: formatHHMM(data.end_time),
           class_name: data.classes?.name || 'Class',
           subject_name: data.subjects?.name || 'Subject',
           teacher_name: data.profiles?.full_name || 'Teacher',
@@ -3306,13 +3361,51 @@ export const supabaseApi: Api = {
   },
 
   async updateLessonPlan(id: string, updates: Partial<LessonPlan> & {
-    objectives?: Array<{ objective_id?: string; code_snapshot: string; text_snapshot: string }>
+    objectives?: Array<{ objective_id?: string | null; code_snapshot: string; text_snapshot: string }>
   }): Promise<void> {
-    try {
-      const { objectives, ...coreUpdates } = updates
-      await db().from('lesson_plans').update(coreUpdates).eq('id', id)
+    const { objectives, ...rawUpdates } = updates
+    const validColumns = new Set([
+      'school_id',
+      'teacher_id',
+      'subject_id',
+      'class_id',
+      'work_plan_week_id',
+      'schedule_slot_id',
+      'lesson_date',
+      'start_time',
+      'end_time',
+      'topic_title',
+      'challenge_title',
+      'subtopic_title',
+      'main_teaching_activity',
+      'assessment_ideas',
+      'resources',
+      'differentiation',
+      'boys_attendance',
+      'girls_attendance',
+      'reflection_remarks',
+      'status',
+      'revision',
+      'submitted_at',
+      'approved_at',
+      'reviewer_id',
+      'review_comment'
+    ])
 
-      if (objectives) {
+    const coreUpdates: Record<string, any> = {
+      updated_at: new Date().toISOString()
+    }
+    for (const [key, value] of Object.entries(rawUpdates)) {
+      if (validColumns.has(key)) {
+        coreUpdates[key] = value
+      }
+    }
+
+    try {
+      const { error } = await db().from('lesson_plans').update(coreUpdates).eq('id', id)
+      if (error) {
+        console.warn('updateLessonPlan db error:', error)
+      } else if (objectives) {
         await db().from('lesson_plan_objectives').delete().eq('lesson_plan_id', id)
         if (objectives.length > 0) {
           const objRows = objectives.map((o) => ({
@@ -3324,12 +3417,21 @@ export const supabaseApi: Api = {
           await db().from('lesson_plan_objectives').insert(objRows)
         }
       }
-    } catch {}
+    } catch (e) {
+      console.warn('updateLessonPlan fallback:', e)
+    }
 
     const localPlans: LessonPlan[] = JSON.parse(localStorage.getItem('leera_lesson_plans') || '[]')
     const idx = localPlans.findIndex((p) => p.id === id)
     if (idx >= 0) {
       localPlans[idx] = { ...localPlans[idx], ...updates, updated_at: new Date().toISOString() }
+      localStorage.setItem('leera_lesson_plans', JSON.stringify(localPlans))
+    } else {
+      localPlans.push({
+        id,
+        ...updates,
+        updated_at: new Date().toISOString()
+      } as LessonPlan)
       localStorage.setItem('leera_lesson_plans', JSON.stringify(localPlans))
     }
   },
