@@ -207,16 +207,32 @@ export default function PlanningExecutiveDashboard({
           </div>
         </div>
 
-        {/* Syllabus Coverage */}
-        <div className="card" style={{ padding: '14px 18px', backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 8 }}>
-          <div style={{ fontSize: 12, color: '#64748b', fontWeight: 600, textTransform: 'uppercase' }}>
-            Syllabus Coverage
+        {/* Work Plan Coverage */}
+        <div className="card" style={{ padding: '14px 18px', backgroundColor: '#ffffff', border: '1.5px solid #0f766e30', borderRadius: 8 }}>
+          <div style={{ fontSize: 12, color: '#0f766e', fontWeight: 700, textTransform: 'uppercase' }}>
+            Work Plan Coverage
           </div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 4 }}>
-            <span style={{ fontSize: 26, fontWeight: 800, color: '#0284c7' }}>
+            <span style={{ fontSize: 26, fontWeight: 800, color: '#0f766e' }}>
+              {analytics.averageWorkPlanCoveragePct}%
+            </span>
+            <span style={{ fontSize: 12, color: '#64748b' }}>avg semester progress</span>
+          </div>
+          <div style={{ marginTop: 6, fontSize: 11, color: '#64748b' }}>
+            Taught vs. semester work plan objectives
+          </div>
+        </div>
+
+        {/* Syllabus Coverage */}
+        <div className="card" style={{ padding: '14px 18px', backgroundColor: '#ffffff', border: '1.5px solid #4C257030', borderRadius: 8 }}>
+          <div style={{ fontSize: 12, color: '#4C2570', fontWeight: 700, textTransform: 'uppercase' }}>
+            Full Syllabus Coverage
+          </div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 4 }}>
+            <span style={{ fontSize: 26, fontWeight: 800, color: '#4C2570' }}>
               {analytics.averageSyllabusCoveragePct}%
             </span>
-            <span style={{ fontSize: 12, color: '#64748b' }}>average coverage</span>
+            <span style={{ fontSize: 12, color: '#64748b' }}>avg full syllabus</span>
           </div>
           <div style={{ marginTop: 6, fontSize: 11, color: '#64748b' }}>
             Based on active Cambridge curriculum schemes
@@ -350,7 +366,8 @@ export default function PlanningExecutiveDashboard({
                 <th style={{ padding: '10px 14px', textAlign: 'center' }}>Expected (Past)</th>
                 <th style={{ padding: '10px 14px', textAlign: 'center' }}>Planned (Past)</th>
                 <th style={{ padding: '10px 14px', textAlign: 'center' }}>Compliance %</th>
-                <th style={{ padding: '10px 14px', textAlign: 'center', minWidth: 140 }}>Syllabus Coverage</th>
+                <th style={{ padding: '10px 14px', textAlign: 'center', minWidth: 130 }}>Work Plan Coverage</th>
+                <th style={{ padding: '10px 14px', textAlign: 'center', minWidth: 130 }}>Syllabus Coverage</th>
                 <th style={{ padding: '10px 14px', textAlign: 'center' }}>Plan Statuses</th>
                 <th style={{ padding: '10px 14px', textAlign: 'right' }}>Actions</th>
               </tr>
@@ -358,7 +375,7 @@ export default function PlanningExecutiveDashboard({
             <tbody>
               {filteredTeachers.length === 0 ? (
                 <tr>
-                  <td colSpan={8} style={{ padding: '28px', textAlign: 'center', color: '#94a3b8' }}>
+                  <td colSpan={9} style={{ padding: '28px', textAlign: 'center', color: '#94a3b8' }}>
                     No teachers found matching the selected filters.
                   </td>
                 </tr>
@@ -420,10 +437,30 @@ export default function PlanningExecutiveDashboard({
                         {renderTierBadge(t.complianceTier, t.compliancePct)}
                       </td>
 
+                      {/* Work Plan Coverage Bar */}
+                      <td style={{ padding: '10px 14px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 3 }}>
+                          <span style={{ fontWeight: 700, color: '#0f766e' }}>{t.workPlanCoverage.coveragePct}%</span>
+                          <span style={{ color: '#64748b' }}>
+                            {t.workPlanCoverage.coveredObjectives} / {t.workPlanCoverage.totalWorkPlanObjectives || 0}
+                          </span>
+                        </div>
+                        <div style={{ width: '100%', height: 6, backgroundColor: '#e2e8f0', borderRadius: 9999, overflow: 'hidden' }}>
+                          <div
+                            style={{
+                              width: `${Math.max(4, t.workPlanCoverage.coveragePct)}%`,
+                              height: '100%',
+                              backgroundColor: '#0f766e',
+                              borderRadius: 9999
+                            }}
+                          />
+                        </div>
+                      </td>
+
                       {/* Syllabus Coverage Bar */}
                       <td style={{ padding: '10px 14px' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 3 }}>
-                          <span style={{ fontWeight: 600, color: '#334155' }}>{t.syllabusCoverage.coveragePct}%</span>
+                          <span style={{ fontWeight: 700, color: '#4C2570' }}>{t.syllabusCoverage.coveragePct}%</span>
                           <span style={{ color: '#64748b' }}>
                             {t.syllabusCoverage.coveredObjectives} / {t.syllabusCoverage.totalSyllabusObjectives || '—'}
                           </span>
@@ -433,7 +470,7 @@ export default function PlanningExecutiveDashboard({
                             style={{
                               width: `${Math.max(4, t.syllabusCoverage.coveragePct)}%`,
                               height: '100%',
-                              backgroundColor: t.syllabusCoverage.coveragePct >= 75 ? '#10b981' : t.syllabusCoverage.coveragePct >= 40 ? '#f59e0b' : '#3b82f6',
+                              backgroundColor: '#4C2570',
                               borderRadius: 9999
                             }}
                           />

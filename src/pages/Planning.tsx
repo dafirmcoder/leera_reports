@@ -419,12 +419,47 @@ export default function Planning() {
     try {
       const teacherFilter = hasExecutiveAccess ? undefined : { teacherId: profile?.id }
 
-      // Fetch Work Plans
-      const wps = await api.listWorkPlans(teacherFilter)
-      setWorkPlans(wps)
+      // Fetch Work Plans & Lesson Plans
+      const [wps, lps] = await Promise.all([
+        api.listWorkPlans(teacherFilter),
+        api.listLessonPlans(teacherFilter)
+      ])
 
-      // Fetch Lesson Plans
-      const lps = await api.listLessonPlans(teacherFilter)
+      // Automatically mark any objective used in a lesson plan as COVERED in the work plan
+      const coveredCodeKeys = new Set<string>()
+      lps.forEach((lp) => {
+        (lp.objectives || []).forEach((o) => {
+          if (o.code_snapshot) {
+            coveredCodeKeys.add(`${lp.class_id}_${lp.subject_id}_${o.code_snapshot}`)
+            coveredCodeKeys.add(`${o.code_snapshot}`)
+          }
+        })
+      })
+
+      const synchedWps = wps.map((wp) => {
+        const synchedWeeks = (wp.weeks || []).map((wk) => {
+          const synchedObjs = (wk.objectives || []).map((obj) => {
+            const isUsedInLp = coveredCodeKeys.has(`${wp.class_id}_${wp.subject_id}_${obj.code_snapshot}`) ||
+                               coveredCodeKeys.has(`${obj.code_snapshot}`)
+            if (isUsedInLp && !obj.is_met) {
+              return { ...obj, is_met: true, met_at: obj.met_at || new Date().toISOString() }
+            }
+            return obj
+          })
+          const allMet = synchedObjs.length > 0 && synchedObjs.every((o) => o.is_met)
+          return {
+            ...wk,
+            objectives: synchedObjs,
+            is_commed: wk.is_commed || allMet
+          }
+        })
+        return {
+          ...wp,
+          weeks: synchedWeeks
+        }
+      })
+
+      setWorkPlans(synchedWps)
       setLessonPlans(lps)
 
       // Fetch Timetable for current user
@@ -1300,7 +1335,7 @@ export default function Planning() {
       if (err?.message === 'MISSING_API_KEY') {
         setShowGeminiApiKeyModal(true)
       } else {
-        setError(err?.message || 'Failed to generate teaching stages with Gemini AI.')
+        setError(err?.message || 'Failed to generate teaching stages.')
       }
     } finally {
       setGeneratingAllStages(false)
@@ -1330,7 +1365,7 @@ export default function Planning() {
       if (err?.message === 'MISSING_API_KEY') {
         setShowGeminiApiKeyModal(true)
       } else {
-        setError(err?.message || 'Failed to generate teaching stages with Gemini AI.')
+        setError(err?.message || 'Failed to generate teaching stages.')
       }
     } finally {
       setGeneratingAllStages(false)
@@ -2172,31 +2207,48 @@ export default function Planning() {
                 const allObjs = (selectedWorkPlan.weeks || []).flatMap((w) => w.objectives || [])
                 const coveredCount = allObjs.filter((o) => o.is_met).length
                 const uncoveredCount = allObjs.filter((o) => !o.is_met).length
-                const pct = allObjs.length > 0 ? Math.round((coveredCount / allObjs.length) * 100) : 0
+                const wpPct = allObjs.length > 0 ? Math.round((coveredCount / allObjs.length) * 100) : 0
+
+                // Match Full Syllabus Scheme
+                const matchingScheme = schemes.find(
+                  (s) => s.id === selectedWorkPlan.scheme_id ||
+                    s.subject_code === selectedWorkPlan.subject_id ||
+                    s.subject_name?.toLowerCase().trim() === selectedWorkPlan.subject_name?.toLowerCase().trim()
+                )
+                const totalSyllabusObjs = matchingScheme?.objectives_count || 0
+                const sylPct = totalSyllabusObjs > 0 ? Math.min(100, Math.round((coveredCount / totalSyllabusObjs) * 100)) : 0
 
                 return (
-                  <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: 12, marginBottom: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
-                    <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <div style={{ background: '#f8fafc', border: '1.5px solid #cbd5e1', borderRadius: 8, padding: '14px 18px', marginBottom: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 14 }}>
+                    <div style={{ display: 'flex', gap: 18, alignItems: 'center', flexWrap: 'wrap' }}>
                       <div style={{ textAlign: 'center', borderRight: '1px solid #e2e8f0', paddingRight: 14 }}>
-                        <div style={{ fontSize: 11, color: '#64748b', fontWeight: 600 }}>TOTAL OBJECTIVES</div>
-                        <div style={{ fontSize: 18, fontWeight: 800, color: '#0f172a' }}>{allObjs.length}</div>
-                      </div>
-                      <div style={{ textAlign: 'center', borderRight: '1px solid #e2e8f0', paddingRight: 14 }}>
-                        <div style={{ fontSize: 11, color: '#166534', fontWeight: 600 }}>✓ COVERED</div>
-                        <div style={{ fontSize: 18, fontWeight: 800, color: '#166534' }}>{coveredCount}</div>
+                        <div style={{ fontSize: 11, color: '#64748b', fontWeight: 700 }}>WORK PLAN TARGET</div>
+                        <div style={{ fontSize: 19, fontWeight: 800, color: '#0f172a' }}>{allObjs.length} <span style={{ fontSize: 11, color: '#64748b' }}>Objs</span></div>
                       </div>
                       <div style={{ textAlign: 'center', borderRight: '1px solid #e2e8f0', paddingRight: 14 }}>
-                        <div style={{ fontSize: 11, color: '#b45309', fontWeight: 600 }}>⏳ UNCOVERED</div>
-                        <div style={{ fontSize: 18, fontWeight: 800, color: '#b45309' }}>{uncoveredCount}</div>
+                        <div style={{ fontSize: 11, color: '#166534', fontWeight: 700 }}>✓ COVERED</div>
+                        <div style={{ fontSize: 19, fontWeight: 800, color: '#166534' }}>{coveredCount}</div>
                       </div>
-                      <div style={{ textAlign: 'center' }}>
-                        <div style={{ fontSize: 11, color: '#64748b', fontWeight: 600 }}>COVERAGE</div>
-                        <div style={{ fontSize: 18, fontWeight: 800, color: '#1e293b' }}>{pct}%</div>
+                      <div style={{ textAlign: 'center', borderRight: '1px solid #e2e8f0', paddingRight: 14 }}>
+                        <div style={{ fontSize: 11, color: '#b45309', fontWeight: 700 }}>⏳ UNCOVERED</div>
+                        <div style={{ fontSize: 19, fontWeight: 800, color: '#b45309' }}>{uncoveredCount}</div>
                       </div>
+                      <div style={{ textAlign: 'center', borderRight: '1px solid #e2e8f0', paddingRight: 14 }}>
+                        <div style={{ fontSize: 11, color: '#0f766e', fontWeight: 700 }}>1. WORK PLAN COVERAGE</div>
+                        <div style={{ fontSize: 19, fontWeight: 800, color: '#0f766e' }}>{wpPct}%</div>
+                      </div>
+                      {totalSyllabusObjs > 0 && (
+                        <div style={{ textAlign: 'center' }}>
+                          <div style={{ fontSize: 11, color: '#4C2570', fontWeight: 700 }}>2. SYLLABUS COVERAGE</div>
+                          <div style={{ fontSize: 19, fontWeight: 800, color: '#4C2570' }}>
+                            {sylPct}% <span style={{ fontSize: 11, color: '#64748b' }}>({coveredCount}/{totalSyllabusObjs})</span>
+                          </div>
+                        </div>
+                      )}
                     </div>
 
-                    <div style={{ fontSize: 12, color: '#334155', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 6, padding: '8px 12px', maxWidth: 460 }}>
-                      🔒 <strong>Curriculum Coverage Rule:</strong> The comments indicate whether objectives are covered or uncovered. <strong>Teachers will ONLY use the uncovered objectives to create prospective lesson plans.</strong> Objectives marked as covered are strictly excluded.
+                    <div style={{ fontSize: 12, color: '#334155', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 6, padding: '8px 12px', maxWidth: 440 }}>
+                      🔒 <strong>Curriculum Coverage Rule:</strong> Objectives used in lesson plans are automatically marked as <strong>Covered</strong>. Teachers will <strong>ONLY use uncovered objectives</strong> to create prospective lesson plans.
                     </div>
                   </div>
                 )

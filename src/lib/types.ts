@@ -505,6 +505,7 @@ export interface Api {
   submitWorkPlan(id: string): Promise<void>
   reviewWorkPlan(id: string, status: 'approved' | 'returned', comment: string): Promise<void>
   deleteWorkPlan(id: string): Promise<void>
+  markWorkPlanObjectivesCovered(classId: string, subjectId: string, objectiveCodes: string[], lessonDate?: string): Promise<void>
 
   // lesson plans
   listLessonPlans(filter?: { teacherId?: string; classId?: string; subjectId?: string; date?: string }): Promise<LessonPlan[]>
@@ -660,6 +661,7 @@ export interface WorkPlanWeek {
   subtopic_title: string
   lessons_per_week: number
   remarks: string
+  is_commed?: boolean
   objectives?: WorkPlanWeekObjective[]
 }
 

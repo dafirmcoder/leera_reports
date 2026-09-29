@@ -64,6 +64,13 @@ export interface TeacherComplianceStats {
     returned: number
   }
 
+  // Work plan coverage metrics
+  workPlanCoverage: {
+    totalWorkPlanObjectives: number
+    coveredObjectives: number
+    coveragePct: number
+  }
+
   // Syllabus coverage metrics
   syllabusCoverage: {
     totalSyllabusObjectives: number
@@ -81,6 +88,7 @@ export interface ExecutivePlanningOverview {
   totalExpectedLessons: number
   totalPlannedLessons: number
   pendingApprovalsCount: number
+  averageWorkPlanCoveragePct: number
   averageSyllabusCoveragePct: number
   teacherStats: TeacherComplianceStats[]
 }
@@ -231,29 +239,9 @@ export function calculateTeacherComplianceAndCoverage(params: {
       else if (lp.status === 'returned') statusCounts.returned++
     })
 
-    // Syllabus coverage metrics
-    // Check curriculum schemes linked to teacher's subjects/work plans
-    let totalSyllabusObjectives = 0
+    // ── Coverage Metrics Calculation ──────────────────────────────────────────
+    // 1. Collect covered objectives from lesson plans
     const coveredObjectivesSet = new Set<string>()
-
-    // Find schemes matching teacher's assigned subjects
-    const teacherSchemes = schemes.filter((sc) => subjectIds.has(sc.subject_code) || teacherWorkPlans.some((wp) => wp.scheme_id === sc.id))
-
-    teacherSchemes.forEach((sc) => {
-      totalSyllabusObjectives += sc.objectives_count || 0
-    })
-
-    // Collect objectives covered in teacher's work plans and lesson plans
-    teacherWorkPlans.forEach((wp) => {
-      wp.weeks?.forEach((w) => {
-        w.objectives?.forEach((obj) => {
-          if (obj.is_met || obj.code_snapshot) {
-            coveredObjectivesSet.add(obj.code_snapshot || obj.id)
-          }
-        })
-      })
-    })
-
     teacherLessonPlans.forEach((lp) => {
       lp.objectives?.forEach((obj) => {
         if (obj.code_snapshot) {
@@ -262,10 +250,38 @@ export function calculateTeacherComplianceAndCoverage(params: {
       })
     })
 
-    const coveredObjectives = coveredObjectivesSet.size
-    const coveragePct = totalSyllabusObjectives > 0
-      ? Math.min(100, Math.round((coveredObjectives / totalSyllabusObjectives) * 100))
-      : (coveredObjectives > 0 ? 100 : 0)
+    // 2. Collect objectives from Semester Work Plans
+    const wpTotalObjectivesSet = new Set<string>()
+    teacherWorkPlans.forEach((wp) => {
+      wp.weeks?.forEach((w) => {
+        w.objectives?.forEach((obj) => {
+          if (obj.code_snapshot) {
+            wpTotalObjectivesSet.add(obj.code_snapshot)
+            if (obj.is_met || coveredObjectivesSet.has(obj.code_snapshot)) {
+              coveredObjectivesSet.add(obj.code_snapshot)
+            }
+          }
+        })
+      })
+    })
+
+    const totalWorkPlanObjectives = wpTotalObjectivesSet.size
+    const coveredWpObjectives = [...wpTotalObjectivesSet].filter((c) => coveredObjectivesSet.has(c)).length
+    const workPlanCoveragePct = totalWorkPlanObjectives > 0
+      ? Math.min(100, Math.round((coveredWpObjectives / totalWorkPlanObjectives) * 100))
+      : 0
+
+    // 3. Full Syllabus / Schemes coverage
+    let totalSyllabusObjectives = 0
+    const teacherSchemes = schemes.filter((sc) => subjectIds.has(sc.subject_code) || teacherWorkPlans.some((wp) => wp.scheme_id === sc.id))
+    teacherSchemes.forEach((sc) => {
+      totalSyllabusObjectives += sc.objectives_count || 0
+    })
+
+    const coveredSyllabusObjectives = coveredObjectivesSet.size
+    const syllabusCoveragePct = totalSyllabusObjectives > 0
+      ? Math.min(100, Math.round((coveredSyllabusObjectives / totalSyllabusObjectives) * 100))
+      : (coveredSyllabusObjectives > 0 ? 100 : 0)
 
     const isCoordinator = teacher.role === 'curriculum_coordinator' ||
       (Array.isArray(teacher.additional_roles) && teacher.additional_roles.includes('curriculum_coordinator'))
@@ -288,10 +304,15 @@ export function calculateTeacherComplianceAndCoverage(params: {
       compliancePct,
       complianceTier,
       statusCounts,
+      workPlanCoverage: {
+        totalWorkPlanObjectives,
+        coveredObjectives: coveredWpObjectives,
+        coveragePct: workPlanCoveragePct
+      },
       syllabusCoverage: {
         totalSyllabusObjectives,
-        coveredObjectives,
-        coveragePct,
+        coveredObjectives: coveredSyllabusObjectives,
+        coveragePct: syllabusCoveragePct,
         workPlansCount: teacherWorkPlans.length,
         schemesCount: teacherSchemes.length
       }
@@ -310,6 +331,9 @@ export function calculateTeacherComplianceAndCoverage(params: {
     ? Math.round(teacherStats.reduce((acc, t) => acc + t.compliancePct, 0) / totalTeachers)
     : 100
   const pendingApprovalsCount = teacherStats.reduce((acc, t) => acc + t.statusCounts.submitted, 0)
+  const averageWorkPlanCoveragePct = totalTeachers > 0
+    ? Math.round(teacherStats.reduce((acc, t) => acc + t.workPlanCoverage.coveragePct, 0) / totalTeachers)
+    : 0
   const averageSyllabusCoveragePct = totalTeachers > 0
     ? Math.round(teacherStats.reduce((acc, t) => acc + t.syllabusCoverage.coveragePct, 0) / totalTeachers)
     : 0
@@ -321,6 +345,7 @@ export function calculateTeacherComplianceAndCoverage(params: {
     totalExpectedLessons,
     totalPlannedLessons,
     pendingApprovalsCount,
+    averageWorkPlanCoveragePct,
     averageSyllabusCoveragePct,
     teacherStats
   }

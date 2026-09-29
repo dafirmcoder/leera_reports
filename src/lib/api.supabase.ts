@@ -3130,6 +3130,74 @@ export const supabaseApi: Api = {
     localStorage.setItem('leera_work_plans', JSON.stringify(filtered))
   },
 
+  async markWorkPlanObjectivesCovered(
+    classId: string,
+    subjectId: string,
+    objectiveCodes: string[],
+    lessonDate?: string
+  ): Promise<void> {
+    if (!objectiveCodes || objectiveCodes.length === 0) return
+    const metTimestamp = lessonDate ? new Date(lessonDate).toISOString() : new Date().toISOString()
+
+    try {
+      // 1. Find matching work plan(s) for this class and subject
+      const { data: wps } = await db()
+        .from('work_plans')
+        .select('id')
+        .eq('class_id', classId)
+        .eq('subject_id', subjectId)
+
+      if (wps && wps.length > 0) {
+        const wpIds = wps.map((w: any) => w.id)
+        const { data: weeks } = await db()
+          .from('work_plan_weeks')
+          .select('id')
+          .in('work_plan_id', wpIds)
+
+        if (weeks && weeks.length > 0) {
+          const weekIds = weeks.map((wk: any) => wk.id)
+          await db()
+            .from('work_plan_week_objectives')
+            .update({
+              is_met: true,
+              met_at: metTimestamp
+            })
+            .in('work_plan_week_id', weekIds)
+            .in('code_snapshot', objectiveCodes)
+        }
+      }
+    } catch (e) {
+      console.warn('markWorkPlanObjectivesCovered db error:', e)
+    }
+
+    // 2. Update local storage mirror
+    try {
+      const localPlans: WorkPlan[] = JSON.parse(localStorage.getItem('leera_work_plans') || '[]')
+      let changed = false
+      localPlans.forEach((wp) => {
+        if (wp.class_id === classId && wp.subject_id === subjectId) {
+          wp.weeks?.forEach((w) => {
+            w.objectives?.forEach((obj) => {
+              if (objectiveCodes.includes(obj.code_snapshot)) {
+                obj.is_met = true
+                obj.met_at = metTimestamp
+                changed = true
+              }
+            })
+            if (w.objectives && w.objectives.length > 0 && w.objectives.every((o) => o.is_met)) {
+              w.is_commed = true
+            }
+          })
+        }
+      })
+      if (changed) {
+        localStorage.setItem('leera_work_plans', JSON.stringify(localPlans))
+      }
+    } catch (e) {
+      console.warn('markWorkPlanObjectivesCovered local error:', e)
+    }
+  },
+
   // ----------------------------------------------------------------
   // LESSON PLANS IMPLEMENTATION
   // ----------------------------------------------------------------
@@ -3299,6 +3367,10 @@ export const supabaseApi: Api = {
             text_snapshot: o.text_snapshot
           }))
           await db().from('lesson_plan_objectives').insert(objRows)
+
+          // Automatically mark objectives as COVERED in the semester work plan
+          const codes = input.objectives.map((o) => o.code_snapshot).filter(Boolean)
+          await this.markWorkPlanObjectivesCovered(input.class_id, input.subject_id, codes, input.lesson_date)
         }
         return data.id
       }
@@ -3415,6 +3487,15 @@ export const supabaseApi: Api = {
             text_snapshot: o.text_snapshot
           }))
           await db().from('lesson_plan_objectives').insert(objRows)
+
+          // Automatically mark objectives as COVERED in the semester work plan
+          const codes = objectives.map((o) => o.code_snapshot).filter(Boolean)
+          const targetClassId = updates.class_id || coreUpdates.class_id
+          const targetSubjectId = updates.subject_id || coreUpdates.subject_id
+          const targetDate = updates.lesson_date || coreUpdates.lesson_date
+          if (targetClassId && targetSubjectId) {
+            await this.markWorkPlanObjectivesCovered(targetClassId, targetSubjectId, codes, targetDate)
+          }
         }
       }
     } catch (e) {

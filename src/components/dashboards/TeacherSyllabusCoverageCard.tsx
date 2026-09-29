@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState } from 'react'
 import type { CurriculumScheme, LessonPlan, WorkPlan } from '../../lib/types'
 
 interface Props {
@@ -15,153 +15,292 @@ export default function TeacherSyllabusCoverageCard({
   workPlans,
   lessonPlans,
   schemes,
-  title = '🎯 Syllabus Coverage Status',
+  title = '🎯 Curriculum & Syllabus Coverage',
   style
 }: Props) {
-  // Filter to this teacher's plans
+  const [showBreakdown, setShowBreakdown] = useState(true)
+
+  // Filter to this teacher's plans if teacherId is provided
   const myWorkPlans = teacherId ? workPlans.filter((wp) => wp.teacher_id === teacherId) : workPlans
   const myLessonPlans = teacherId ? lessonPlans.filter((lp) => lp.teacher_id === teacherId) : lessonPlans
 
-  // Collect all unique objectives covered in work plans and lesson plans
-  const coveredObjectivesMap = new Map<string, { code: string; text: string; source: 'work_plan' | 'lesson_plan' }>()
+  // Collect all unique objectives used in lesson plans
+  const lessonPlanCoveredCodes = new Set<string>()
+  myLessonPlans.forEach((lp) => {
+    (lp.objectives || []).forEach((obj) => {
+      if (obj.code_snapshot) {
+        lessonPlanCoveredCodes.add(obj.code_snapshot)
+      }
+    })
+  })
+
+  // 1. SEMESTER WORK PLAN METRICS
+  const workPlanTotalObjCodes = new Set<string>()
+  const workPlanCoveredObjCodes = new Set<string>()
 
   myWorkPlans.forEach((wp) => {
-    wp.weeks?.forEach((w) => {
-      w.objectives?.forEach((obj) => {
+    (wp.weeks || []).forEach((w) => {
+      (w.objectives || []).forEach((obj) => {
         if (obj.code_snapshot) {
-          coveredObjectivesMap.set(obj.code_snapshot, {
-            code: obj.code_snapshot,
-            text: obj.text_snapshot,
-            source: 'work_plan'
-          })
+          workPlanTotalObjCodes.add(obj.code_snapshot)
+          if (obj.is_met || lessonPlanCoveredCodes.has(obj.code_snapshot)) {
+            workPlanCoveredObjCodes.add(obj.code_snapshot)
+          }
         }
       })
     })
   })
 
-  myLessonPlans.forEach((lp) => {
-    lp.objectives?.forEach((obj) => {
-      if (obj.code_snapshot) {
-        coveredObjectivesMap.set(obj.code_snapshot, {
-          code: obj.code_snapshot,
-          text: obj.text_snapshot,
-          source: 'lesson_plan'
-        })
-      }
-    })
-  })
+  const totalWpObjectives = workPlanTotalObjCodes.size
+  const coveredWpObjectives = workPlanCoveredObjCodes.size
+  const wpCoveragePct = totalWpObjectives > 0
+    ? Math.min(100, Math.round((coveredWpObjectives / totalWpObjectives) * 100))
+    : 0
 
-  // Match schemes linked to teacher's work plans
+  // 2. FULL SYLLABUS / CURRICULUM METRICS
   const linkedSchemes = schemes.filter((s) => myWorkPlans.some((wp) => wp.scheme_id === s.id))
-  // Fallback to schemes matching subject codes if no explicit scheme_id
-  const subjectSchemes = schemes.filter((s) => myWorkPlans.some((wp) => wp.subject_id === s.subject_code || wp.subject_name?.toLowerCase() === s.subject_name?.toLowerCase()))
-  const activeSchemes = linkedSchemes.length > 0 ? linkedSchemes : subjectSchemes
+  const subjectSchemes = schemes.filter((s) =>
+    myWorkPlans.some((wp) => wp.subject_id === s.subject_code || wp.subject_name?.toLowerCase().trim() === s.subject_name?.toLowerCase().trim())
+  )
+  const activeSchemes = linkedSchemes.length > 0 ? linkedSchemes : (subjectSchemes.length > 0 ? subjectSchemes : schemes)
 
   const totalSyllabusObjectives = activeSchemes.reduce((acc, s) => acc + (s.objectives_count || 0), 0)
-  const totalCovered = coveredObjectivesMap.size
-  const overallCoveragePct = totalSyllabusObjectives > 0
-    ? Math.min(100, Math.round((totalCovered / totalSyllabusObjectives) * 100))
-    : (totalCovered > 0 ? 100 : 0)
+  const totalSyllabusCovered = new Set([...workPlanCoveredObjCodes, ...lessonPlanCoveredCodes]).size
+  const syllabusCoveragePct = totalSyllabusObjectives > 0
+    ? Math.min(100, Math.round((totalSyllabusCovered / totalSyllabusObjectives) * 100))
+    : (totalSyllabusCovered > 0 ? 100 : 0)
 
   // Status badge styling
-  let statusBadgeColor = '#ef4444' // red
-  let statusLabel = 'Getting Started'
-  if (overallCoveragePct >= 75) {
-    statusBadgeColor = '#10b981' // green
-    statusLabel = 'On Track'
-  } else if (overallCoveragePct >= 40) {
-    statusBadgeColor = '#f59e0b' // yellow
-    statusLabel = 'In Progress'
+  const getBadgeStyle = (pct: number) => {
+    if (pct >= 75) return { bg: '#dcfce7', text: '#15803d', label: 'On Track' }
+    if (pct >= 40) return { bg: '#fef3c7', text: '#b45309', label: 'In Progress' }
+    return { bg: '#fee2e2', text: '#b91c1c', label: 'Getting Started' }
   }
+
+  const wpStatus = getBadgeStyle(wpCoveragePct)
+  const sylStatus = getBadgeStyle(syllabusCoveragePct)
+
+  // Subject-level breakdown
+  const subjectBreakdown = myWorkPlans.map((wp) => {
+    const wpObjs = (wp.weeks || []).flatMap((w) => w.objectives || []).filter((o) => o.code_snapshot)
+    const uniqueWpCodes = new Set(wpObjs.map((o) => o.code_snapshot))
+    const coveredCount = [...uniqueWpCodes].filter(
+      (code) => wpObjs.some((o) => o.code_snapshot === code && o.is_met) || lessonPlanCoveredCodes.has(code)
+    ).length
+    const thisWpPct = uniqueWpCodes.size > 0 ? Math.min(100, Math.round((coveredCount / uniqueWpCodes.size) * 100)) : 0
+
+    const matchingScheme = schemes.find(
+      (s) => s.id === wp.scheme_id || s.subject_code === wp.subject_id || s.subject_name?.toLowerCase().trim() === wp.subject_name?.toLowerCase().trim()
+    )
+    const schemeObjsCount = matchingScheme?.objectives_count || 0
+    const thisSylPct = schemeObjsCount > 0 ? Math.min(100, Math.round((coveredCount / schemeObjsCount) * 100)) : (coveredCount > 0 ? 100 : 0)
+
+    return {
+      id: wp.id,
+      title: `${wp.subject_name || 'Subject'} — ${wp.class_name || 'Class'}`,
+      schemeTitle: matchingScheme ? `${matchingScheme.title} (${matchingScheme.year_group})` : 'Curriculum Framework',
+      wpTotal: uniqueWpCodes.size,
+      wpCovered: coveredCount,
+      wpPct: thisWpPct,
+      sylTotal: schemeObjsCount,
+      sylCovered: coveredCount,
+      sylPct: thisSylPct
+    }
+  })
 
   return (
     <div
       className="card"
       style={{
-        padding: '16px 20px',
+        padding: '18px 20px',
         marginBottom: 20,
         backgroundColor: '#ffffff',
-        border: '1px solid #e2e8f0',
+        border: '1.5px solid #cbd5e1',
         borderRadius: 10,
-        boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+        boxShadow: '0 1px 4px rgba(15, 23, 42, 0.06)',
         ...style
       }}
     >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#1e293b' }}>{title}</h3>
-          <span
-            style={{
-              padding: '2px 8px',
-              borderRadius: 9999,
-              fontSize: 11,
-              fontWeight: 600,
-              backgroundColor: `${statusBadgeColor}15`,
-              color: statusBadgeColor,
-              border: `1px solid ${statusBadgeColor}40`
-            }}
-          >
-            {statusLabel} ({overallCoveragePct}%)
-          </span>
+      {/* Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
+        <div>
+          <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: '#1e293b', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span>{title}</span>
+            <span style={{ fontSize: 11, fontWeight: 600, color: '#64748b' }}>
+              (Dual Tracking: Semester Work Plan &amp; Cambridge Syllabus)
+            </span>
+          </h3>
+          <div style={{ fontSize: 12, color: '#64748b', marginTop: 3 }}>
+            Objectives are automatically marked as <strong>Covered</strong> once used in scheduled lesson plans.
+          </div>
         </div>
-        <div style={{ fontSize: 12, color: '#64748b' }}>
-          <strong>{totalCovered}</strong> / {totalSyllabusObjectives || '—'} Objectives Covered
-        </div>
+
+        <button
+          type="button"
+          className="btn btn-ghost btn-small"
+          style={{ fontSize: 12, padding: '4px 10px', color: '#475569' }}
+          onClick={() => setShowBreakdown(!showBreakdown)}
+        >
+          {showBreakdown ? '▲ Hide Subject Breakdown' : '▼ View Subject Breakdown'}
+        </button>
       </div>
 
-      {/* Progress Bar */}
-      <div
-        style={{
-          width: '100%',
-          height: 10,
-          backgroundColor: '#f1f5f9',
-          borderRadius: 9999,
-          overflow: 'hidden',
-          marginBottom: 14
-        }}
-      >
+      {/* 2-Column Dual Coverage Progress Cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 14, marginBottom: 16 }}>
+        {/* Metric 1: Semester Work Plan Coverage */}
         <div
           style={{
-            height: '100%',
-            width: `${Math.max(4, overallCoveragePct)}%`,
-            backgroundColor: overallCoveragePct >= 75 ? '#10b981' : overallCoveragePct >= 40 ? '#f59e0b' : '#3b82f6',
-            borderRadius: 9999,
-            transition: 'width 0.4s ease'
+            padding: '14px 16px',
+            backgroundColor: '#f8fafc',
+            border: '1.5px solid #e2e8f0',
+            borderRadius: 8,
+            boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.02)'
           }}
-        />
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+            <div>
+              <span style={{ fontSize: 11, fontWeight: 800, color: '#0f766e', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                1. Semester Work Plan Coverage
+              </span>
+              <div style={{ fontSize: 20, fontWeight: 800, color: '#0f172a', marginTop: 2 }}>
+                {coveredWpObjectives} <span style={{ fontSize: 13, color: '#64748b', fontWeight: 600 }}>/ {totalWpObjectives || 0} Objectives</span>
+              </div>
+            </div>
+            <span
+              style={{
+                padding: '3px 8px',
+                borderRadius: 9999,
+                fontSize: 11,
+                fontWeight: 700,
+                backgroundColor: wpStatus.bg,
+                color: wpStatus.text
+              }}
+            >
+              {wpCoveragePct}% ({wpStatus.label})
+            </span>
+          </div>
+
+          {/* Progress Bar */}
+          <div style={{ width: '100%', height: 8, backgroundColor: '#e2e8f0', borderRadius: 9999, overflow: 'hidden', marginBottom: 6 }}>
+            <div
+              style={{
+                height: '100%',
+                width: `${Math.max(3, wpCoveragePct)}%`,
+                backgroundColor: '#0f766e',
+                borderRadius: 9999,
+                transition: 'width 0.4s ease'
+              }}
+            />
+          </div>
+          <div style={{ fontSize: 11, color: '#64748b' }}>
+            Objectives taught vs. planned targets in current semester work plans.
+          </div>
+        </div>
+
+        {/* Metric 2: Full Cambridge Syllabus Coverage */}
+        <div
+          style={{
+            padding: '14px 16px',
+            backgroundColor: '#f8fafc',
+            border: '1.5px solid #e2e8f0',
+            borderRadius: 8,
+            boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.02)'
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+            <div>
+              <span style={{ fontSize: 11, fontWeight: 800, color: '#4C2570', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                2. Full Syllabus Coverage
+              </span>
+              <div style={{ fontSize: 20, fontWeight: 800, color: '#0f172a', marginTop: 2 }}>
+                {totalSyllabusCovered} <span style={{ fontSize: 13, color: '#64748b', fontWeight: 600 }}>/ {totalSyllabusObjectives || '—'} Objectives</span>
+              </div>
+            </div>
+            <span
+              style={{
+                padding: '3px 8px',
+                borderRadius: 9999,
+                fontSize: 11,
+                fontWeight: 700,
+                backgroundColor: sylStatus.bg,
+                color: sylStatus.text
+              }}
+            >
+              {syllabusCoveragePct}% ({sylStatus.label})
+            </span>
+          </div>
+
+          {/* Progress Bar */}
+          <div style={{ width: '100%', height: 8, backgroundColor: '#e2e8f0', borderRadius: 9999, overflow: 'hidden', marginBottom: 6 }}>
+            <div
+              style={{
+                height: '100%',
+                width: `${Math.max(3, syllabusCoveragePct)}%`,
+                backgroundColor: '#4C2570',
+                borderRadius: 9999,
+                transition: 'width 0.4s ease'
+              }}
+            />
+          </div>
+          <div style={{ fontSize: 11, color: '#64748b' }}>
+            Total curriculum syllabus objectives mastered across the full academic year.
+          </div>
+        </div>
       </div>
 
-      {/* Scheme Breakdown */}
-      {activeSchemes.length > 0 ? (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
-          {activeSchemes.map((scheme) => {
-            const schemeObjs = scheme.objectives_count || 0
-            return (
+      {/* Expandable Subject Breakdown */}
+      {showBreakdown && subjectBreakdown.length > 0 && (
+        <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: 12 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: '#334155', marginBottom: 10 }}>
+            Subject &amp; Class Coverage Breakdown:
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 10 }}>
+            {subjectBreakdown.map((item) => (
               <div
-                key={scheme.id}
+                key={item.id}
                 style={{
-                  padding: '8px 12px',
-                  backgroundColor: '#f8fafc',
+                  padding: '10px 14px',
+                  backgroundColor: '#ffffff',
                   borderRadius: 6,
-                  border: '1px solid #edf2f7',
-                  fontSize: 12
+                  border: '1px solid #cbd5e1',
+                  boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
                 }}
               >
-                <div style={{ fontWeight: 600, color: '#334155', marginBottom: 2 }}>{scheme.title || scheme.subject_name}</div>
-                <div style={{ color: '#64748b', fontSize: 11 }}>
-                  Framework: {scheme.framework} · Year: {scheme.year_group}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                  <strong style={{ fontSize: 13, color: '#0f172a' }}>{item.title}</strong>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: '#0f766e' }}>{item.wpPct}% WP</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4, fontSize: 11, color: '#475569' }}>
-                  <span>Syllabus Objectives:</span>
-                  <strong>{schemeObjs}</strong>
+                <div style={{ fontSize: 11, color: '#64748b', marginBottom: 8 }}>
+                  Framework: {item.schemeTitle}
+                </div>
+
+                {/* Micro Dual Bars */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 11, color: '#475569' }}>
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
+                      <span>Semester Work Plan:</span>
+                      <strong>{item.wpCovered} / {item.wpTotal} ({item.wpPct}%)</strong>
+                    </div>
+                    <div style={{ width: '100%', height: 5, backgroundColor: '#f1f5f9', borderRadius: 9999, overflow: 'hidden' }}>
+                      <div style={{ width: `${item.wpPct}%`, height: '100%', backgroundColor: '#0f766e', borderRadius: 9999 }} />
+                    </div>
+                  </div>
+
+                  {item.sylTotal > 0 && (
+                    <div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
+                        <span>Full Cambridge Syllabus:</span>
+                        <strong>{item.sylCovered} / {item.sylTotal} ({item.sylPct}%)</strong>
+                      </div>
+                      <div style={{ width: '100%', height: 5, backgroundColor: '#f1f5f9', borderRadius: 9999, overflow: 'hidden' }}>
+                        <div style={{ width: `${item.sylPct}%`, height: '100%', backgroundColor: '#4C2570', borderRadius: 9999 }} />
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
-            )
-          })}
-        </div>
-      ) : (
-        <div style={{ fontSize: 12, color: '#94a3b8', fontStyle: 'italic' }}>
-          Work plans and lesson plans will automatically register syllabus objectives as they are prepared.
+            ))}
+          </div>
         </div>
       )}
     </div>
