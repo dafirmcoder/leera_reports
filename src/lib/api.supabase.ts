@@ -2006,7 +2006,28 @@ export const supabaseApi: Api = {
       if (framework) q = q.eq('framework', framework)
       const { data, error } = await q.order('subject_name').order('year_group')
       if (!error && data) {
-        return data as CurriculumScheme[]
+        // Fetch objective counts from curriculum_objectives
+        const schemeIds = data.map((s: any) => s.id)
+        const countMap = new Map<string, number>()
+        if (schemeIds.length > 0) {
+          try {
+            const { data: objs } = await db()
+              .from('curriculum_objectives')
+              .select('scheme_id')
+              .in('scheme_id', schemeIds)
+
+            if (objs) {
+              objs.forEach((o: any) => {
+                countMap.set(o.scheme_id, (countMap.get(o.scheme_id) || 0) + 1)
+              })
+            }
+          } catch {}
+        }
+
+        return data.map((s: any) => ({
+          ...s,
+          objectives_count: countMap.get(s.id) || s.objectives_count || 0
+        })) as CurriculumScheme[]
       }
     } catch (e) {
       console.warn('curriculum_schemes Supabase error or table missing, using cache:', e)
@@ -2436,11 +2457,54 @@ export const supabaseApi: Api = {
 
       const { data, error } = await q
       if (!error && data) {
+        // Fetch all weeks and objectives for these work plans so coverage & planning can see them
+        const planIds = data.map((d: any) => d.id)
+        const populatedWeeksMap = new Map<string, WorkPlanWeek[]>()
+
+        if (planIds.length > 0) {
+          try {
+            const { data: allWeeks } = await db()
+              .from('work_plan_weeks')
+              .select('*')
+              .in('work_plan_id', planIds)
+              .order('sequence')
+
+            if (allWeeks && allWeeks.length > 0) {
+              const weekIds = allWeeks.map((w: any) => w.id)
+              const { data: allObjs } = await db()
+                .from('work_plan_week_objectives')
+                .select('*')
+                .in('work_plan_week_id', weekIds)
+
+              const objMap = new Map<string, WorkPlanWeekObjective[]>()
+              if (allObjs) {
+                allObjs.forEach((o: any) => {
+                  const list = objMap.get(o.work_plan_week_id) || []
+                  list.push(o as WorkPlanWeekObjective)
+                  objMap.set(o.work_plan_week_id, list)
+                })
+              }
+
+              allWeeks.forEach((w: any) => {
+                const list = populatedWeeksMap.get(w.work_plan_id) || []
+                list.push({
+                  ...w,
+                  objectives: objMap.get(w.id) || []
+                } as WorkPlanWeek)
+                populatedWeeksMap.set(w.work_plan_id, list)
+              })
+            }
+          } catch (fetchErr) {
+            console.warn('Could not populate weeks for work plans in listWorkPlans:', fetchErr)
+          }
+        }
+
         return data.map((d: any) => ({
           ...d,
           class_name: d.classes?.name || 'Class',
           subject_name: d.subjects?.name || 'Subject',
-          teacher_name: d.profiles?.full_name || 'Teacher'
+          teacher_name: d.profiles?.full_name || 'Teacher',
+          weeks: populatedWeeksMap.get(d.id) || []
         })) as WorkPlan[]
       }
     } catch (e) {
@@ -3139,6 +3203,7 @@ export const supabaseApi: Api = {
   ): Promise<void> {
     if (!objectiveCodes || objectiveCodes.length === 0) return
     const metTimestamp = lessonDate ? new Date(lessonDate).toISOString() : new Date().toISOString()
+    const allVariants = Array.from(new Set(objectiveCodes.flatMap((c) => [c, c.trim(), c.toUpperCase(), c.toLowerCase()]).filter(Boolean)))
 
     try {
       // 1. Find matching work plan(s) for this class and subject
@@ -3164,7 +3229,7 @@ export const supabaseApi: Api = {
               met_at: metTimestamp
             })
             .in('work_plan_week_id', weekIds)
-            .in('code_snapshot', objectiveCodes)
+            .in('code_snapshot', allVariants)
         }
       }
     } catch (e) {
@@ -3179,7 +3244,8 @@ export const supabaseApi: Api = {
         if (wp.class_id === classId && wp.subject_id === subjectId) {
           wp.weeks?.forEach((w) => {
             w.objectives?.forEach((obj) => {
-              if (objectiveCodes.includes(obj.code_snapshot)) {
+              const code = obj.code_snapshot || ''
+              if (allVariants.includes(code) || allVariants.includes(code.trim().toLowerCase())) {
                 obj.is_met = true
                 obj.met_at = metTimestamp
                 changed = true
@@ -3510,10 +3576,22 @@ export const supabaseApi: Api = {
 
           // Automatically mark objectives as COVERED in the semester work plan
           const codes = objectives.map((o) => o.code_snapshot).filter(Boolean)
-          const targetClassId = updates.class_id || coreUpdates.class_id
-          const targetSubjectId = updates.subject_id || coreUpdates.subject_id
-          const targetDate = updates.lesson_date || coreUpdates.lesson_date
-          if (targetClassId && targetSubjectId) {
+          let targetClassId = updates.class_id || coreUpdates.class_id
+          let targetSubjectId = updates.subject_id || coreUpdates.subject_id
+          let targetDate = updates.lesson_date || coreUpdates.lesson_date
+
+          if (!targetClassId || !targetSubjectId) {
+            try {
+              const existing = await this.getLessonPlan(id)
+              if (existing) {
+                targetClassId = targetClassId || existing.class_id
+                targetSubjectId = targetSubjectId || existing.subject_id
+                targetDate = targetDate || existing.lesson_date
+              }
+            } catch {}
+          }
+
+          if (targetClassId && targetSubjectId && codes.length > 0) {
             await this.markWorkPlanObjectivesCovered(targetClassId, targetSubjectId, codes, targetDate)
           }
         }

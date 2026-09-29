@@ -242,31 +242,44 @@ export function calculateTeacherComplianceAndCoverage(params: {
     // ── Coverage Metrics Calculation ──────────────────────────────────────────
     // 1. Collect covered objectives from lesson plans
     const coveredObjectivesSet = new Set<string>()
+    const coveredTextsSet = new Set<string>()
     teacherLessonPlans.forEach((lp) => {
       lp.objectives?.forEach((obj) => {
-        if (obj.code_snapshot) {
-          coveredObjectivesSet.add(obj.code_snapshot)
+        if (obj.code_snapshot?.trim()) {
+          coveredObjectivesSet.add(obj.code_snapshot.trim().toLowerCase())
+        }
+        if (obj.objective_id) {
+          coveredObjectivesSet.add(obj.objective_id)
+        }
+        if (obj.text_snapshot?.trim() && obj.text_snapshot.trim().length > 5) {
+          coveredTextsSet.add(obj.text_snapshot.trim().toLowerCase())
         }
       })
     })
 
     // 2. Collect objectives from Semester Work Plans
-    const wpTotalObjectivesSet = new Set<string>()
+    let totalWorkPlanObjectives = 0
+    let coveredWpObjectives = 0
     teacherWorkPlans.forEach((wp) => {
       wp.weeks?.forEach((w) => {
         w.objectives?.forEach((obj) => {
-          if (obj.code_snapshot) {
-            wpTotalObjectivesSet.add(obj.code_snapshot)
-            if (obj.is_met || coveredObjectivesSet.has(obj.code_snapshot)) {
-              coveredObjectivesSet.add(obj.code_snapshot)
-            }
+          totalWorkPlanObjectives++
+          const normCode = (obj.code_snapshot || '').trim().toLowerCase()
+          const normText = (obj.text_snapshot || '').trim().toLowerCase()
+          const isCovered =
+            obj.is_met ||
+            (normCode && coveredObjectivesSet.has(normCode)) ||
+            (obj.objective_id && coveredObjectivesSet.has(obj.objective_id)) ||
+            (normText && normText.length > 5 && coveredTextsSet.has(normText))
+
+          if (isCovered) {
+            coveredWpObjectives++
+            if (normCode) coveredObjectivesSet.add(normCode)
           }
         })
       })
     })
 
-    const totalWorkPlanObjectives = wpTotalObjectivesSet.size
-    const coveredWpObjectives = [...wpTotalObjectivesSet].filter((c) => coveredObjectivesSet.has(c)).length
     const workPlanCoveragePct = totalWorkPlanObjectives > 0
       ? Math.min(100, Math.round((coveredWpObjectives / totalWorkPlanObjectives) * 100))
       : 0
@@ -277,11 +290,14 @@ export function calculateTeacherComplianceAndCoverage(params: {
     teacherSchemes.forEach((sc) => {
       totalSyllabusObjectives += sc.objectives_count || 0
     })
+    if (totalSyllabusObjectives === 0 && totalWorkPlanObjectives > 0) {
+      totalSyllabusObjectives = totalWorkPlanObjectives
+    }
 
-    const coveredSyllabusObjectives = coveredObjectivesSet.size
+    const coveredSyllabusObjectives = coveredWpObjectives > 0 ? coveredWpObjectives : coveredObjectivesSet.size
     const syllabusCoveragePct = totalSyllabusObjectives > 0
       ? Math.min(100, Math.round((coveredSyllabusObjectives / totalSyllabusObjectives) * 100))
-      : (coveredSyllabusObjectives > 0 ? 100 : 0)
+      : 0
 
     const isCoordinator = teacher.role === 'curriculum_coordinator' ||
       (Array.isArray(teacher.additional_roles) && teacher.additional_roles.includes('curriculum_coordinator'))

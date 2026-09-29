@@ -428,11 +428,20 @@ export default function Planning() {
 
       // Automatically mark any objective used in a lesson plan as COVERED in the work plan
       const coveredCodeKeys = new Set<string>()
+      const coveredTextKeys = new Set<string>()
       lps.forEach((lp) => {
         (lp.objectives || []).forEach((o) => {
-          if (o.code_snapshot) {
-            coveredCodeKeys.add(`${lp.class_id}_${lp.subject_id}_${o.code_snapshot}`)
-            coveredCodeKeys.add(`${o.code_snapshot}`)
+          if (o.code_snapshot?.trim()) {
+            const c = o.code_snapshot.trim().toLowerCase()
+            coveredCodeKeys.add(`${lp.class_id}_${lp.subject_id}_${c}`)
+            coveredCodeKeys.add(c)
+          }
+          if (o.text_snapshot?.trim()) {
+            const t = o.text_snapshot.trim().toLowerCase()
+            if (t.length > 5) {
+              coveredTextKeys.add(`${lp.class_id}_${lp.subject_id}_${t}`)
+              coveredTextKeys.add(t)
+            }
           }
         })
       })
@@ -440,8 +449,18 @@ export default function Planning() {
       const synchedWps = wps.map((wp) => {
         const synchedWeeks = (wp.weeks || []).map((wk) => {
           const synchedObjs = (wk.objectives || []).map((obj) => {
-            const isUsedInLp = coveredCodeKeys.has(`${wp.class_id}_${wp.subject_id}_${obj.code_snapshot}`) ||
-                               coveredCodeKeys.has(`${obj.code_snapshot}`)
+            const normCode = (obj.code_snapshot || '').trim().toLowerCase()
+            const normText = (obj.text_snapshot || '').trim().toLowerCase()
+            const isUsedInLp =
+              (normCode && (
+                coveredCodeKeys.has(`${wp.class_id}_${wp.subject_id}_${normCode}`) ||
+                coveredCodeKeys.has(normCode)
+              )) ||
+              (normText && normText.length > 5 && (
+                coveredTextKeys.has(`${wp.class_id}_${wp.subject_id}_${normText}`) ||
+                coveredTextKeys.has(normText)
+              ))
+
             if (isUsedInLp && !obj.is_met) {
               return { ...obj, is_met: true, met_at: obj.met_at || new Date().toISOString() }
             }
@@ -2247,7 +2266,7 @@ export default function Planning() {
                     s.subject_code === selectedWorkPlan.subject_id ||
                     s.subject_name?.toLowerCase().trim() === selectedWorkPlan.subject_name?.toLowerCase().trim()
                 )
-                const totalSyllabusObjs = matchingScheme?.objectives_count || 0
+                const totalSyllabusObjs = matchingScheme?.objectives_count || allObjs.length
                 const sylPct = totalSyllabusObjs > 0 ? Math.min(100, Math.round((coveredCount / totalSyllabusObjs) * 100)) : 0
 
                 return (

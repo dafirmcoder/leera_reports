@@ -26,33 +26,47 @@ export default function TeacherSyllabusCoverageCard({
 
   // Collect all unique objectives used in lesson plans
   const lessonPlanCoveredCodes = new Set<string>()
+  const lessonPlanCoveredIds = new Set<string>()
+  const lessonPlanCoveredTexts = new Set<string>()
+
   myLessonPlans.forEach((lp) => {
     (lp.objectives || []).forEach((obj) => {
-      if (obj.code_snapshot) {
-        lessonPlanCoveredCodes.add(obj.code_snapshot)
+      if (obj.code_snapshot?.trim()) {
+        lessonPlanCoveredCodes.add(obj.code_snapshot.trim().toLowerCase())
+      }
+      if (obj.objective_id) {
+        lessonPlanCoveredIds.add(obj.objective_id)
+      }
+      if (obj.text_snapshot?.trim()) {
+        lessonPlanCoveredTexts.add(obj.text_snapshot.trim().toLowerCase())
       }
     })
   })
 
   // 1. SEMESTER WORK PLAN METRICS
-  const workPlanTotalObjCodes = new Set<string>()
-  const workPlanCoveredObjCodes = new Set<string>()
+  let totalWpObjectives = 0
+  let coveredWpObjectives = 0
+  const uniqueCoveredCodes = new Set<string>()
 
   myWorkPlans.forEach((wp) => {
     (wp.weeks || []).forEach((w) => {
       (w.objectives || []).forEach((obj) => {
-        if (obj.code_snapshot) {
-          workPlanTotalObjCodes.add(obj.code_snapshot)
-          if (obj.is_met || lessonPlanCoveredCodes.has(obj.code_snapshot)) {
-            workPlanCoveredObjCodes.add(obj.code_snapshot)
-          }
+        totalWpObjectives++
+        const normCode = (obj.code_snapshot || '').trim().toLowerCase()
+        const normText = (obj.text_snapshot || '').trim().toLowerCase()
+        const isCoveredByLp =
+          (normCode && lessonPlanCoveredCodes.has(normCode)) ||
+          (obj.objective_id && lessonPlanCoveredIds.has(obj.objective_id)) ||
+          (normText && normText.length > 5 && lessonPlanCoveredTexts.has(normText))
+
+        if (obj.is_met || isCoveredByLp) {
+          coveredWpObjectives++
+          if (normCode) uniqueCoveredCodes.add(normCode)
         }
       })
     })
   })
 
-  const totalWpObjectives = workPlanTotalObjCodes.size
-  const coveredWpObjectives = workPlanCoveredObjCodes.size
   const wpCoveragePct = totalWpObjectives > 0
     ? Math.min(100, Math.round((coveredWpObjectives / totalWpObjectives) * 100))
     : 0
@@ -64,11 +78,18 @@ export default function TeacherSyllabusCoverageCard({
   )
   const activeSchemes = linkedSchemes.length > 0 ? linkedSchemes : (subjectSchemes.length > 0 ? subjectSchemes : schemes)
 
-  const totalSyllabusObjectives = activeSchemes.reduce((acc, s) => acc + (s.objectives_count || 0), 0)
-  const totalSyllabusCovered = new Set([...workPlanCoveredObjCodes, ...lessonPlanCoveredCodes]).size
+  let totalSyllabusObjectives = activeSchemes.reduce((acc, s) => acc + (s.objectives_count || 0), 0)
+  if (totalSyllabusObjectives === 0 && totalWpObjectives > 0) {
+    totalSyllabusObjectives = totalWpObjectives
+  }
+
+  const totalSyllabusCovered = coveredWpObjectives > 0
+    ? coveredWpObjectives
+    : new Set([...uniqueCoveredCodes, ...lessonPlanCoveredCodes]).size
+
   const syllabusCoveragePct = totalSyllabusObjectives > 0
     ? Math.min(100, Math.round((totalSyllabusCovered / totalSyllabusObjectives) * 100))
-    : (totalSyllabusCovered > 0 ? 100 : 0)
+    : 0
 
   // Status badge styling
   const getBadgeStyle = (pct: number) => {
@@ -82,24 +103,30 @@ export default function TeacherSyllabusCoverageCard({
 
   // Subject-level breakdown
   const subjectBreakdown = myWorkPlans.map((wp) => {
-    const wpObjs = (wp.weeks || []).flatMap((w) => w.objectives || []).filter((o) => o.code_snapshot)
-    const uniqueWpCodes = new Set(wpObjs.map((o) => o.code_snapshot))
-    const coveredCount = [...uniqueWpCodes].filter(
-      (code) => wpObjs.some((o) => o.code_snapshot === code && o.is_met) || lessonPlanCoveredCodes.has(code)
-    ).length
-    const thisWpPct = uniqueWpCodes.size > 0 ? Math.min(100, Math.round((coveredCount / uniqueWpCodes.size) * 100)) : 0
+    const wpObjs = (wp.weeks || []).flatMap((w) => w.objectives || [])
+    const totalObjs = wpObjs.length
+    const coveredCount = wpObjs.filter((obj) => {
+      const normCode = (obj.code_snapshot || '').trim().toLowerCase()
+      const normText = (obj.text_snapshot || '').trim().toLowerCase()
+      const isCoveredByLp =
+        (normCode && lessonPlanCoveredCodes.has(normCode)) ||
+        (obj.objective_id && lessonPlanCoveredIds.has(obj.objective_id)) ||
+        (normText && normText.length > 5 && lessonPlanCoveredTexts.has(normText))
+      return obj.is_met || isCoveredByLp
+    }).length
+    const thisWpPct = totalObjs > 0 ? Math.min(100, Math.round((coveredCount / totalObjs) * 100)) : 0
 
     const matchingScheme = schemes.find(
       (s) => s.id === wp.scheme_id || s.subject_code === wp.subject_id || s.subject_name?.toLowerCase().trim() === wp.subject_name?.toLowerCase().trim()
     )
-    const schemeObjsCount = matchingScheme?.objectives_count || 0
-    const thisSylPct = schemeObjsCount > 0 ? Math.min(100, Math.round((coveredCount / schemeObjsCount) * 100)) : (coveredCount > 0 ? 100 : 0)
+    const schemeObjsCount = matchingScheme?.objectives_count || totalObjs
+    const thisSylPct = schemeObjsCount > 0 ? Math.min(100, Math.round((coveredCount / schemeObjsCount) * 100)) : 0
 
     return {
       id: wp.id,
       title: `${wp.subject_name || 'Subject'} — ${wp.class_name || 'Class'}`,
       schemeTitle: matchingScheme ? `${matchingScheme.title} (${matchingScheme.year_group})` : 'Curriculum Framework',
-      wpTotal: uniqueWpCodes.size,
+      wpTotal: totalObjs,
       wpCovered: coveredCount,
       wpPct: thisWpPct,
       sylTotal: schemeObjsCount,
