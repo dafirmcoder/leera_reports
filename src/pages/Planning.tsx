@@ -568,6 +568,54 @@ export default function Planning() {
     return subjects.filter((s) => assignedSubjectIds.has(s.id))
   }
 
+  // Determine if a draft work plan or lesson plan is visible to the current user
+  // Rules:
+  // 1. Submitted / approved / returned plans are always visible to leadership / assigned viewers
+  // 2. Directors and Head of School should NOT see draft workplans and lesson plans (they only see them once submitted)
+  // 3. Coordinators only see draft workplans and lesson plans for subjects-classes they teach (own assignments)
+  // 4. Regular teachers only see their own drafts
+  const canViewDraftPlan = (plan: { teacher_id?: string; class_id?: string; subject_id?: string; status?: string }) => {
+    if (!plan || plan.status !== 'draft') return true
+
+    const isOwnPlan = plan.teacher_id === profile?.id
+    const isAssignedSubjectClass = teacherAssignments.some(
+      (a) => a.class_id === plan.class_id && a.subject_id === plan.subject_id
+    ) || (homeroomClass && homeroomClass.id === plan.class_id && isOwnPlan)
+
+    if (isCoordinator) {
+      // Coordinators only see draft workplans and lesson plans for subjects-classes they teach (own assignments)
+      return isAssignedSubjectClass || isOwnPlan
+    }
+
+    if (isDirector || isHeadOfSchool) {
+      // Directors and Head of School should not see draft workplans and lesson plans. They only see them once they are submitted.
+      return isOwnPlan && isAssignedSubjectClass
+    }
+
+    // Regular teachers only see their own drafts
+    return isOwnPlan
+  }
+
+  const myWorkPlans = useMemo(() => {
+    return workPlans.filter((wp) => wp.teacher_id === profile?.id)
+  }, [workPlans, profile?.id])
+
+  const allVisibleWorkPlans = useMemo(() => {
+    return workPlans.filter((wp) => canViewDraftPlan(wp))
+  }, [workPlans, profile?.id, isCoordinator, isDirector, isHeadOfSchool, teacherAssignments, homeroomClass])
+
+  const displayedWorkPlans = isLeadership && workPlanScope === 'my' ? myWorkPlans : allVisibleWorkPlans
+
+  const myLessonPlans = useMemo(() => {
+    return lessonPlans.filter((lp) => lp.teacher_id === profile?.id)
+  }, [lessonPlans, profile?.id])
+
+  const allVisibleLessonPlans = useMemo(() => {
+    return lessonPlans.filter((lp) => canViewDraftPlan(lp))
+  }, [lessonPlans, profile?.id, isCoordinator, isDirector, isHeadOfSchool, teacherAssignments, homeroomClass])
+
+  const displayedLessonPlans = isLeadership && lessonPlanScope === 'my' ? myLessonPlans : allVisibleLessonPlans
+
   const openCreateWorkPlan = () => {
     const initClass = availableClasses.length === 1 ? availableClasses[0].id : ''
     setCreateWpClassId(initClass)
@@ -864,7 +912,13 @@ export default function Planning() {
     setLoading(true)
     try {
       const wp = await api.getWorkPlan(id)
-      setSelectedWorkPlan(wp)
+      if (wp) {
+        if (wp.status === 'draft' && !canViewDraftPlan(wp)) {
+          setError('Draft work plans are only visible once submitted.')
+          return
+        }
+        setSelectedWorkPlan(wp)
+      }
     } catch (e: any) {
       setError(e?.message || 'Failed to load work plan details.')
     } finally {
@@ -944,6 +998,10 @@ export default function Planning() {
 
   const handlePreviewWorkPlanPdf = async (wp: WorkPlan) => {
     if (!school) return
+    if (wp.status === 'draft' && !canViewDraftPlan(wp)) {
+      setError('Draft work plans can only be previewed once submitted.')
+      return
+    }
     try {
       // Ensure weeks are loaded
       const fullPlan = wp.weeks ? wp : (await api.getWorkPlan(wp.id)) || wp
@@ -1105,6 +1163,10 @@ export default function Planning() {
     try {
       const lp = await api.getLessonPlan(id)
       if (lp) {
+        if (lp.status === 'draft' && !canViewDraftPlan(lp)) {
+          setError('Draft lesson plans are only visible once submitted.')
+          return
+        }
         // Auto-fill attendance from daily register if not already recorded or both 0
         if (lp.boys_attendance === null || lp.boys_attendance === undefined || (lp.boys_attendance === 0 && lp.girls_attendance === 0)) {
           try {
@@ -1442,6 +1504,10 @@ export default function Planning() {
 
   const handlePreviewLessonPlanPdf = async (lp: LessonPlan) => {
     if (!school) return
+    if (lp.status === 'draft' && !canViewDraftPlan(lp)) {
+      setError('Draft lesson plans can only be previewed once submitted.')
+      return
+    }
     try {
       const fullPlan = lp.objectives ? lp : (await api.getLessonPlan(lp.id)) || lp
       const doc = await generateLessonPlanPdf(fullPlan, school)
@@ -1796,7 +1862,7 @@ export default function Planning() {
                   ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                       {daySlots.map((s, idx) => {
-                        const matchingLp = findMatchingLessonPlan(s, dayDateStr, lessonPlans)
+                        const matchingLp = findMatchingLessonPlan(s, dayDateStr, displayedLessonPlans)
                         const isPast = isPastLessonSlot(dayDateStr, s.start_time, s.end_time)
                         const isPlanned = !!matchingLp
 
@@ -2053,13 +2119,13 @@ export default function Planning() {
           className={`seg-btn ${activeTab === 'work_plans' ? 'active' : ''}`}
           onClick={() => { setActiveTab('work_plans'); setSelectedWorkPlan(null) }}
         >
-          📋 Semester Work Plans ({workPlans.length})
+          📋 Semester Work Plans ({allVisibleWorkPlans.length})
         </button>
         <button
           className={`seg-btn ${activeTab === 'lesson_plans' ? 'active' : ''}`}
           onClick={() => { setActiveTab('lesson_plans'); setSelectedLessonPlan(null) }}
         >
-          📖 Lesson Plans ({lessonPlans.length})
+          📖 Lesson Plans ({allVisibleLessonPlans.length})
         </button>
         <button
           className={`seg-btn ${activeTab === 'timetable' ? 'active' : ''}`}
@@ -2114,8 +2180,8 @@ export default function Planning() {
           {!selectedWorkPlan && (
             <TeacherSyllabusCoverageCard
               teacherId={isDirector || isHeadOfSchool ? undefined : profile?.id}
-              workPlans={workPlans}
-              lessonPlans={lessonPlans}
+              workPlans={allVisibleWorkPlans}
+              lessonPlans={allVisibleLessonPlans}
               schemes={schemes}
               title={isDirector || isHeadOfSchool ? '🎯 School-Wide Syllabus Coverage' : '🎯 My Syllabus Coverage (Work Plans & Lessons)'}
               style={{ marginBottom: 16 }}
@@ -2123,9 +2189,6 @@ export default function Planning() {
           )}
           {!selectedWorkPlan ? (
             (() => {
-              const myWorkPlans = workPlans.filter((wp) => wp.teacher_id === profile?.id)
-                const displayedWorkPlans = isLeadership && workPlanScope === 'my' ? myWorkPlans : workPlans
-
                 return (
                   <div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
@@ -2145,7 +2208,7 @@ export default function Planning() {
                               style={{ padding: '3px 10px', fontSize: 12 }}
                               onClick={() => setWorkPlanScope('all')}
                             >
-                              🏫 All School Plans ({workPlans.length})
+                              🏫 All School Plans ({allVisibleWorkPlans.length})
                             </button>
                           </div>
                         )}
@@ -2579,8 +2642,8 @@ export default function Planning() {
           {!selectedLessonPlan && (
             <TeacherSyllabusCoverageCard
               teacherId={isDirector || isHeadOfSchool ? undefined : profile?.id}
-              workPlans={workPlans}
-              lessonPlans={lessonPlans}
+              workPlans={allVisibleWorkPlans}
+              lessonPlans={allVisibleLessonPlans}
               schemes={schemes}
               title={isDirector || isHeadOfSchool ? '🎯 School-Wide Syllabus Coverage' : '🎯 My Syllabus Coverage Status'}
               style={{ marginBottom: 16 }}
@@ -2588,9 +2651,6 @@ export default function Planning() {
           )}
           {!selectedLessonPlan ? (
             (() => {
-              const myLessonPlans = lessonPlans.filter((lp) => lp.teacher_id === profile?.id)
-              const displayedLessonPlans = isLeadership && lessonPlanScope === 'my' ? myLessonPlans : lessonPlans
-
               return (
                 <div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 10 }}>
@@ -2630,7 +2690,7 @@ export default function Planning() {
                             style={{ padding: '3px 10px', fontSize: 12 }}
                             onClick={() => setLessonPlanScope('all')}
                           >
-                            🏫 All School Plans ({lessonPlans.length})
+                            🏫 All School Plans ({allVisibleLessonPlans.length})
                           </button>
                         </div>
                       )}

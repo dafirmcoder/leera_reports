@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import type {
   Assignment,
   ClassInfo,
@@ -98,16 +98,60 @@ export default function PlanningExecutiveDashboard({
     })
   }, [analytics.teacherStats, selectedTier, selectedRole, searchQuery])
 
+  // Check whether current leadership viewer is authorized to view a draft plan
+  const canViewDraftPlan = useCallback(
+    (plan: { teacher_id: string; class_id?: string; subject_id?: string; status?: string }) => {
+      if (!plan || plan.status !== 'draft') return true
+      if (plan.teacher_id === currentUserId) return true
+      if (isCoordinator) {
+        // Coordinators only see draft workplans and lesson plans for subjects-classes they teach (own assignments)
+        return assignments.some(
+          (a) => a.teacher_id === currentUserId && a.class_id === plan.class_id && a.subject_id === plan.subject_id
+        )
+      }
+      // Directors and Head of School should not see draft workplans and lesson plans
+      return false
+    },
+    [currentUserId, isCoordinator, assignments]
+  )
+
   // Lesson plans for currently inspected teacher
   const teacherLessonPlans = useMemo(() => {
     if (!inspectingTeacher) return []
-    let plans = lessonPlans.filter((lp) => lp.teacher_id === inspectingTeacher.teacherId)
+    let plans = lessonPlans.filter((lp) => {
+      if (lp.teacher_id !== inspectingTeacher.teacherId) return false
+      if (lp.status === 'draft' && !canViewDraftPlan(lp)) return false
+      return true
+    })
     if (inspectStatusFilter !== 'all') {
       plans = plans.filter((lp) => lp.status === inspectStatusFilter)
     }
     // Sort descending by date
     return plans.sort((a, b) => new Date(b.lesson_date).getTime() - new Date(a.lesson_date).getTime())
-  }, [inspectingTeacher, lessonPlans, inspectStatusFilter])
+  }, [inspectingTeacher, lessonPlans, inspectStatusFilter, canViewDraftPlan])
+
+  const visibleTeacherLessonPlans = useMemo(() => {
+    if (!inspectingTeacher) return []
+    return lessonPlans.filter((lp) => lp.teacher_id === inspectingTeacher.teacherId && (lp.status !== 'draft' || canViewDraftPlan(lp)))
+  }, [inspectingTeacher, lessonPlans, canViewDraftPlan])
+
+  const hasVisibleDrafts = useMemo(() => {
+    return visibleTeacherLessonPlans.some((lp) => lp.status === 'draft')
+  }, [visibleTeacherLessonPlans])
+
+  const inspectStatusTabs = useMemo(() => {
+    if (hasVisibleDrafts) {
+      return ['all', 'submitted', 'approved', 'draft', 'returned'] as const
+    }
+    return ['all', 'submitted', 'approved', 'returned'] as const
+  }, [hasVisibleDrafts])
+
+  // Reset filter if active filter is 'draft' but drafts are hidden for this teacher
+  useEffect(() => {
+    if (inspectStatusFilter === 'draft' && !hasVisibleDrafts) {
+      setInspectStatusFilter('all')
+    }
+  }, [inspectStatusFilter, hasVisibleDrafts])
 
   // Helpers for tier badges
   const renderTierBadge = (tier: ComplianceTier, pct: number) => {
@@ -578,7 +622,7 @@ export default function PlanningExecutiveDashboard({
             {/* Filter Bar in Modal */}
             <div style={{ padding: '10px 20px', backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
               <span style={{ fontSize: 12, fontWeight: 600, color: '#475569' }}>Filter Status:</span>
-              {(['all', 'submitted', 'approved', 'draft', 'returned'] as const).map((st) => (
+              {inspectStatusTabs.map((st) => (
                 <button
                   key={st}
                   onClick={() => setInspectStatusFilter(st)}
@@ -594,7 +638,7 @@ export default function PlanningExecutiveDashboard({
                     textTransform: 'capitalize'
                   }}
                 >
-                  {st === 'all' ? `All (${lessonPlans.filter((lp) => lp.teacher_id === inspectingTeacher.teacherId).length})` : st}
+                  {st === 'all' ? `All (${visibleTeacherLessonPlans.length})` : st}
                 </button>
               ))}
             </div>
