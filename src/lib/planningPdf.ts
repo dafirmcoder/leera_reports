@@ -659,22 +659,32 @@ function renderSingleLessonPlanPage(doc: jsPDF, plan: LessonPlan, school: School
   doc.text('NOTES/REMARKS', leftM, curY + 6.5)
   curY += 9.0
 
-  const footerTop = 750.0
-  const maxNotesH = Math.max(16.0, footerTop - curY - 5.0)
-  drawDottedBox(doc, leftM, curY, contentW, maxNotesH)
-  if (plan.reflection_remarks) {
+  const footerTop = 735.4
+  // Notes/Remarks box has a clean, standard height (28pt) capped at max 38pt if remarks exist
+  let notesH = 28.0
+  if (plan.reflection_remarks && plan.reflection_remarks.trim()) {
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(8.0)
+    const remarksWrapped = doc.splitTextToSize(plan.reflection_remarks, contentW - 10.2)
+    notesH = Math.min(38.0, Math.max(28.0, remarksWrapped.length * 9.6 + 6.0))
+  }
+  // Ensure it never collides with footer
+  notesH = Math.min(notesH, Math.max(16.0, footerTop - curY - 6.0))
+
+  drawDottedBox(doc, leftM, curY, contentW, notesH)
+  if (plan.reflection_remarks && plan.reflection_remarks.trim()) {
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(7.8)
     doc.setTextColor(0, 0, 0)
     const remarksWrapped = doc.splitTextToSize(plan.reflection_remarks, contentW - 10.2)
-    const maxRemarksLines = Math.floor((maxNotesH - 6.0) / 9.2)
+    const maxRemarksLines = Math.floor((notesH - 6.0) / 9.2)
     for (let r = 0; r < Math.min(remarksWrapped.length, maxRemarksLines); r++) {
       doc.text(remarksWrapped[r], leftM + 5.1, curY + 8.0 + r * 9.2)
     }
   }
 
   // 10. BOTTOM BRAND GREEN FOOTER BAR
-  const footerH = 20.0
+  const footerH = 20.7
   doc.setFillColor(...FOOTER_LIME)
   doc.rect(0, footerTop, pageW, footerH, 'F')
 
@@ -682,7 +692,7 @@ function renderSingleLessonPlanPage(doc: jsPDF, plan: LessonPlan, school: School
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(8)
   doc.setTextColor(255, 255, 255)
-  doc.text(`© ${school.name.toUpperCase()} - ${year}`, pageW / 2, footerTop + 13.0, { align: 'center' })
+  doc.text(`© ${school.name.toUpperCase()} - ${year}`, pageW / 2, footerTop + 13.1, { align: 'center' })
 }
 
 /**

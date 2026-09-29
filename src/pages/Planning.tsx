@@ -2921,7 +2921,7 @@ export default function Planning() {
                             rows={3}
                             className="field"
                             style={{ width: '100%', backgroundColor: '#ffffff', lineHeight: 1.45 }}
-                            placeholder="e.g. I demonstrate on the whiteboard: “Computers only read switches as 0 or 1—watch how we combine 8 bits to form a single byte.” I walk through converting 0101 to decimal (5) and prompt the class: “What happens if we flip the last bit?”"
+                            placeholder="e.g. Explain network topologies (bus, ring, star) with board diagrams, demonstrate how packets flow through each layout, give solved examples comparing failure points, and check understanding with a quick hinge question."
                             value={stages.exposition}
                             onChange={(e) => updateStage('exposition', e.target.value)}
                           />
@@ -4277,7 +4277,7 @@ export default function Planning() {
                       rows={2}
                       className="field"
                       style={{ width: '100%', fontSize: 12, backgroundColor: '#ffffff' }}
-                      placeholder="Concept explanation, teacher modeling..."
+                      placeholder="Explain concepts, board modeling, solved examples..."
                       value={createLpExposition}
                       onChange={(e) => setCreateLpExposition(e.target.value)}
                     />

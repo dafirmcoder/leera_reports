@@ -48,7 +48,7 @@ export const INSTRUCTIONAL_STAGES: Record<InstructionalStage, StageDefinition> =
     badgeBg: '#e0f2fe',
     textColor: '#0369a1',
     description: 'Direct instruction, concept explanation, key vocabulary, worked examples, teacher modeling.',
-    placeholder: 'e.g. I demonstrate on the whiteboard: “Computers only read switches as 0 or 1—watch how we combine 8 bits to form a single byte.” I walk through converting 0101 to decimal (5) and prompt the class: “What happens if we flip the last bit?”'
+    placeholder: 'e.g. Explain network topologies (bus, ring, star) with board diagrams, demonstrate how packets flow through each layout, give solved examples comparing failure points, and check understanding with a quick hinge question.'
   },
   learnersActivity: {
     key: 'learnersActivity',
@@ -279,12 +279,11 @@ function buildStagePrompt(stage: InstructionalStage, context: LessonContext): st
   let stageSpecificInstructions = ''
   if (stage === 'exposition') {
     stageSpecificInstructions = `CRITICAL STYLE & VOICE REQUIREMENTS FOR EXPOSITION:
-1. ACTIVE TEACHER VOICE: Write in the direct, active voice of the teacher teaching and speaking to the class (e.g., "I gather the class and say: '...'", "I model on the whiteboard...", "I ask the room: '...'").
-2. NO PASSIVE INSTRUCTIONS: Do NOT write passive third-person summaries like "The teacher will explain..." or "Students are introduced to...". It must sound like real classroom delivery.
-3. INCLUDE TEACHER TALK: Provide the actual words the teacher says to the students in quotation marks to explain the core concept simply and memorably.
-4. WHITEBOARD MODELING: Specify the concrete worked example, diagram, formula, or visual steps the teacher draws on the board.
-5. STRICT OBJECTIVE & GRADE ALIGNMENT: Explicitly teach the specific knowledge in the selected objective(s) and use vocabulary calibrated strictly for ${context.className || 'the specified year level'}.
-6. HINGE CHECK: End with a rapid hinge question the teacher asks the class (e.g., "Show me on mini-whiteboards: '...'") before independent work.`
+1. CLEAR, NEUTRAL INSTRUCTIONAL DELIVERY: Write direct, professional teacher exposition instructions starting with neutral action verbs (e.g., "Explain that...", "Explain the network topologies...", "Explain algebraic expressions and provide solved examples...", "Demonstrate on the whiteboard...", "Model step-by-step...", "Break down key vocabulary...").
+2. ABSOLUTELY NO QUOTES OR SIMULATED DIALOGUE: Do NOT use quotation marks ("..." or '...' or “...”) or simulated speech dialogue (do NOT write: I say: "Look at this..."). Keep it neutral and instructional (e.g. Explain network topologies (bus, ring, star) with board diagrams, demonstrate how packets flow, give solved examples comparing failure points, and check understanding).
+3. WHITEBOARD MODELING & SOLVED EXAMPLES: Explicitly describe the concrete solved examples, formulas, diagrams, or step-by-step breakdown shown on the board.
+4. STRICT OBJECTIVE & GRADE ALIGNMENT: Explicitly teach the specific knowledge in the selected Cambridge objective(s) and use vocabulary calibrated strictly for ${context.className || 'the specified year level'}.
+5. HINGE CHECK: End with a rapid diagnostic check to gauge understanding before students transition to independent or group work.`
   } else if (stage === 'starter') {
     stageSpecificInstructions = `CRITICAL REQUIREMENTS FOR STARTER (10 MIN):
 1. CLASSROOM REALISM: A fast-paced, high-energy 10-minute hook with minimal teacher talk and immediate pupil action.
@@ -364,7 +363,8 @@ export async function generateStageContent(
   }
 
   const prompt = buildStagePrompt(stage, context)
-  return await callGeminiApi(prompt, apiKey)
+  const result = await callGeminiApi(prompt, apiKey)
+  return stage === 'exposition' ? result.replace(/["“”]/g, '').trim() : result
 }
 
 /**
@@ -401,7 +401,7 @@ MANDATORY INSTRUCTIONS:
 
 PEDAGOGICAL & STYLE REQUIREMENTS FOR EACH FIELD:
 1. starter: Practical, high-energy warm-up (10 min). Concrete classroom hook (mini-whiteboard, physical prop or puzzling visual on board, think-pair-share). Fast-paced, low teacher talk, activates prerequisite knowledge.
-2. exposition: Direct instruction & teacher modeling (15 min). CRITICAL: MUST SOUND LIKE THE TEACHER ACTIVELY TEACHING AND SPEAKING TO THE CLASS. Use direct teacher dialogue in quotes (e.g. "Look closely at this...", "Notice that..."), active whiteboard diagram/worked example modeling, explicit vocabulary breakdown, and a rapid hinge check-question to the class before releasing to practice.
+2. exposition: Direct instruction & teacher modeling (15 min). Clear, neutral instructional delivery (e.g. "Explain network topologies (bus, ring, star) with board diagrams...", "Explain algebraic expressions and provide solved examples..."). Model step-by-step on the whiteboard, provide clear solved examples, and include a rapid hinge check. DO NOT USE QUOTATION MARKS OR SCRIPTED DIALOGUE. Keep it neutral and professional.
 3. learnersActivity: Differentiated hands-on classroom tasks (35 min). Realistic group work, stations, or tiered practice with explicit scaffolding: Support (scaffolded sentence frames/hints), Core (hands-on investigation/worksheet meeting Cambridge objective), and Extension (critical analysis/stretch challenge).
 4. plenary: Sharp lesson synthesis & exit ticket (10 min). Concrete classroom check (mini-whiteboard showdown, 2-question exit ticket, or 3-2-1 summary) evaluating achievement against the lesson objective.
 5. assessmentIdeas: At least 2 to 3 distinct, concrete classroom assessment methods (format with bullet points: • ...). Must directly evaluate student mastery of the selected learning objective (e.g. marked sheet, exit ticket, paired rubric).
@@ -409,7 +409,7 @@ PEDAGOGICAL & STYLE REQUIREMENTS FOR EACH FIELD:
 Output must be in JSON format matching exactly this schema:
 {
   "starter": "string (2 to 4 concise sentences)",
-  "exposition": "string (2 to 4 concise sentences with direct teacher speech and whiteboard modeling)",
+  "exposition": "string (2 to 4 concise sentences describing teacher explanation and solved examples, NO quotation marks or dialogue)",
   "learnersActivity": "string (2 to 4 concise sentences with Support, Core, Extension differentiation)",
   "plenary": "string (2 to 4 concise sentences with concrete exit check)",
   "assessmentIdeas": "• Assessment idea 1...\\n• Assessment idea 2..."
@@ -426,9 +426,10 @@ Do NOT wrap with markdown other than \`\`\`json. Return only the valid JSON obje
       jsonStr = jsonMatch[0]
     }
     const parsed = JSON.parse(jsonStr)
+    const expClean = cleanGeneratedText(parsed.exposition || '').replace(/["“”]/g, '').trim()
     return {
       starter: cleanGeneratedText(parsed.starter || ''),
-      exposition: cleanGeneratedText(parsed.exposition || ''),
+      exposition: expClean,
       learnersActivity: cleanGeneratedText(parsed.learnersActivity || parsed.learners || ''),
       plenary: cleanGeneratedText(parsed.plenary || ''),
       assessmentIdeas: cleanGeneratedText(parsed.assessmentIdeas || parsed.assessment_ideas || '')
