@@ -791,3 +791,53 @@ export interface ImportWorkPlanResult {
   commedWeeksCount: number
 }
 
+/**
+ * Determines whether a scheduled lesson time is in the past.
+ * - Prior calendar dates (e.g. yesterday) are strictly in the past.
+ * - Future calendar dates (e.g. tomorrow) are strictly in the future.
+ * - For today's date, checks whether the current clock time has reached or passed the lesson end time
+ *   (or start time if end time is not provided).
+ */
+export function isLessonTimeInPast(
+  dateStr?: string | null,
+  endTime?: string | null,
+  startTime?: string | null
+): boolean {
+  if (!dateStr) return false
+  const cleanDateStr = dateStr.includes('T') ? dateStr.split('T')[0] : dateStr.trim()
+  const now = new Date()
+  const year = now.getFullYear()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  const todayStr = `${year}-${month}-${day}`
+
+  // Strictly previous dates are in the past
+  if (cleanDateStr < todayStr) return true
+  // Strictly future dates are in the future (not past)
+  if (cleanDateStr > todayStr) return false
+
+  // For today's date: compare against lesson end time (or start time)
+  const timeToCompare = endTime?.trim() || startTime?.trim()
+  if (!timeToCompare) {
+    // If no specific time was provided for today, unlock reflections after standard school hours (15:30)
+    return now.getHours() > 15 || (now.getHours() === 15 && now.getMinutes() >= 30)
+  }
+
+  const parts = timeToCompare.split(':')
+  if (parts.length < 2) return false
+  const hours = parseInt(parts[0], 10)
+  const minutes = parseInt(parts[1], 10)
+  if (isNaN(hours) || isNaN(minutes)) return false
+
+  const lessonEndTime = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+    hours,
+    minutes,
+    0,
+    0
+  )
+  return now.getTime() >= lessonEndTime.getTime()
+}
+

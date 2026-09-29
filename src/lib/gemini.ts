@@ -28,9 +28,9 @@ export interface StageDefinition {
 export const INSTRUCTIONAL_STAGES: Record<InstructionalStage, StageDefinition> = {
   starter: {
     key: 'starter',
-    label: '1. Starter (10 min)',
+    label: '1. Starter',
     fullName: 'Starter Activities',
-    duration: '10 min',
+    duration: '',
     subtitle: 'Inquiry Hook / Warm-up',
     badgeColor: '#15803d',
     badgeBg: '#dcfce7',
@@ -40,9 +40,9 @@ export const INSTRUCTIONAL_STAGES: Record<InstructionalStage, StageDefinition> =
   },
   exposition: {
     key: 'exposition',
-    label: '2. Exposition (15 min)',
+    label: '2. Exposition',
     fullName: 'Exposition Methods',
-    duration: '15 min',
+    duration: '',
     subtitle: 'Direct Instruction / Teacher Modeling',
     badgeColor: '#0369a1',
     badgeBg: '#e0f2fe',
@@ -52,9 +52,9 @@ export const INSTRUCTIONAL_STAGES: Record<InstructionalStage, StageDefinition> =
   },
   learnersActivity: {
     key: 'learnersActivity',
-    label: '3. Learners Activity (35 min)',
+    label: '3. Learners Activity',
     fullName: 'Learners Activity',
-    duration: '35 min',
+    duration: '',
     subtitle: 'Guided Tasks / Hands-on Practice',
     badgeColor: '#6b21a8',
     badgeBg: '#f3e8ff',
@@ -64,9 +64,9 @@ export const INSTRUCTIONAL_STAGES: Record<InstructionalStage, StageDefinition> =
   },
   plenary: {
     key: 'plenary',
-    label: '4. Plenary (10 min)',
+    label: '4. Plenary',
     fullName: 'Plenary',
-    duration: '10 min',
+    duration: '',
     subtitle: 'Exit Ticket / Lesson Synthesis',
     badgeColor: '#b45309',
     badgeBg: '#fef3c7',
@@ -326,14 +326,14 @@ function buildStagePrompt(stage: InstructionalStage, context: LessonContext): st
 4. STRICT OBJECTIVE & GRADE ALIGNMENT: Explicitly teach the selected Cambridge objective(s) for ${context.className || 'the specified year level'}.
 5. HINGE CHECK: Conclude with checking understanding with a quick hinge question before independent practice.`
   } else if (stage === 'starter') {
-    stageSpecificInstructions = `CRITICAL REQUIREMENTS FOR STARTER (10 MIN):
-1. CLASSROOM REALISM: A fast-paced, high-energy 10-minute hook with minimal teacher talk and immediate pupil action.
+    stageSpecificInstructions = `CRITICAL REQUIREMENTS FOR STARTER:
+1. CLASSROOM REALISM: A fast-paced, high-energy hook with minimal teacher talk and immediate pupil action.
 2. CONCRETE HOOK: Use a real-world dilemma, a physical prop, an intriguing visual on the board, or a mystery question directly introducing the selected objective.
 3. IMMEDIATE STUDENT ACTION: Prompt students to act within 2 minutes using mini-whiteboards, Think-Pair-Share, or quick sorting cards.
 4. GRADE APPROPRIATE: Calibrated strictly for ${context.className || 'Secondary'} learners.`
   } else if (stage === 'learnersActivity') {
-    stageSpecificInstructions = `CRITICAL REQUIREMENTS FOR LEARNERS ACTIVITY (35 MIN):
-1. CLASSROOM REALISM: Highly practical, hands-on 35-minute tasks with concrete classroom outputs (differentiated worksheets, stations, paired experiments, or problem cards).
+    stageSpecificInstructions = `CRITICAL REQUIREMENTS FOR LEARNERS ACTIVITY:
+1. CLASSROOM REALISM: Highly practical, hands-on tasks with concrete classroom outputs (differentiated worksheets, stations, paired experiments, or problem cards).
 2. DIRECT CURRICULUM ALIGNMENT: Tasks must directly practice and apply the skills defined in the selected learning objective(s).
 3. EXPLICIT DIFFERENTIATION:
    - Support: Sentence stems, scaffolded hint cards, or guided templates for learners needing help.
@@ -341,8 +341,8 @@ function buildStagePrompt(stage: InstructionalStage, context: LessonContext): st
    - Extension: Higher-order stretch challenge, counter-scenario, or critical analysis for advanced learners.
 4. GRADE LEVEL RELEVANCE: Calibrated strictly for ${context.className || 'Secondary'} learners.`
   } else if (stage === 'plenary') {
-    stageSpecificInstructions = `CRITICAL REQUIREMENTS FOR PLENARY (10 MIN):
-1. CLASSROOM REALISM: Sharp 10-minute synthesis assessing student mastery against the success criteria and selected objective(s).
+    stageSpecificInstructions = `CRITICAL REQUIREMENTS FOR PLENARY:
+1. CLASSROOM REALISM: Sharp synthesis assessing student mastery against the success criteria and selected objective(s).
 2. CONCRETE ROUTINE: Use a definitive checking method (e.g., Mini-Whiteboard Showdown, 2-question Exit Ticket, or 3-2-1 Countdown).
 3. INQUIRY CLOSURE: Learners state the answer to today's inquiry question, followed by a brief preview connecting to the next lesson.`
   } else if (stage === 'assessmentIdeas') {
@@ -441,8 +441,8 @@ MANDATORY INSTRUCTIONS:
 - Ensure all language, tasks, cognitive demand, and timing are perfectly calibrated for ${context.className || 'the specified grade level'}.
 
 PEDAGOGICAL & STYLE REQUIREMENTS FOR EACH FIELD:
-1. starter: Practical, high-energy warm-up (10 min). Concrete classroom hook (mini-whiteboard, physical prop or puzzling visual on board, think-pair-share). Fast-paced, low teacher talk, activates prerequisite knowledge.
-2. exposition: Direct teacher exposition action instructions (15 min).
+1. starter: Practical, high-energy warm-up. Concrete classroom hook (mini-whiteboard, physical prop or puzzling visual on board, think-pair-share). Fast-paced, low teacher talk, activates prerequisite knowledge.
+2. exposition: Direct teacher exposition action instructions.
    - MANDATORY GRAMMATICAL FORM: Write in the IMPERATIVE MOOD starting immediately with action verbs: "Explain...", "Demonstrate...", "Model...", "Give solved examples of...".
    - EXACT TARGET PATTERN:
      "Explain network topologies (bus, ring, star) with board diagrams, demonstrate how packets flow through each layout, give solved examples comparing failure points, and check understanding with a quick hinge question."
@@ -450,8 +450,8 @@ PEDAGOGICAL & STYLE REQUIREMENTS FOR EACH FIELD:
      • NEVER write "Direct instruction covers..." or "Direct instruction introduces...".
      • NEVER write third-person summaries like "The teacher explains...", "The teacher breaks down...", or "A rapid hinge check uses...".
      • NEVER use quotation marks or dialogue.
-3. learnersActivity: Differentiated hands-on classroom tasks (35 min). Realistic group work, stations, or tiered practice with explicit scaffolding: Support (scaffolded sentence frames/hints), Core (hands-on investigation/worksheet meeting Cambridge objective), and Extension (critical analysis/stretch challenge).
-4. plenary: Sharp lesson synthesis & exit ticket (10 min). Concrete classroom check (mini-whiteboard showdown, 2-question exit ticket, or 3-2-1 summary) evaluating achievement against the lesson objective.
+3. learnersActivity: Differentiated hands-on classroom tasks. Realistic group work, stations, or tiered practice with explicit scaffolding: Support (scaffolded sentence frames/hints), Core (hands-on investigation/worksheet meeting Cambridge objective), and Extension (critical analysis/stretch challenge).
+4. plenary: Sharp lesson synthesis & exit ticket. Concrete classroom check (mini-whiteboard showdown, 2-question exit ticket, or 3-2-1 summary) evaluating achievement against the lesson objective.
 5. assessmentIdeas: At least 2 to 3 distinct, concrete classroom assessment methods (format with bullet points: • ...). Must directly evaluate student mastery of the selected learning objective (e.g. marked sheet, exit ticket, paired rubric).
 
 Output must be in JSON format matching exactly this schema:

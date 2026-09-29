@@ -2,14 +2,15 @@ import { getSupabaseConfigError, supabase } from './supabase'
 import { formatAdmissionNo, formatRollNo, formatStudentNo } from './report'
 import { CAMBRIDGE_PRESEEDED_SCHEMES } from './cambridgeData'
 import { isCoordinatorOrLeadership } from './permissions'
-import type {
-  AdminClassAttendanceSummary, AdminDashboardData, Api, Assignment, AttendanceAggregatedSummary, AttendanceRow, AttendanceStatus, AttendanceSummary,
-  ClassAttendanceExportData, ClassInfo, ClassMarksLock, ClassPopulationSummary, DetailedAttendanceExport,
-  EndOfUnitTestOverview, Profile, Role, School,
-  SchoolPopulationSummary, ScoreRow, Student, StudentReportRow, Subject,
-  SubjectTestSummary, TeacherAssignmentOverview, TeacherDashboardData, TeacherTestSummary, UnitTest, UnitTestSummaryItem, UpdateUnitTestInput,
-  CurriculumScheme, CurriculumTopic, CurriculumObjective, TeacherTimetable, TeacherScheduleSlot, WorkPlan, WorkPlanWeek, WorkPlanWeekObjective, LessonPlan,
-  ImportWorkPlanInput, ImportWorkPlanResult, ParsedWorkPlanWeek
+import {
+  isLessonTimeInPast,
+  type AdminClassAttendanceSummary, type AdminDashboardData, type Api, type Assignment, type AttendanceAggregatedSummary, type AttendanceRow, type AttendanceStatus, type AttendanceSummary,
+  type ClassAttendanceExportData, type ClassInfo, type ClassMarksLock, type ClassPopulationSummary, type DetailedAttendanceExport,
+  type EndOfUnitTestOverview, type Profile, type Role, type School,
+  type SchoolPopulationSummary, type ScoreRow, type Student, type StudentReportRow, type Subject,
+  type SubjectTestSummary, type TeacherAssignmentOverview, type TeacherDashboardData, type TeacherTestSummary, type UnitTest, type UnitTestSummaryItem, type UpdateUnitTestInput,
+  type CurriculumScheme, type CurriculumTopic, type CurriculumObjective, type TeacherTimetable, type TeacherScheduleSlot, type WorkPlan, type WorkPlanWeek, type WorkPlanWeekObjective, type LessonPlan,
+  type ImportWorkPlanInput, type ImportWorkPlanResult, type ParsedWorkPlanWeek
 } from './types'
 
 function db() {
@@ -3435,6 +3436,25 @@ export const supabaseApi: Api = {
   async updateLessonPlan(id: string, updates: Partial<LessonPlan> & {
     objectives?: Array<{ objective_id?: string | null; code_snapshot: string; text_snapshot: string }>
   }): Promise<void> {
+    // Validate: Teachers cannot fill reflection remarks if the lesson time is not in the past
+    if (updates.reflection_remarks && updates.reflection_remarks.trim()) {
+      let targetDate = updates.lesson_date
+      let targetEndTime = updates.end_time
+      let targetStartTime = updates.start_time
+      if (!targetDate) {
+        const localPlans: LessonPlan[] = JSON.parse(localStorage.getItem('leera_lesson_plans') || '[]')
+        const existingLocal = localPlans.find((p) => p.id === id)
+        if (existingLocal) {
+          targetDate = existingLocal.lesson_date
+          targetEndTime = targetEndTime || existingLocal.end_time
+          targetStartTime = targetStartTime || existingLocal.start_time
+        }
+      }
+      if (targetDate && !isLessonTimeInPast(targetDate, targetEndTime, targetStartTime)) {
+        throw new Error('Teacher Reflections & Evaluation cannot be recorded before the scheduled lesson time has passed.')
+      }
+    }
+
     const { objectives, ...rawUpdates } = updates
     const validColumns = new Set([
       'school_id',
@@ -3518,6 +3538,15 @@ export const supabaseApi: Api = {
   },
 
   async submitLessonPlan(id: string): Promise<void> {
+    const existing = await this.getLessonPlan(id)
+    if (existing) {
+      if (!isLessonTimeInPast(existing.lesson_date, existing.end_time, existing.start_time)) {
+        throw new Error(`Cannot submit lesson plan: The scheduled lesson time has not passed yet (${existing.lesson_date}${existing.end_time ? ` at ${existing.end_time}` : ''}). Lesson plans can only be submitted after the lesson has concluded and reflections are recorded.`)
+      }
+      if (!existing.reflection_remarks || !existing.reflection_remarks.trim()) {
+        throw new Error('Remarks (Teacher Reflections & Evaluation) must be filled before submitting a lesson plan for review.')
+      }
+    }
     await this.updateLessonPlan(id, {
       status: 'submitted',
       submitted_at: new Date().toISOString()

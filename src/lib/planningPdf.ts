@@ -271,7 +271,8 @@ interface TeachingActivityStage {
 }
 
 function cleanStageText(text: string, fallback: string): string {
-  const trimmed = (text || '').trim().replace(/^[-—•:\s.]+/, '').trim()
+  let trimmed = (text || '').trim().replace(/^[-—•:\s.]+/, '').trim()
+  trimmed = trimmed.replace(/^(?:\(\d+\s*min(?:s)?\)[:-\s]*)/i, '').trim()
   if (!trimmed || /^[\.\,\-\;\:]+$/.test(trimmed)) {
     return fallback
   }
@@ -281,19 +282,19 @@ function cleanStageText(text: string, fallback: string): string {
 function parseMainTeachingActivities(rawText?: string | null): TeachingActivityStage[] {
   const defaultStages: TeachingActivityStage[] = [
     {
-      title: 'Starter (10 min):',
+      title: 'Starter:',
       text: 'Torch ON/OFF demo — “Computers only see two states; how do they show numbers, pictures and words?”; introduce the lesson question.'
     },
     {
-      title: 'Exposition (15 min):',
+      title: 'Exposition:',
       text: 'How computers represent data in binary (0,1) — patterns of switches; data measurement — bits, bytes, kilobytes and megabytes, making links to memory size and storage; version control — how digital tools keep versions of an artefact so we can navigate between them.'
     },
     {
-      title: 'Learner activity (35 min):',
+      title: 'Learners Activity:',
       text: 'Three stations — (a) binary counting cards: hold up 0/1 cards to build given numbers and write binary patterns; (b) data-size ladder: order bit, byte, kilobyte, megabyte and match files (photo, song, essay) to the size that fits; (c) version control: edit a shared document, open its version history, navigate between versions and restore an earlier one.'
     },
     {
-      title: 'Plenary (10 min):',
+      title: 'Plenary:',
       text: 'Exit ticket — read one binary pattern, answer one data-size question, and state one benefit of version control; preview Friday’s new unit on networks.'
     }
   ]
@@ -346,19 +347,19 @@ function parseMainTeachingActivities(rawText?: string | null): TeachingActivityS
   // Canonical Cambridge 4-stage instructional model: ALWAYS guaranteed in order
   return [
     {
-      title: 'Starter (10 min):',
+      title: 'Starter:',
       text: cleanStageText(stageMap.starter, 'Inquiry discussion, recap of prior knowledge, and introduction of the lesson inquiry question.')
     },
     {
-      title: 'Exposition (15 min):',
+      title: 'Exposition:',
       text: cleanStageText(stageMap.exposition, 'Direct instruction, concept explanation, key vocabulary, and guided teacher demonstration.')
     },
     {
-      title: 'Learners Activity (35 min):',
+      title: 'Learners Activity:',
       text: cleanStageText(stageMap.learner, 'Differentiated student tasks, collaborative problem-solving, and practical application exercises.')
     },
     {
-      title: 'Plenary (10 min):',
+      title: 'Plenary:',
       text: cleanStageText(stageMap.plenary, 'Exit ticket — review key learning objectives, student self-reflection, and preview next session.')
     }
   ]

@@ -7,20 +7,21 @@ import { parseSyllabusPdf, type ExtractedSyllabus } from '../lib/syllabusPdfPars
 import { parseWorkPlanPdf } from '../lib/workPlanPdfParser'
 import { parseTeacherTimetablePdf } from '../lib/timetablePdfParser'
 import { generateLessonPlanPdf, generateWorkPlanPdf } from '../lib/planningPdf'
-import type {
-  Assignment,
-  ClassInfo,
-  CurriculumObjective,
-  CurriculumScheme,
-  CurriculumTopic,
-  LessonPlan,
-  Profile,
-  Subject,
-  TeacherScheduleSlot,
-  WorkPlan,
-  WorkPlanWeek,
-  ParsedWorkPlan,
-  ParsedWorkPlanWeek
+import {
+  isLessonTimeInPast,
+  type Assignment,
+  type ClassInfo,
+  type CurriculumObjective,
+  type CurriculumScheme,
+  type CurriculumTopic,
+  type LessonPlan,
+  type Profile,
+  type Subject,
+  type TeacherScheduleSlot,
+  type WorkPlan,
+  type WorkPlanWeek,
+  type ParsedWorkPlan,
+  type ParsedWorkPlanWeek
 } from '../lib/types'
 import PlanningExecutiveDashboard from '../components/dashboards/PlanningExecutiveDashboard'
 import TeacherSyllabusCoverageCard from '../components/dashboards/TeacherSyllabusCoverageCard'
@@ -132,13 +133,13 @@ export function parseActivityStages(rawText?: string | null): TeachingActivitySt
       const body = rawText.slice(startIndex, endIndex).trim().replace(/^[-—:\s]+/, '')
 
       if (title.includes('starter')) {
-        starter = body
+        starter = body.replace(/^(?:\(\d+\s*min(?:s)?\)[:-\s]*)/i, '')
       } else if (title.includes('exposition') || title.includes('main activity')) {
-        exposition = body
+        exposition = body.replace(/^(?:\(\d+\s*min(?:s)?\)[:-\s]*)/i, '')
       } else if (title.includes('learner')) {
-        learnersActivity = body
+        learnersActivity = body.replace(/^(?:\(\d+\s*min(?:s)?\)[:-\s]*)/i, '')
       } else if (title.includes('plenary')) {
-        plenary = body
+        plenary = body.replace(/^(?:\(\d+\s*min(?:s)?\)[:-\s]*)/i, '')
       }
     }
   } else {
@@ -158,10 +159,10 @@ export function formatActivityStages(stages: TeachingActivityStages): string {
   const plenary = stages.plenary.trim() || 'Exit ticket — review key learning objectives, student self-reflection, and preview next session.'
 
   return [
-    `Starter (10 min): ${starter}`,
-    `Exposition (15 min): ${exposition}`,
-    `Learners Activity (35 min): ${learnersActivity}`,
-    `Plenary (10 min): ${plenary}`
+    `Starter: ${starter}`,
+    `Exposition: ${exposition}`,
+    `Learners Activity: ${learnersActivity}`,
+    `Plenary: ${plenary}`
   ].join('\n\n')
 }
 
@@ -1239,6 +1240,12 @@ export default function Planning() {
 
   const handleSaveLessonPlan = async () => {
     if (!selectedLessonPlan) return
+    // Gate: Teacher Reflections & Evaluation cannot be saved if lesson time has not passed
+    const isPast = isLessonTimeInPast(selectedLessonPlan.lesson_date, selectedLessonPlan.end_time, selectedLessonPlan.start_time)
+    if (selectedLessonPlan.reflection_remarks?.trim() && !isPast) {
+      setError(`Teacher Reflections & Evaluation cannot be recorded before the scheduled lesson time has passed (${selectedLessonPlan.lesson_date}${selectedLessonPlan.end_time ? ` at ${selectedLessonPlan.end_time}` : ''}).`)
+      return
+    }
     try {
       setLoading(true)
       await api.updateLessonPlan(selectedLessonPlan.id, selectedLessonPlan)
@@ -1373,11 +1380,35 @@ export default function Planning() {
   }
 
   const handleSubmitLessonPlan = async (id: string) => {
+    let plan: LessonPlan | null | undefined = lessonPlans.find((lp) => lp.id === id)
+    if (selectedLessonPlan && selectedLessonPlan.id === id) {
+      plan = selectedLessonPlan
+    }
+    if (!plan) {
+      plan = (await api.getLessonPlan(id)) || null
+    }
+
+    if (plan) {
+      const isPast = isLessonTimeInPast(plan.lesson_date, plan.end_time, plan.start_time)
+      if (!isPast) {
+        setError(`Cannot submit lesson plan: The scheduled lesson time has not passed yet (${plan.lesson_date}${plan.end_time ? ` at ${plan.end_time}` : ''}). Lesson plans can only be submitted after the lesson has concluded and reflections are recorded.`)
+        return
+      }
+      if (!plan.reflection_remarks || !plan.reflection_remarks.trim()) {
+        setError('Cannot submit lesson plan: Remarks (Teacher Reflections & Evaluation) must be filled before submitting for review.')
+        return
+      }
+    }
+
     if (!confirm('Submit this Lesson Plan for review?')) return
     try {
       setLoading(true)
+      // Save any pending reflections if submitting directly from active editor
+      if (selectedLessonPlan && selectedLessonPlan.id === id) {
+        await api.updateLessonPlan(selectedLessonPlan.id, selectedLessonPlan)
+      }
       await api.submitLessonPlan(id)
-      setSuccess('Lesson Plan submitted.')
+      setSuccess('Lesson Plan submitted for review.')
       if (selectedLessonPlan && selectedLessonPlan.id === id) {
         setSelectedLessonPlan({ ...selectedLessonPlan, status: 'submitted' })
       }
@@ -2634,11 +2665,31 @@ export default function Planning() {
                             <button className="btn btn-ghost btn-small" onClick={() => handlePreviewLessonPlanPdf(lp)}>
                               📄 PDF
                             </button>
-                            {(lp.status === 'draft' || lp.status === 'returned') && (
-                              <button className="btn btn-primary btn-small" onClick={() => handleSubmitLessonPlan(lp.id)}>
-                                Submit
-                              </button>
-                            )}
+                            {(lp.status === 'draft' || lp.status === 'returned') && (() => {
+                              const isPast = isLessonTimeInPast(lp.lesson_date, lp.end_time, lp.start_time)
+                              const hasRemarks = Boolean(lp.reflection_remarks && lp.reflection_remarks.trim())
+                              const canSubmit = isPast && hasRemarks
+
+                              return (
+                                <button
+                                  className="btn btn-primary btn-small"
+                                  onClick={() => handleSubmitLessonPlan(lp.id)}
+                                  title={
+                                    !isPast
+                                      ? 'Cannot submit yet: Scheduled lesson time has not passed.'
+                                      : !hasRemarks
+                                      ? 'Cannot submit yet: Remarks (Teacher Reflections) must be filled.'
+                                      : 'Submit for review'
+                                  }
+                                  style={{
+                                    opacity: canSubmit ? 1 : 0.6,
+                                    cursor: canSubmit ? 'pointer' : 'not-allowed'
+                                  }}
+                                >
+                                  Submit
+                                </button>
+                              )
+                            })()}
                           </div>
                         </div>
                       ))}
@@ -2672,11 +2723,34 @@ export default function Planning() {
                   <button className="btn btn-primary btn-small" onClick={handleSaveLessonPlan}>
                     💾 Save Plan
                   </button>
-                  {(selectedLessonPlan.status === 'draft' || selectedLessonPlan.status === 'returned') && (
-                    <button className="btn btn-small" style={{ background: '#10b981', color: '#fff', fontWeight: 700 }} onClick={() => handleSubmitLessonPlan(selectedLessonPlan.id)}>
-                      🚀 Submit for Review
-                    </button>
-                  )}
+                  {(selectedLessonPlan.status === 'draft' || selectedLessonPlan.status === 'returned') && (() => {
+                    const isPast = isLessonTimeInPast(selectedLessonPlan.lesson_date, selectedLessonPlan.end_time, selectedLessonPlan.start_time)
+                    const hasRemarks = Boolean(selectedLessonPlan.reflection_remarks && selectedLessonPlan.reflection_remarks.trim())
+                    const canSubmit = isPast && hasRemarks
+
+                    return (
+                      <button
+                        className="btn btn-small"
+                        style={{
+                          background: canSubmit ? '#10b981' : '#94a3b8',
+                          color: '#fff',
+                          fontWeight: 700,
+                          cursor: canSubmit ? 'pointer' : 'not-allowed',
+                          opacity: canSubmit ? 1 : 0.75
+                        }}
+                        onClick={() => handleSubmitLessonPlan(selectedLessonPlan.id)}
+                        title={
+                          !isPast
+                            ? 'Cannot submit yet: Scheduled lesson time has not passed.'
+                            : !hasRemarks
+                            ? 'Cannot submit yet: Teacher Reflections & Evaluation must be filled below before submitting.'
+                            : 'Submit this lesson plan for leadership review'
+                        }
+                      >
+                        🚀 Submit for Review
+                      </button>
+                    )
+                  })()}
                 </div>
               </div>
 
@@ -3025,7 +3099,7 @@ export default function Planning() {
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, flexWrap: 'wrap', gap: 4 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                               <label className="field-label" style={{ fontWeight: 800, margin: 0, color: '#15803d', fontSize: 13 }}>
-                                1. Starter (10 min)
+                                1. Starter
                               </label>
                               <span style={{ fontSize: 11, color: '#15803d', background: '#dcfce7', padding: '1px 8px', borderRadius: 10, fontWeight: 700 }}>
                                 Inquiry Hook / Warm-up
@@ -3054,7 +3128,7 @@ export default function Planning() {
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, flexWrap: 'wrap', gap: 4 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                               <label className="field-label" style={{ fontWeight: 800, margin: 0, color: '#0369a1', fontSize: 13 }}>
-                                2. Exposition (15 min)
+                                2. Exposition
                               </label>
                               <span style={{ fontSize: 11, color: '#0369a1', background: '#e0f2fe', padding: '1px 8px', borderRadius: 10, fontWeight: 700 }}>
                                 Direct Instruction / Teacher Modeling
@@ -3083,7 +3157,7 @@ export default function Planning() {
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, flexWrap: 'wrap', gap: 4 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                               <label className="field-label" style={{ fontWeight: 800, margin: 0, color: '#6b21a8', fontSize: 13 }}>
-                                3. Learners Activity (35 min)
+                                3. Learners Activity
                               </label>
                               <span style={{ fontSize: 11, color: '#6b21a8', background: '#f3e8ff', padding: '1px 8px', borderRadius: 10, fontWeight: 700 }}>
                                 Guided Tasks / Hands-on Practice
@@ -3112,7 +3186,7 @@ export default function Planning() {
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, flexWrap: 'wrap', gap: 4 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                               <label className="field-label" style={{ fontWeight: 800, margin: 0, color: '#b45309', fontSize: 13 }}>
-                                4. Plenary (10 min)
+                                4. Plenary
                               </label>
                               <span style={{ fontSize: 11, color: '#b45309', background: '#fef3c7', padding: '1px 8px', borderRadius: 10, fontWeight: 700 }}>
                                 Exit Ticket / Lesson Synthesis
@@ -3264,15 +3338,88 @@ export default function Planning() {
 
                     {/* Teacher Reflections & Evaluation */}
                     <div>
-                      <label className="field-label" style={{ fontWeight: 700 }}>Teacher Reflections &amp; Evaluation</label>
-                      <textarea
-                        rows={3}
-                        className="field"
-                        style={{ width: '100%' }}
-                        placeholder="Reflections on lesson success, student understanding, scaffolds or pace adjustments for next session..."
-                        value={selectedLessonPlan.reflection_remarks || ''}
-                        onChange={(e) => setSelectedLessonPlan({ ...selectedLessonPlan, reflection_remarks: e.target.value })}
-                      />
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                        <label className="field-label" style={{ fontWeight: 700, margin: 0 }}>
+                          Teacher Reflections &amp; Evaluation <span style={{ color: '#dc2626' }}>*</span>
+                        </label>
+                        {(() => {
+                          const isPast = isLessonTimeInPast(selectedLessonPlan.lesson_date, selectedLessonPlan.end_time, selectedLessonPlan.start_time)
+                          return (
+                            <span
+                              style={{
+                                fontSize: 11,
+                                fontWeight: 700,
+                                padding: '2px 8px',
+                                borderRadius: 4,
+                                backgroundColor: isPast ? '#dcfce7' : '#fef3c7',
+                                color: isPast ? '#15803d' : '#b45309',
+                                border: isPast ? '1px solid #bbf7d0' : '1px solid #fde68a'
+                              }}
+                            >
+                              {isPast ? '🔓 Unlocked (Lesson Concluded)' : '🔒 Locked until Lesson Concludes'}
+                            </span>
+                          )
+                        })()}
+                      </div>
+
+                      {(() => {
+                        const isPast = isLessonTimeInPast(selectedLessonPlan.lesson_date, selectedLessonPlan.end_time, selectedLessonPlan.start_time)
+                        const hasRemarks = Boolean(selectedLessonPlan.reflection_remarks && selectedLessonPlan.reflection_remarks.trim())
+
+                        if (!isPast) {
+                          return (
+                            <div style={{ background: '#fef3c7', border: '1px solid #fde68a', borderRadius: 6, padding: '8px 12px', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8, color: '#92400e', fontSize: 12 }}>
+                              <span style={{ fontSize: 16 }}>🔒</span>
+                              <span>
+                                <strong>Locked until lesson concludes:</strong> Remarks (Teacher Reflections &amp; Evaluation) cannot be filled before the scheduled lesson time has passed ({selectedLessonPlan.lesson_date}{selectedLessonPlan.end_time ? ` at ${selectedLessonPlan.end_time}` : ''}).
+                              </span>
+                            </div>
+                          )
+                        }
+
+                        if (!hasRemarks) {
+                          return (
+                            <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 6, padding: '8px 12px', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8, color: '#1e40af', fontSize: 12 }}>
+                              <span style={{ fontSize: 16 }}>📝</span>
+                              <span>
+                                <strong>Required for Submission:</strong> The scheduled lesson time has concluded. Please fill your reflections and evaluation below to enable submission for leadership review.
+                              </span>
+                            </div>
+                          )
+                        }
+
+                        return (
+                          <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 6, padding: '6px 12px', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8, color: '#166534', fontSize: 12 }}>
+                            <span style={{ fontSize: 14 }}>✅</span>
+                            <span>Reflections recorded. This plan is eligible for review submission.</span>
+                          </div>
+                        )
+                      })()}
+
+                      {(() => {
+                        const isPast = isLessonTimeInPast(selectedLessonPlan.lesson_date, selectedLessonPlan.end_time, selectedLessonPlan.start_time)
+                        return (
+                          <textarea
+                            rows={3}
+                            className="field"
+                            style={{
+                              width: '100%',
+                              backgroundColor: !isPast ? '#f8fafc' : '#ffffff',
+                              cursor: !isPast ? 'not-allowed' : 'text',
+                              color: !isPast ? '#64748b' : '#0f172a',
+                              borderColor: !isPast ? '#cbd5e1' : undefined
+                            }}
+                            disabled={!isPast}
+                            placeholder={
+                              !isPast
+                                ? 'Locked: Teacher Reflections & Evaluation can only be recorded after the scheduled lesson has concluded...'
+                                : 'Reflections on lesson success, student understanding, scaffolds or pace adjustments for next session (Mandatory before submitting for review)...'
+                            }
+                            value={selectedLessonPlan.reflection_remarks || ''}
+                            onChange={(e) => setSelectedLessonPlan({ ...selectedLessonPlan, reflection_remarks: e.target.value })}
+                          />
+                        )
+                      })()}
                     </div>
                   </div>
                 </div>
@@ -4413,7 +4560,7 @@ export default function Planning() {
                   <div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 }}>
                       <label className="field-label" style={{ fontSize: 11.5, fontWeight: 700, color: '#15803d', margin: 0 }}>
-                        1. Starter (10 min)
+                        1. Starter
                       </label>
                       <AiStageButton
                         stage="starter"
@@ -4438,7 +4585,7 @@ export default function Planning() {
                   <div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 }}>
                       <label className="field-label" style={{ fontSize: 11.5, fontWeight: 700, color: '#0369a1', margin: 0 }}>
-                        2. Exposition (15 min)
+                        2. Exposition
                       </label>
                       <AiStageButton
                         stage="exposition"
@@ -4463,7 +4610,7 @@ export default function Planning() {
                   <div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 }}>
                       <label className="field-label" style={{ fontSize: 11.5, fontWeight: 700, color: '#6b21a8', margin: 0 }}>
-                        3. Learners Activity (35 min)
+                        3. Learners Activity
                       </label>
                       <AiStageButton
                         stage="learnersActivity"
@@ -4488,7 +4635,7 @@ export default function Planning() {
                   <div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 }}>
                       <label className="field-label" style={{ fontSize: 11.5, fontWeight: 700, color: '#b45309', margin: 0 }}>
-                        4. Plenary (10 min)
+                        4. Plenary
                       </label>
                       <AiStageButton
                         stage="plenary"
