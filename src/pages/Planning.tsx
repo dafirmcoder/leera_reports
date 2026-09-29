@@ -1295,7 +1295,7 @@ export default function Planning() {
         main_teaching_activity: combined,
         assessment_ideas: all.assessmentIdeas || selectedLessonPlan.assessment_ideas
       })
-      setSuccess('Generated all teaching stages and assessment ideas with Gemini AI.')
+      setSuccess('Generated all teaching stages and assessment ideas.')
     } catch (err: any) {
       if (err?.message === 'MISSING_API_KEY') {
         setShowGeminiApiKeyModal(true)
@@ -1325,7 +1325,7 @@ export default function Planning() {
       if (all.assessmentIdeas) {
         setCreateLpAssessmentIdeas(all.assessmentIdeas)
       }
-      setSuccess('Generated all teaching stages and assessment ideas with Gemini AI.')
+      setSuccess('Generated all teaching stages and assessment ideas.')
     } catch (err: any) {
       if (err?.message === 'MISSING_API_KEY') {
         setShowGeminiApiKeyModal(true)
