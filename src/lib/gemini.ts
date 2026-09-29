@@ -10,7 +10,7 @@
 const STORAGE_KEY = 'leera_gemini_api_key'
 const FALLBACK_STORAGE_KEY = 'gemini_api_key'
 
-export type InstructionalStage = 'starter' | 'exposition' | 'learnersActivity' | 'plenary'
+export type InstructionalStage = 'starter' | 'exposition' | 'learnersActivity' | 'plenary' | 'assessmentIdeas'
 
 export interface StageDefinition {
   key: InstructionalStage
@@ -48,7 +48,7 @@ export const INSTRUCTIONAL_STAGES: Record<InstructionalStage, StageDefinition> =
     badgeBg: '#e0f2fe',
     textColor: '#0369a1',
     description: 'Direct instruction, concept explanation, key vocabulary, worked examples, teacher modeling.',
-    placeholder: 'e.g. How computers represent data in binary (0,1) — patterns of switches; data measurement — bits, bytes, kilobytes and megabytes, making links to memory size and storage; version control...'
+    placeholder: 'e.g. I demonstrate on the whiteboard: “Computers only read switches as 0 or 1—watch how we combine 8 bits to form a single byte.” I walk through converting 0101 to decimal (5) and prompt the class: “What happens if we flip the last bit?”'
   },
   learnersActivity: {
     key: 'learnersActivity',
@@ -73,6 +73,18 @@ export const INSTRUCTIONAL_STAGES: Record<InstructionalStage, StageDefinition> =
     textColor: '#b45309',
     description: 'Exit ticket, learning review, student self-reflection, preview next session.',
     placeholder: 'e.g. Exit ticket — read one binary pattern, answer one data-size question, and state one benefit of version control; preview Friday’s new unit on networks.'
+  },
+  assessmentIdeas: {
+    key: 'assessmentIdeas',
+    label: 'Assessment Ideas',
+    fullName: 'Assessment Ideas',
+    duration: '',
+    subtitle: 'Formative Checks & Evidence',
+    badgeColor: '#4C2570',
+    badgeBg: '#f3e8ff',
+    textColor: '#4C2570',
+    description: 'At least 2 concrete assessment ideas (formative checks, marked sheets, rubric checks, exit tickets).',
+    placeholder: '• Marked activity sheets checking accuracy of...\n• 2-question exit ticket requiring learners to explain...'
   }
 }
 
@@ -146,6 +158,7 @@ export interface LessonContext {
     exposition?: string
     learnersActivity?: string
     plenary?: string
+    assessmentIdeas?: string
   }
 }
 
@@ -184,7 +197,7 @@ async function callGeminiApi(prompt: string, apiKey: string): Promise<string> {
           ],
           generationConfig: {
             temperature: 0.7,
-            maxOutputTokens: 600
+            maxOutputTokens: 750
           }
         }),
         signal: controller.signal
@@ -239,12 +252,15 @@ function cleanGeneratedText(raw: string): string {
   // Remove markdown code fences if wrapped
   text = text.replace(/^```[a-z]*\s*/i, '').replace(/```\s*$/, '').trim()
 
-  // Remove repeated stage prefixes like "Starter (10 min):", "Starter:", "Exposition Methods:", etc.
-  text = text.replace(/^(?:(?:\d+\.\s*)?(?:Starter(?:\s*Activity)?|Exposition(?:\s*Methods)?|Learners?\s*Activity|Plenary)(?:\s*\([^)]*\))?[:—\-]\s*)/i, '')
+  // Remove repeated stage prefixes like "Starter (10 min):", "Starter:", "Exposition Methods:", "Assessment Ideas:", etc.
+  text = text.replace(/^(?:(?:\d+\.\s*)?(?:Starter(?:\s*Activity)?|Exposition(?:\s*Methods)?|Learners?\s*Activity|Plenary|Assessment\s*Ideas?)(?:\s*\([^)]*\))?[:—\-]\s*)/i, '')
 
   // Remove surrounding quotes if entire string is quoted
   if ((text.startsWith('"') && text.endsWith('"')) || (text.startsWith("'") && text.endsWith("'"))) {
-    text = text.slice(1, -1).trim()
+    const inner = text.slice(1, -1).trim()
+    if (!inner.includes('\n') && !inner.startsWith('"')) {
+      text = inner
+    }
   }
 
   return text.trim()
@@ -260,35 +276,77 @@ function buildStagePrompt(stage: InstructionalStage, context: LessonContext): st
     .filter(Boolean)
     .join('\n- ')
 
-  return `You are a master teacher and curriculum specialist for Cambridge International School education.
-Your task is to write the pedagogical content for ONE instructional stage of a lesson plan:
+  let stageSpecificInstructions = ''
+  if (stage === 'exposition') {
+    stageSpecificInstructions = `CRITICAL STYLE & VOICE REQUIREMENTS FOR EXPOSITION:
+1. ACTIVE TEACHER VOICE: Write in the direct, active voice of the teacher teaching and speaking to the class (e.g., "I gather the class and say: '...'", "I model on the whiteboard...", "I ask the room: '...'").
+2. NO PASSIVE INSTRUCTIONS: Do NOT write passive third-person summaries like "The teacher will explain..." or "Students are introduced to...". It must sound like real classroom delivery.
+3. INCLUDE TEACHER TALK: Provide the actual words the teacher says to the students in quotation marks to explain the core concept simply and memorably.
+4. WHITEBOARD MODELING: Specify the concrete worked example, diagram, formula, or visual steps the teacher draws on the board.
+5. STRICT OBJECTIVE & GRADE ALIGNMENT: Explicitly teach the specific knowledge in the selected objective(s) and use vocabulary calibrated strictly for ${context.className || 'the specified year level'}.
+6. HINGE CHECK: End with a rapid hinge question the teacher asks the class (e.g., "Show me on mini-whiteboards: '...'") before independent work.`
+  } else if (stage === 'starter') {
+    stageSpecificInstructions = `CRITICAL REQUIREMENTS FOR STARTER (10 MIN):
+1. CLASSROOM REALISM: A fast-paced, high-energy 10-minute hook with minimal teacher talk and immediate pupil action.
+2. CONCRETE HOOK: Use a real-world dilemma, a physical prop, an intriguing visual on the board, or a mystery question directly introducing the selected objective.
+3. IMMEDIATE STUDENT ACTION: Prompt students to act within 2 minutes using mini-whiteboards, Think-Pair-Share, or quick sorting cards.
+4. GRADE APPROPRIATE: Calibrated strictly for ${context.className || 'Secondary'} learners.`
+  } else if (stage === 'learnersActivity') {
+    stageSpecificInstructions = `CRITICAL REQUIREMENTS FOR LEARNERS ACTIVITY (35 MIN):
+1. CLASSROOM REALISM: Highly practical, hands-on 35-minute tasks with concrete classroom outputs (differentiated worksheets, stations, paired experiments, or problem cards).
+2. DIRECT CURRICULUM ALIGNMENT: Tasks must directly practice and apply the skills defined in the selected learning objective(s).
+3. EXPLICIT DIFFERENTIATION:
+   - Support: Sentence stems, scaffolded hint cards, or guided templates for learners needing help.
+   - Core: Main collaborative application task or practical investigation meeting the Cambridge objective.
+   - Extension: Higher-order stretch challenge, counter-scenario, or critical analysis for advanced learners.
+4. GRADE LEVEL RELEVANCE: Calibrated strictly for ${context.className || 'Secondary'} learners.`
+  } else if (stage === 'plenary') {
+    stageSpecificInstructions = `CRITICAL REQUIREMENTS FOR PLENARY (10 MIN):
+1. CLASSROOM REALISM: Sharp 10-minute synthesis assessing student mastery against the success criteria and selected objective(s).
+2. CONCRETE ROUTINE: Use a definitive checking method (e.g., Mini-Whiteboard Showdown, 2-question Exit Ticket, or 3-2-1 Countdown).
+3. INQUIRY CLOSURE: Learners state the answer to today's inquiry question, followed by a brief preview connecting to the next lesson.`
+  } else if (stage === 'assessmentIdeas') {
+    stageSpecificInstructions = `CRITICAL REQUIREMENTS FOR ASSESSMENT IDEAS:
+1. AT LEAST 2 TO 3 ASSESSMENT IDEAS: Provide at least 2 distinct, concrete classroom assessment methods (format as bullet points starting with •).
+2. DIRECT OBJECTIVE EVALUATION: Every assessment idea must explicitly measure whether students met the selected learning objective(s).
+3. CONCRETE EVIDENCE ARTIFACTS: Include specific tangible artifacts, such as:
+   - Formative marked task or worksheet (e.g. "• Marked student investigation sheet checking accuracy of...").
+   - Exit ticket / hinge check (e.g. "• 2-question exit ticket requiring learners to explain/calculate...").
+   - Peer evaluation or rubric checklist (e.g. "• Paired rubric check assessing whether...").
+4. GRADE LEVEL RELEVANCE: Fully age-appropriate for ${context.className || 'Secondary'} learners.`
+  }
+
+  return `You are a veteran Cambridge International educator designing realistic, engaging classroom lesson activities.
 
 STAGE TO GENERATE:
-Stage: ${stageDef.fullName} (${stageDef.duration})
-Stage Type: ${stageDef.subtitle}
-Pedagogical Role: ${stageDef.description}
+Stage: ${stageDef.fullName} ${stageDef.duration ? `(${stageDef.duration})` : ''}
+Category: ${stageDef.subtitle}
 
 LESSON CONTEXT:
 - Subject: ${context.subject || 'General'}
-- Class / Grade: ${context.className || 'Secondary'}
+- Class / Grade / Stage: ${context.className || 'Secondary'}
 - Lesson Topic: ${context.topic || 'Inquiry Lesson'}
 ${context.challenge ? `- Lesson Inquiry / Challenge Question: "${context.challenge}"` : ''}
 ${context.subtopic ? `- Subtopic / Key Focus: ${context.subtopic}` : ''}
-${objectivesFormatted ? `- Curriculum Learning Objectives:\n- ${objectivesFormatted}` : ''}
+${objectivesFormatted ? `- MANDATORY CURRICULUM OBJECTIVES TO TEACH & ASSESS:\n- ${objectivesFormatted}` : ''}
 ${context.successCriteria ? `- Success Criteria: ${context.successCriteria}` : ''}
 
-${context.existingStages ? `EXISTING STAGES IN THIS LESSON PLAN (Ensure alignment and smooth lesson flow):
+${context.existingStages ? `EXISTING STAGES IN THIS LESSON PLAN (Ensure seamless pedagogical alignment):
 ${context.existingStages.starter ? `Starter: ${context.existingStages.starter}` : ''}
 ${context.existingStages.exposition ? `Exposition: ${context.existingStages.exposition}` : ''}
 ${context.existingStages.learnersActivity ? `Learners Activity: ${context.existingStages.learnersActivity}` : ''}
 ${context.existingStages.plenary ? `Plenary: ${context.existingStages.plenary}` : ''}
+${context.existingStages.assessmentIdeas ? `Assessment Ideas: ${context.existingStages.assessmentIdeas}` : ''}
 ` : ''}
 
-REQUIREMENTS:
-1. Provide a direct, highly practical, engaging activity description tailored for a 50-60 minute lesson.
-2. Tone: Professional Cambridge teacher lesson plan (active verbs, clear inquiry prompts, concrete student actions).
-3. Format: Return ONLY the activity description (2 to 4 concise sentences or clear bullet points with practical steps).
-4. DO NOT repeat the stage title (e.g. do NOT start with "${stageDef.label}:" or "Here is..."). Output ONLY the activity content.
+MANDATORY RULES:
+- The content MUST be strictly anchored to the selected learning objectives. Do NOT generate generic content.
+- Must be fully age-appropriate and relevant for ${context.className || 'the specified grade level'}.
+${stageSpecificInstructions}
+
+GENERAL CONSTRAINTS:
+- Length: 2 to 4 concise, action-packed sentences packed with concrete classroom reality.
+- Output: Return ONLY the content. Do NOT include headings like "${stageDef.label}:" or "Teacher:".
 `
 }
 
@@ -310,7 +368,7 @@ export async function generateStageContent(
 }
 
 /**
- * Generates all 4 instructional stages at once.
+ * Generates all 4 instructional stages + Assessment Ideas at once.
  */
 export async function generateAllStages(
   context: LessonContext,
@@ -326,27 +384,38 @@ export async function generateAllStages(
     .filter(Boolean)
     .join('\n- ')
 
-  const prompt = `You are a master teacher and curriculum specialist for Cambridge International School education.
-Generate all 4 core instructional stages for the following Cambridge lesson plan:
+  const prompt = `You are a veteran Cambridge International educator designing realistic, highly practical classroom lesson activities.
 
 LESSON CONTEXT:
 - Subject: ${context.subject || 'General'}
-- Class / Grade: ${context.className || 'Secondary'}
+- Class / Grade / Stage: ${context.className || 'Secondary'}
 - Lesson Topic: ${context.topic || 'Inquiry Lesson'}
 ${context.challenge ? `- Lesson Inquiry / Challenge Question: "${context.challenge}"` : ''}
 ${context.subtopic ? `- Subtopic / Key Focus: ${context.subtopic}` : ''}
-${objectivesFormatted ? `- Curriculum Learning Objectives:\n- ${objectivesFormatted}` : ''}
+${objectivesFormatted ? `- MANDATORY CURRICULUM OBJECTIVES TO TEACH & ASSESS:\n- ${objectivesFormatted}` : ''}
 ${context.successCriteria ? `- Success Criteria: ${context.successCriteria}` : ''}
+
+MANDATORY INSTRUCTIONS:
+- Every stage MUST strictly align with and teach the selected learning objectives above.
+- Ensure all language, tasks, cognitive demand, and timing are perfectly calibrated for ${context.className || 'the specified grade level'}.
+
+PEDAGOGICAL & STYLE REQUIREMENTS FOR EACH FIELD:
+1. starter: Practical, high-energy warm-up (10 min). Concrete classroom hook (mini-whiteboard, physical prop or puzzling visual on board, think-pair-share). Fast-paced, low teacher talk, activates prerequisite knowledge.
+2. exposition: Direct instruction & teacher modeling (15 min). CRITICAL: MUST SOUND LIKE THE TEACHER ACTIVELY TEACHING AND SPEAKING TO THE CLASS. Use direct teacher dialogue in quotes (e.g. "Look closely at this...", "Notice that..."), active whiteboard diagram/worked example modeling, explicit vocabulary breakdown, and a rapid hinge check-question to the class before releasing to practice.
+3. learnersActivity: Differentiated hands-on classroom tasks (35 min). Realistic group work, stations, or tiered practice with explicit scaffolding: Support (scaffolded sentence frames/hints), Core (hands-on investigation/worksheet meeting Cambridge objective), and Extension (critical analysis/stretch challenge).
+4. plenary: Sharp lesson synthesis & exit ticket (10 min). Concrete classroom check (mini-whiteboard showdown, 2-question exit ticket, or 3-2-1 summary) evaluating achievement against the lesson objective.
+5. assessmentIdeas: At least 2 to 3 distinct, concrete classroom assessment methods (format with bullet points: • ...). Must directly evaluate student mastery of the selected learning objective (e.g. marked sheet, exit ticket, paired rubric).
 
 Output must be in JSON format matching exactly this schema:
 {
-  "starter": "Inquiry hook / warm-up (10 min) - engaging demo, prior knowledge recap, or starter question.",
-  "exposition": "Direct instruction / teacher modeling (15 min) - concept explanation, key vocabulary, worked examples.",
-  "learnersActivity": "Differentiated guided practice (35 min) - hands-on tasks, stations, or collaborative inquiry.",
-  "plenary": "Exit ticket / synthesis (10 min) - reflection against objectives, formative check, next session preview."
+  "starter": "string (2 to 4 concise sentences)",
+  "exposition": "string (2 to 4 concise sentences with direct teacher speech and whiteboard modeling)",
+  "learnersActivity": "string (2 to 4 concise sentences with Support, Core, Extension differentiation)",
+  "plenary": "string (2 to 4 concise sentences with concrete exit check)",
+  "assessmentIdeas": "• Assessment idea 1...\\n• Assessment idea 2..."
 }
 
-Do NOT wrap with markdown other than \`\`\`json. Return only the valid JSON object. Each value should be 2 to 4 concise sentences.
+Do NOT wrap with markdown other than \`\`\`json. Return only the valid JSON object.
 `
 
   const rawJson = await callGeminiApi(prompt, apiKey)
@@ -361,16 +430,18 @@ Do NOT wrap with markdown other than \`\`\`json. Return only the valid JSON obje
       starter: cleanGeneratedText(parsed.starter || ''),
       exposition: cleanGeneratedText(parsed.exposition || ''),
       learnersActivity: cleanGeneratedText(parsed.learnersActivity || parsed.learners || ''),
-      plenary: cleanGeneratedText(parsed.plenary || '')
+      plenary: cleanGeneratedText(parsed.plenary || ''),
+      assessmentIdeas: cleanGeneratedText(parsed.assessmentIdeas || parsed.assessment_ideas || '')
     }
   } catch {
     // If JSON parsing fails, generate each stage individually
-    const [starter, exposition, learnersActivity, plenary] = await Promise.all([
+    const [starter, exposition, learnersActivity, plenary, assessmentIdeas] = await Promise.all([
       generateStageContent('starter', context, apiKey),
       generateStageContent('exposition', context, apiKey),
       generateStageContent('learnersActivity', context, apiKey),
-      generateStageContent('plenary', context, apiKey)
+      generateStageContent('plenary', context, apiKey),
+      generateStageContent('assessmentIdeas', context, apiKey)
     ])
-    return { starter, exposition, learnersActivity, plenary }
+    return { starter, exposition, learnersActivity, plenary, assessmentIdeas }
   }
 }

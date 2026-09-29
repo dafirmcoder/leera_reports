@@ -407,22 +407,22 @@ function renderSingleLessonPlanPage(doc: jsPDF, plan: LessonPlan, school: School
   doc.restoreGraphicsState()
 
   // 4. CONTEXT & METADATA SECTION TABLE
-  let curY = 102.6
-  const row1H = 15.7
-  const row2H = 28.7
-  const row3H = 42.5
-  const totalContextH = row1H + row2H + row3H
+  let curY = 101.5
+  const row1H = 13.5
+  const row2H = 18.0
+  const row3H = 26.5
+  const totalContextH = row1H + row2H + row3H // 58.0 pt
 
   // Outer container box with dotted border - no internal grid lines
   drawDottedBox(doc, leftM, curY, contentW, totalContextH)
 
   doc.setFont('helvetica', 'bold')
-  doc.setFontSize(9.96)
+  doc.setFontSize(8.5)
   doc.setTextColor(0, 0, 0)
-  doc.text(`TEACHER: ${(plan.teacher_name || 'Teacher').toUpperCase()}`, leftM + 5.1, curY + 11)
-  doc.text(`CLASS: ${(plan.class_name || 'Class').toUpperCase()}`, leftM + 248.4 + 5.5, curY + 11)
+  doc.text(`TEACHER: ${(plan.teacher_name || 'Teacher').toUpperCase()}`, leftM + 5.1, curY + 9.5)
+  doc.text(`CLASS: ${(plan.class_name || 'Class').toUpperCase()}`, leftM + 248.4 + 5.5, curY + 9.5)
 
-  doc.text(`SUBJECT: ${(plan.subject_name || 'Subject').toUpperCase()}`, leftM + 5.1, curY + row1H + 17.5)
+  doc.text(`SUBJECT: ${(plan.subject_name || 'Subject').toUpperCase()}`, leftM + 5.1, curY + row1H + 11.5)
 
   const dateFormatted = formatLessonPlanDate(plan.lesson_date)
   const timeFormatted = plan.start_time && plan.end_time
@@ -432,10 +432,10 @@ function renderSingleLessonPlanPage(doc: jsPDF, plan: LessonPlan, school: School
   const dateFullStr = `DATE: ${dateFormatted} ${periodOrTime}`.trim()
   const dateLines = doc.splitTextToSize(dateFullStr, 248.4 - 11)
   if (dateLines.length > 1) {
-    doc.text(dateLines[0], leftM + 248.4 + 5.5, curY + row1H + 11)
-    doc.text(dateLines[1], leftM + 248.4 + 5.5, curY + row1H + 24.5)
+    doc.text(dateLines[0], leftM + 248.4 + 5.5, curY + row1H + 7.5)
+    doc.text(dateLines[1], leftM + 248.4 + 5.5, curY + row1H + 16.0)
   } else {
-    doc.text(dateFullStr, leftM + 248.4 + 5.5, curY + row1H + 17.5)
+    doc.text(dateFullStr, leftM + 248.4 + 5.5, curY + row1H + 11.5)
   }
 
   const row3Top = curY + row1H + row2H
@@ -447,24 +447,24 @@ function renderSingleLessonPlanPage(doc: jsPDF, plan: LessonPlan, school: School
 
   const unitFullStr = `UNIT/SUB-UNIT: ${unitBody}`
   const unitLines = doc.splitTextToSize(unitFullStr, 248.4 - 10.2)
-  for (let u = 0; u < Math.min(unitLines.length, 3); u++) {
-    doc.text(unitLines[u], leftM + 5.1, row3Top + 12 + u * 13)
+  for (let u = 0; u < Math.min(unitLines.length, 2); u++) {
+    doc.text(unitLines[u], leftM + 5.1, row3Top + 9.5 + u * 10.5)
   }
 
-  doc.text('ATTENDANCE:', leftM + 248.4 + 5.5, row3Top + 25)
+  doc.text('ATTENDANCE:', leftM + 248.4 + 5.5, row3Top + 16)
   const boysStr = plan.boys_attendance != null ? ` ${plan.boys_attendance}` : ''
   const girlsStr = plan.girls_attendance != null ? ` ${plan.girls_attendance}` : ''
-  doc.text(`BOYS:${boysStr}`, leftM + 248.4 + 82.8 + 5.5, row3Top + 11.5)
-  doc.text(`GIRLS:${girlsStr}`, leftM + 248.4 + 82.8 + 5.5, row3Top + 29.5)
+  doc.text(`BOYS:${boysStr}`, leftM + 248.4 + 82.8 + 5.5, row3Top + 9.5)
+  doc.text(`GIRLS:${girlsStr}`, leftM + 248.4 + 82.8 + 5.5, row3Top + 20.0)
 
-  curY += totalContextH + 9.5
+  curY += totalContextH + 5.0
 
   // 5. RESOURCES SECTION
   doc.setFont('helvetica', 'bold')
-  doc.setFontSize(9.96)
+  doc.setFontSize(8.5)
   doc.setTextColor(...BRAND_PURPLE)
-  doc.text('RESOURCES', leftM, curY)
-  curY += 5.4
+  doc.text('RESOURCES', leftM, curY + 6.5)
+  curY += 9.0
 
   let userResources: string[] = []
   if (plan.resources && plan.resources.trim()) {
@@ -483,31 +483,30 @@ function renderSingleLessonPlanPage(doc: jsPDF, plan: LessonPlan, school: School
     resColRight.push(userResources[i * 2 + 1] || defaultRight[i])
   }
 
-  const resRowH = 15.4
-  const totalResH = 3 * resRowH
-  // Single outer box for resources - no internal cell grid lines
+  const resRowH = 11.0
+  const totalResH = 3 * resRowH // 33.0 pt
   drawDottedBox(doc, leftM, curY, contentW, totalResH)
 
   doc.setFont('helvetica', 'normal')
-  doc.setFontSize(9.96)
+  doc.setFontSize(8.0)
   doc.setTextColor(0, 0, 0)
 
   for (let r = 0; r < 3; r++) {
-    const textY = curY + 11 + r * resRowH
+    const textY = curY + 8.5 + r * resRowH
     doc.text(`• ${resColLeft[r].replace(/^•\s*/, '')}`, leftM + 5.1, textY)
     doc.text(`• ${resColRight[r].replace(/^•\s*/, '')}`, leftM + 248.4 + 5.5, textY)
   }
 
-  curY += totalResH + 9.5
+  curY += totalResH + 5.0
 
   // 6. LEARNING OBJECTIVES SECTION
   doc.setFont('helvetica', 'bold')
-  doc.setFontSize(9.96)
+  doc.setFontSize(8.5)
   doc.setTextColor(...BRAND_PURPLE)
-  doc.text('LEARNING OBJECTIVES', leftM, curY)
-  curY += 5.4
+  doc.text('LEARNING OBJECTIVES', leftM, curY + 6.5)
+  curY += 9.0
 
-  const loIntroH = 15.4
+  const loIntroH = 11.0
   const objectives = plan.objectives || []
   const loList: string[] = []
   if (objectives.length > 0) {
@@ -519,138 +518,163 @@ function renderSingleLessonPlanPage(doc: jsPDF, plan: LessonPlan, school: School
     loList.push('• General curriculum learning objectives and skills for this lesson.')
   }
 
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(8.0)
   const loItemWraps = loList.map(loText => {
     const wrapped = doc.splitTextToSize(loText, contentW - 10.2)
-    const h = Math.max(15.4, wrapped.length * 13.4 + 2)
+    const h = wrapped.length * 9.6 + 1.5
     return { wrapped, h }
   })
 
-  const totalLoH = loIntroH + loItemWraps.reduce((sum, item) => sum + item.h, 0)
-  // Single outer box for learning objectives - no internal grid lines
+  const totalLoH = loIntroH + loItemWraps.reduce((sum, item) => sum + item.h, 0) + 2.0
   drawDottedBox(doc, leftM, curY, contentW, totalLoH)
 
   doc.setFont('helvetica', 'normal')
-  doc.setFontSize(9.96)
+  doc.setFontSize(8.0)
   doc.setTextColor(0, 0, 0)
-  doc.text('By the end of this lesson, learners should be able to:', leftM + 5.1, curY + 11)
+  doc.text('By the end of this lesson, learners should be able to:', leftM + 5.1, curY + 8.5)
 
   let loY = curY + loIntroH
   for (const item of loItemWraps) {
     for (let l = 0; l < item.wrapped.length; l++) {
-      doc.text(item.wrapped[l], leftM + 5.1, loY + 11 + l * 13.4)
+      doc.text(item.wrapped[l], leftM + 5.1, loY + 8.0 + l * 9.6)
     }
     loY += item.h
   }
 
-  curY += totalLoH + 9.5
+  curY += totalLoH + 5.0
 
   // 7. MAIN TEACHING ACTIVITIES & INQUIRY SECTION (Always 4 stages: Starter, Exposition, Learners Activity, Plenary)
   doc.setFont('helvetica', 'bold')
-  doc.setFontSize(9.96)
+  doc.setFontSize(8.5)
   doc.setTextColor(...BRAND_PURPLE)
-  doc.text('MAIN TEACHING ACTIVITIES & INQUIRY', leftM, curY)
-  curY += 5.4
+  doc.text('MAIN TEACHING ACTIVITIES & INQUIRY', leftM, curY + 6.5)
+  curY += 9.0
 
   const activities = parseMainTeachingActivities(plan.main_teaching_activity)
   const preparedStages = activities.map(act => {
-    const titleW = doc.getTextWidth(act.title) + 5
-    const maxFirstLineW = contentW - 13.3 - titleW - 5.1
-    const firstLineWords = doc.splitTextToSize(act.text, maxFirstLineW)
-    const firstLine = firstLineWords[0] || ''
-    const remainingText = act.text.slice(firstLine.length).trim()
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(8.0)
+    const titleW = doc.getTextWidth(act.title) + 4.0
+
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(8.0)
+    const firstLineAvailW = contentW - 13.3 - titleW - 5.1
+
+    // Split words to place the first chunk inline with the bold title
+    const allWords = act.text.replace(/\r\n/g, '\n').split(/\s+/).filter(Boolean)
+    let firstLine = ''
+    let wordIdx = 0
+    while (wordIdx < allWords.length) {
+      const candidate = firstLine ? `${firstLine} ${allWords[wordIdx]}` : allWords[wordIdx]
+      if (doc.getTextWidth(candidate) <= firstLineAvailW) {
+        firstLine = candidate
+        wordIdx++
+      } else {
+        break
+      }
+    }
+    const remainingText = allWords.slice(wordIdx).join(' ')
     const restLines = remainingText ? doc.splitTextToSize(remainingText, contentW - 18.4) : []
-    const totalLines = 1 + restLines.length
-    const actH = Math.max(28.7, totalLines * 13.4 + 2)
+    const totalLines = (firstLine ? 1 : 0) + restLines.length
+    const actH = Math.max(14.0, totalLines * 9.6 + 3.0)
     return { act, titleW, firstLine, restLines, actH }
   })
 
-  const totalActH = preparedStages.reduce((sum, s) => sum + s.actH, 0)
-  // Single outer box for all main teaching activities - no internal grid lines
+  const totalActH = preparedStages.reduce((sum, s) => sum + s.actH, 0) + 2.0
   drawDottedBox(doc, leftM, curY, contentW, totalActH)
 
-  let stageY = curY
+  let stageY = curY + 2.0
   for (const s of preparedStages) {
     doc.setFont('helvetica', 'normal')
-    doc.setFontSize(9.96)
+    doc.setFontSize(8.0)
     doc.setTextColor(0, 0, 0)
-    doc.text('•', leftM + 5.1, stageY + 11)
+    doc.text('•', leftM + 5.1, stageY + 8.5)
 
     doc.setFont('helvetica', 'bold')
     doc.setTextColor(...BRAND_PURPLE)
-    doc.text(s.act.title, leftM + 13.3, stageY + 11)
+    doc.text(s.act.title, leftM + 13.3, stageY + 8.5)
 
     doc.setFont('helvetica', 'normal')
     doc.setTextColor(0, 0, 0)
-    doc.text(s.firstLine, leftM + 13.3 + s.titleW, stageY + 11)
+    if (s.firstLine) {
+      doc.text(s.firstLine, leftM + 13.3 + s.titleW, stageY + 8.5)
+    }
 
     for (let l = 0; l < s.restLines.length; l++) {
-      doc.text(s.restLines[l], leftM + 13.3, stageY + 11 + (l + 1) * 13.4)
+      doc.text(s.restLines[l], leftM + 13.3, stageY + 8.5 + (l + 1) * 9.6)
     }
 
     stageY += s.actH
   }
 
-  curY += totalActH + 9.5
+  curY += totalActH + 5.0
 
   // 8. ASSESSMENT IDEAS SECTION
   doc.setFont('helvetica', 'bold')
-  doc.setFontSize(9.96)
+  doc.setFontSize(8.5)
   doc.setTextColor(...BRAND_PURPLE)
-  doc.text('ASSESMENT IDEAS', leftM, curY)
-  curY += 5.4
+  doc.text('ASSESMENT IDEAS', leftM, curY + 6.5)
+  curY += 9.0
 
   let assessItems: string[] = []
   if (plan.assessment_ideas && plan.assessment_ideas.trim()) {
     assessItems = plan.assessment_ideas
       .split(/\n|•|;/)
-      .map(a => a.trim())
+      .map(a => a.trim().replace(/^[-—•:\s.]+/, '').trim())
       .filter(a => a.length > 0)
   }
   if (assessItems.length === 0) {
     assessItems = [
-      'Marked binary counting-card activity sheet.',
-      'Completed data-size ladder and file-matching sheet.',
-      'Version-history navigation checklist.',
+      'Marked activity sheets and binary counting cards.',
+      'Completed data-size ladder and file-matching exercise.',
       'Exit ticket checked and recorded.'
     ]
   }
 
-  const assessH = Math.max(50, assessItems.length * 15.4 + 0.6)
-  // Single outer box for assessment ideas - no internal grid lines
-  drawDottedBox(doc, leftM, curY, contentW, assessH)
   doc.setFont('helvetica', 'normal')
-  doc.setFontSize(9.96)
-  doc.setTextColor(0, 0, 0)
+  doc.setFontSize(8.0)
+  const wrappedAssessItems = assessItems.map(item => {
+    const lines = doc.splitTextToSize(`• ${item}`, contentW - 10.2)
+    const h = lines.length * 9.6 + 1.5
+    return { lines, h }
+  })
+  const totalAssessH = Math.max(22.0, wrappedAssessItems.reduce((sum, it) => sum + it.h, 0) + 2.0)
+  drawDottedBox(doc, leftM, curY, contentW, totalAssessH)
 
-  for (let a = 0; a < assessItems.length; a++) {
-    doc.text(`• ${assessItems[a].replace(/^•\s*/, '')}`, leftM + 5.1, curY + 11 + a * 15.4)
+  let aY = curY + 8.5
+  for (const it of wrappedAssessItems) {
+    for (let l = 0; l < it.lines.length; l++) {
+      doc.text(it.lines[l], leftM + 5.1, aY)
+      aY += 9.6
+    }
   }
 
-  curY += assessH + 9.5
+  curY += totalAssessH + 5.0
 
   // 9. NOTES/REMARKS SECTION
   doc.setFont('helvetica', 'bold')
-  doc.setFontSize(9.96)
+  doc.setFontSize(8.5)
   doc.setTextColor(...BRAND_PURPLE)
-  doc.text('NOTES/REMARKS', leftM, curY)
-  curY += 5.4
+  doc.text('NOTES/REMARKS', leftM, curY + 6.5)
+  curY += 9.0
 
-  const footerTop = pageH - 56.6 // 735.4
-  const notesH = Math.max(24.1, Math.min(40, footerTop - curY - 10))
-  // Single outer box for notes - no internal grid lines
-  drawDottedBox(doc, leftM, curY, contentW, notesH)
+  const footerTop = 750.0
+  const maxNotesH = Math.max(16.0, footerTop - curY - 5.0)
+  drawDottedBox(doc, leftM, curY, contentW, maxNotesH)
   if (plan.reflection_remarks) {
     doc.setFont('helvetica', 'normal')
-    doc.setFontSize(9.96)
+    doc.setFontSize(7.8)
     doc.setTextColor(0, 0, 0)
     const remarksWrapped = doc.splitTextToSize(plan.reflection_remarks, contentW - 10.2)
-    for (let r = 0; r < remarksWrapped.length; r++) {
-      doc.text(remarksWrapped[r], leftM + 5.1, curY + 11 + r * 13.4)
+    const maxRemarksLines = Math.floor((maxNotesH - 6.0) / 9.2)
+    for (let r = 0; r < Math.min(remarksWrapped.length, maxRemarksLines); r++) {
+      doc.text(remarksWrapped[r], leftM + 5.1, curY + 8.0 + r * 9.2)
     }
   }
 
   // 10. BOTTOM BRAND GREEN FOOTER BAR
-  const footerH = 20.7
+  const footerH = 20.0
   doc.setFillColor(...FOOTER_LIME)
   doc.rect(0, footerTop, pageW, footerH, 'F')
 
@@ -658,7 +682,7 @@ function renderSingleLessonPlanPage(doc: jsPDF, plan: LessonPlan, school: School
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(8)
   doc.setTextColor(255, 255, 255)
-  doc.text(`© ${school.name.toUpperCase()} - ${year}`, pageW / 2, footerTop + 13.1, { align: 'center' })
+  doc.text(`© ${school.name.toUpperCase()} - ${year}`, pageW / 2, footerTop + 13.0, { align: 'center' })
 }
 
 /**

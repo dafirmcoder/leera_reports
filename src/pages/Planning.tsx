@@ -354,6 +354,7 @@ export default function Planning() {
   const [createLpExposition, setCreateLpExposition] = useState('')
   const [createLpLearners, setCreateLpLearners] = useState('')
   const [createLpPlenary, setCreateLpPlenary] = useState('')
+  const [createLpAssessmentIdeas, setCreateLpAssessmentIdeas] = useState('')
   const [showGeminiApiKeyModal, setShowGeminiApiKeyModal] = useState(false)
   const [generatingAllStages, setGeneratingAllStages] = useState(false)
 
@@ -1074,6 +1075,7 @@ export default function Planning() {
         const learnersActivity = createLpLearners || (form.get('activity_learners') as string) || ''
         const plenary = createLpPlenary || (form.get('activity_plenary') as string) || ''
         const combinedActivity = formatActivityStages({ starter, exposition, learnersActivity, plenary }) || (form.get('main_teaching_activity') as string) || ''
+        const assessmentIdeas = createLpAssessmentIdeas || (form.get('assessment_ideas') as string) || ''
 
         const id = await api.createLessonPlan({
           class_id: classId,
@@ -1084,7 +1086,7 @@ export default function Planning() {
           topic_title: topicTitle.trim(),
           challenge_title: challengeTitle.trim() || '',
           main_teaching_activity: combinedActivity,
-          assessment_ideas: (form.get('assessment_ideas') as string) || '',
+          assessment_ideas: assessmentIdeas,
           resources: (form.get('resources') as string) || '',
           objectives: chosenObjectives
         })
@@ -1096,6 +1098,7 @@ export default function Planning() {
       setCreateLpExposition('')
       setCreateLpLearners('')
       setCreateLpPlenary('')
+      setCreateLpAssessmentIdeas('')
       setSuccess('Lesson Plan created successfully with attached uncovered objectives.')
       await handleSelectLessonPlan(id)
       await loadAllPlanningData()
@@ -1138,7 +1141,8 @@ export default function Planning() {
         starter: currentStages.starter,
         exposition: currentStages.exposition,
         learnersActivity: currentStages.learnersActivity,
-        plenary: currentStages.plenary
+        plenary: currentStages.plenary,
+        assessmentIdeas: selectedLessonPlan?.assessment_ideas || ''
       }
     }
   }
@@ -1164,12 +1168,13 @@ export default function Planning() {
         starter: createLpStarter,
         exposition: createLpExposition,
         learnersActivity: createLpLearners,
-        plenary: createLpPlenary
+        plenary: createLpPlenary,
+        assessmentIdeas: createLpAssessmentIdeas
       }
     }
   }
 
-  // Generate all 4 instructional stages for the selected lesson plan
+  // Generate all 4 instructional stages and assessment ideas for the selected lesson plan
   const handleGenerateAllForSelectedLp = async () => {
     if (!hasGeminiApiKey()) {
       setShowGeminiApiKeyModal(true)
@@ -1187,8 +1192,12 @@ export default function Planning() {
         learnersActivity: all.learnersActivity,
         plenary: all.plenary
       })
-      setSelectedLessonPlan({ ...selectedLessonPlan, main_teaching_activity: combined })
-      setSuccess('Generated all 4 teaching stages with Gemini AI.')
+      setSelectedLessonPlan({
+        ...selectedLessonPlan,
+        main_teaching_activity: combined,
+        assessment_ideas: all.assessmentIdeas || selectedLessonPlan.assessment_ideas
+      })
+      setSuccess('Generated all teaching stages and assessment ideas with Gemini AI.')
     } catch (err: any) {
       if (err?.message === 'MISSING_API_KEY') {
         setShowGeminiApiKeyModal(true)
@@ -1200,7 +1209,7 @@ export default function Planning() {
     }
   }
 
-  // Generate all 4 instructional stages for the new lesson plan modal
+  // Generate all 4 instructional stages and assessment ideas for the new lesson plan modal
   const handleGenerateAllForCreateLp = async () => {
     if (!hasGeminiApiKey()) {
       setShowGeminiApiKeyModal(true)
@@ -1215,7 +1224,10 @@ export default function Planning() {
       setCreateLpExposition(all.exposition)
       setCreateLpLearners(all.learnersActivity)
       setCreateLpPlenary(all.plenary)
-      setSuccess('Generated all 4 teaching stages with Gemini AI.')
+      if (all.assessmentIdeas) {
+        setCreateLpAssessmentIdeas(all.assessmentIdeas)
+      }
+      setSuccess('Generated all teaching stages and assessment ideas with Gemini AI.')
     } catch (err: any) {
       if (err?.message === 'MISSING_API_KEY') {
         setShowGeminiApiKeyModal(true)
@@ -2909,7 +2921,7 @@ export default function Planning() {
                             rows={3}
                             className="field"
                             style={{ width: '100%', backgroundColor: '#ffffff', lineHeight: 1.45 }}
-                            placeholder="e.g. How computers represent data in binary (0,1) — patterns of switches; data measurement — bits, bytes, kilobytes and megabytes, making links to memory size and storage; version control..."
+                            placeholder="e.g. I demonstrate on the whiteboard: “Computers only read switches as 0 or 1—watch how we combine 8 bits to form a single byte.” I walk through converting 0101 to decimal (5) and prompt the class: “What happens if we flip the last bit?”"
                             value={stages.exposition}
                             onChange={(e) => updateStage('exposition', e.target.value)}
                           />
@@ -2981,13 +2993,22 @@ export default function Planning() {
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 16 }}>
                   {/* Assessment Ideas */}
                   <div style={{ border: '1.5px solid #cbd5e1', borderRadius: 8, padding: 16, backgroundColor: '#ffffff', boxShadow: '0 1px 3px rgba(15, 23, 42, 0.05)' }}>
-                    <div style={{ marginBottom: 8 }}>
-                      <label className="field-label" style={{ fontSize: 14, color: '#4C2570', fontWeight: 800, margin: 0, textTransform: 'uppercase' }}>
-                        Assessment Ideas
-                      </label>
-                      <span style={{ fontSize: 11.5, color: '#64748b', display: 'block', marginTop: 2 }}>
-                        Formative checks, marked sheets, observation rubrics, exit tickets
-                      </span>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, flexWrap: 'wrap', gap: 6 }}>
+                      <div>
+                        <label className="field-label" style={{ fontSize: 14, color: '#4C2570', fontWeight: 800, margin: 0, textTransform: 'uppercase' }}>
+                          Assessment Ideas
+                        </label>
+                        <span style={{ fontSize: 11.5, color: '#64748b', display: 'block', marginTop: 2 }}>
+                          Formative checks, marked sheets, observation rubrics, exit tickets
+                        </span>
+                      </div>
+                      <AiStageButton
+                        stage="assessmentIdeas"
+                        onGenerated={(text) => setSelectedLessonPlan({ ...selectedLessonPlan, assessment_ideas: text })}
+                        getContext={getContextForSelectedLp}
+                        onPromptApiKey={() => setShowGeminiApiKeyModal(true)}
+                        onError={(msg) => setError(msg)}
+                      />
                     </div>
                     <textarea
                       rows={4}
@@ -4312,6 +4333,37 @@ export default function Planning() {
                     />
                   </div>
                 </div>
+              </div>
+
+              {/* Assessment Ideas (with AI stage generation) */}
+              <div style={{ border: '1.5px solid #cbd5e1', borderRadius: 8, padding: 12, backgroundColor: '#ffffff', marginTop: 10 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, flexWrap: 'wrap', gap: 6 }}>
+                  <div>
+                    <label className="field-label" style={{ fontSize: 12, color: '#4C2570', fontWeight: 800, margin: 0, textTransform: 'uppercase' }}>
+                      Assessment Ideas
+                    </label>
+                    <span style={{ fontSize: 11, color: '#64748b', display: 'block' }}>
+                      Formative checks, marked sheets, rubrics, exit tickets
+                    </span>
+                  </div>
+                  <AiStageButton
+                    stage="assessmentIdeas"
+                    onGenerated={(val) => setCreateLpAssessmentIdeas(val)}
+                    getContext={getContextForCreateLp}
+                    onPromptApiKey={() => setShowGeminiApiKeyModal(true)}
+                    compact
+                    onError={(msg) => setError(msg)}
+                  />
+                </div>
+                <textarea
+                  name="assessment_ideas"
+                  rows={2}
+                  className="field"
+                  style={{ width: '100%', fontSize: 12, backgroundColor: '#ffffff' }}
+                  placeholder="• Formative task/sheet...&#10;• Exit ticket checked and recorded."
+                  value={createLpAssessmentIdeas}
+                  onChange={(e) => setCreateLpAssessmentIdeas(e.target.value)}
+                />
               </div>
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 10 }}>
