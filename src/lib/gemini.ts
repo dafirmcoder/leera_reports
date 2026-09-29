@@ -149,7 +149,14 @@ export interface LessonContext {
   }
 }
 
-const CANDIDATE_MODELS = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-2.5-flash']
+const CANDIDATE_MODELS = [
+  'gemini-flash-lite-latest',
+  'gemini-3.5-flash-lite',
+  'gemini-3.1-flash-lite',
+  'gemini-3.5-flash',
+  'gemini-flash-latest',
+  'gemini-3.8-flash'
+]
 
 /**
  * Calls Gemini REST API using preferred models with fallback.
@@ -189,14 +196,14 @@ async function callGeminiApi(prompt: string, apiKey: string): Promise<string> {
         const errorData = await response.json().catch(() => null)
         const errMsg = errorData?.error?.message || `HTTP ${response.status} ${response.statusText}`
 
-        // If model not found (404), continue to fallback model
-        if (response.status === 404) {
-          lastError = new Error(`Model ${model} not available: ${errMsg}`)
+        // If model not found (404), high demand spike (503), or rate limited (429), try next fallback model
+        if (response.status === 404 || response.status === 503 || response.status === 429) {
+          lastError = new Error(`Model ${model} (${response.status}): ${errMsg}`)
           continue
         }
 
-        // If auth or quota error, throw immediately with informative message
-        if (response.status === 400 || response.status === 403) {
+        // If auth error, throw immediately with clear message
+        if (response.status === 400 || response.status === 401 || response.status === 403) {
           throw new Error(`Gemini API Error: ${errMsg}`)
         }
 
@@ -344,7 +351,12 @@ Do NOT wrap with markdown other than \`\`\`json. Return only the valid JSON obje
 
   const rawJson = await callGeminiApi(prompt, apiKey)
   try {
-    const parsed = JSON.parse(rawJson)
+    let jsonStr = rawJson.trim()
+    const jsonMatch = jsonStr.match(/\{[\s\S]*\}/)
+    if (jsonMatch) {
+      jsonStr = jsonMatch[0]
+    }
+    const parsed = JSON.parse(jsonStr)
     return {
       starter: cleanGeneratedText(parsed.starter || ''),
       exposition: cleanGeneratedText(parsed.exposition || ''),
