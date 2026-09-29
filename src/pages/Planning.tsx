@@ -2811,7 +2811,7 @@ export default function Planning() {
                         Resources &amp; Differentiation
                       </label>
                       <span style={{ fontSize: 11.5, color: '#64748b', display: 'block', marginTop: 2 }}>
-                        Formatted into two columns in PDF (Lesson Notes, Projector, Learner's Book, Whiteboard)
+                        Indicate any special resources, scaffolds, or differentiation strategies for learners
                       </span>
                     </div>
                     <textarea
