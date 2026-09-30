@@ -88,8 +88,10 @@ export const INSTRUCTIONAL_STAGES: Record<InstructionalStage, StageDefinition> =
   }
 }
 
+export const DEFAULT_GEMINI_API_KEY = 'AQ.Ab8RN6KN4Ep78gte0_Jqp7vVfl3Fzjv5NkajGAZ-KHjaN1oRkw'
+
 /**
- * Retrieves the Gemini API key from environment variables or localStorage.
+ * Retrieves the Gemini API key from environment variables, localStorage, or built-in default key.
  */
 export function getGeminiApiKey(): string {
   const envKey = (import.meta as any).env?.VITE_GEMINI_API_KEY || ''
@@ -106,7 +108,7 @@ export function getGeminiApiKey(): string {
     // Ignore localStorage access restrictions
   }
 
-  return ''
+  return DEFAULT_GEMINI_API_KEY
 }
 
 /**
@@ -167,6 +169,7 @@ const CANDIDATE_MODELS = [
   'gemini-3.5-flash-lite',
   'gemini-3.1-flash-lite',
   'gemini-3.5-flash',
+  'gemini-3-flash-preview',
   'gemini-flash-latest',
   'gemini-3.8-flash'
 ]

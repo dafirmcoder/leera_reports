@@ -10,7 +10,7 @@ interface AiStageButtonProps {
   stage: InstructionalStage
   onGenerated: (text: string) => void
   getContext: () => LessonContext
-  onPromptApiKey: () => void
+  onPromptApiKey?: () => void
   compact?: boolean
   onError?: (msg: string) => void
 }
@@ -30,7 +30,7 @@ export const AiStageButton: React.FC<AiStageButtonProps> = ({
     e.stopPropagation()
 
     if (!hasGeminiApiKey()) {
-      onPromptApiKey()
+      onPromptApiKey?.()
       return
     }
 
@@ -41,7 +41,7 @@ export const AiStageButton: React.FC<AiStageButtonProps> = ({
       onGenerated(generated)
     } catch (err: any) {
       if (err?.message === 'MISSING_API_KEY') {
-        onPromptApiKey()
+        onPromptApiKey?.()
       } else {
         const message = err?.message || 'Failed to generate stage activity with Gemini AI.'
         if (onError) {

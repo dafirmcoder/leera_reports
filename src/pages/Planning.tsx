@@ -1397,10 +1397,6 @@ export default function Planning() {
 
   // Generate all 4 instructional stages and assessment ideas for the selected lesson plan
   const handleGenerateAllForSelectedLp = async () => {
-    if (!hasGeminiApiKey()) {
-      setShowGeminiApiKeyModal(true)
-      return
-    }
     if (!selectedLessonPlan) return
 
     try {
@@ -1420,11 +1416,7 @@ export default function Planning() {
       })
       setSuccess('Generated all teaching stages and assessment ideas.')
     } catch (err: any) {
-      if (err?.message === 'MISSING_API_KEY') {
-        setShowGeminiApiKeyModal(true)
-      } else {
-        setError(err?.message || 'Failed to generate teaching stages.')
-      }
+      setError(err?.message || 'Failed to generate teaching stages.')
     } finally {
       setGeneratingAllStages(false)
     }
@@ -1432,11 +1424,6 @@ export default function Planning() {
 
   // Generate all 4 instructional stages and assessment ideas for the new lesson plan modal
   const handleGenerateAllForCreateLp = async () => {
-    if (!hasGeminiApiKey()) {
-      setShowGeminiApiKeyModal(true)
-      return
-    }
-
     try {
       setGeneratingAllStages(true)
       const context = getContextForCreateLp()
@@ -1450,11 +1437,7 @@ export default function Planning() {
       }
       setSuccess('Generated all teaching stages and assessment ideas.')
     } catch (err: any) {
-      if (err?.message === 'MISSING_API_KEY') {
-        setShowGeminiApiKeyModal(true)
-      } else {
-        setError(err?.message || 'Failed to generate teaching stages.')
-      }
+      setError(err?.message || 'Failed to generate teaching stages.')
     } finally {
       setGeneratingAllStages(false)
     }
@@ -3140,15 +3123,6 @@ export default function Planning() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <button
                         type="button"
-                        className="btn btn-secondary btn-small"
-                        onClick={() => setShowGeminiApiKeyModal(true)}
-                        style={{ fontSize: 11.5, display: 'inline-flex', alignItems: 'center', gap: 4 }}
-                        title="Configure Google Gemini API Key"
-                      >
-                        <span>{hasGeminiApiKey() ? '🔑 Gemini Key ✓' : '🔑 Set Gemini Key'}</span>
-                      </button>
-                      <button
-                        type="button"
                         className="btn btn-small"
                         disabled={generatingAllStages}
                         onClick={handleGenerateAllForSelectedLp}
@@ -4650,15 +4624,6 @@ export default function Planning() {
                     </span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <button
-                      type="button"
-                      className="btn btn-secondary btn-small"
-                      onClick={() => setShowGeminiApiKeyModal(true)}
-                      style={{ fontSize: 10.5, padding: '3px 8px' }}
-                      title="Configure Google Gemini API Key"
-                    >
-                      {hasGeminiApiKey() ? '🔑 Key ✓' : '🔑 Set Key'}
-                    </button>
                     <button
                       type="button"
                       className="btn btn-small"
