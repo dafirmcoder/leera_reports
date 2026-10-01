@@ -4,7 +4,7 @@ import { useSchool } from '../context/SchoolContext'
 import { api } from '../lib/api'
 import { can } from '../lib/permissions'
 import { parseSyllabusPdf, type ExtractedSyllabus } from '../lib/syllabusPdfParser'
-import { parseWorkPlanPdf } from '../lib/workPlanPdfParser'
+import { parseWorkPlanPdf, type WorkPlanParseProgress } from '../lib/workPlanPdfParser'
 import { parseTeacherTimetablePdf } from '../lib/timetablePdfParser'
 import { generateLessonPlanPdf, generateWorkPlanPdf } from '../lib/planningPdf'
 import {
@@ -344,6 +344,7 @@ export default function Planning() {
   const [importWpFramework, setImportWpFramework] = useState('CAMBRIDGE_LOWER_SECONDARY')
   const [importWpAcademicYear, setImportWpAcademicYear] = useState('2026/2027')
   const [importWpSemester, setImportWpSemester] = useState('1')
+  const [workPlanParseProgress, setWorkPlanParseProgress] = useState<(WorkPlanParseProgress & { fileName?: string }) | null>(null)
 
   // Lesson Plans State
   const [lessonPlans, setLessonPlans] = useState<LessonPlan[]>([])
@@ -1020,9 +1021,20 @@ export default function Planning() {
     const file = e.target.files?.[0]
     if (!file) return
     setParsingWorkPlanPdf(true)
+    setWorkPlanParseProgress({
+      percent: 5,
+      stage: 'Loading PDF document...',
+      detail: file.name,
+      fileName: file.name
+    })
     setError(null)
     try {
-      const parsed = await parseWorkPlanPdf(file)
+      const parsed = await parseWorkPlanPdf(file, (prog) => {
+        setWorkPlanParseProgress({
+          ...prog,
+          fileName: file.name
+        })
+      })
       setParsedWorkPlan(parsed)
 
       // Try auto-matching class
@@ -1060,11 +1072,17 @@ export default function Planning() {
       setImportWpAcademicYear(parsed.academic_year || '2026/2027')
       setImportWpSemester(parsed.semester || '1')
 
-      setShowImportWorkPlanModal(true)
+      // Brief pause to display 100% completion before showing review modal
+      setTimeout(() => {
+        setParsingWorkPlanPdf(false)
+        setWorkPlanParseProgress(null)
+        setShowImportWorkPlanModal(true)
+      }, 450)
     } catch (err: any) {
       setError(err?.message || 'Failed to parse work plan PDF.')
-    } finally {
       setParsingWorkPlanPdf(false)
+      setWorkPlanParseProgress(null)
+    } finally {
       e.target.value = ''
     }
   }
@@ -2052,7 +2070,7 @@ export default function Planning() {
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           {(isTeacher || canManageCurriculum) && (
             <label className="btn btn-secondary btn-small" style={{ cursor: 'pointer', margin: 0 }}>
-              <span>{parsingWorkPlanPdf ? '⏳ Reading Work Plan...' : '📤 Upload Current Work Plan'}</span>
+              <span>{parsingWorkPlanPdf ? (workPlanParseProgress?.percent ? `⏳ Reading (${workPlanParseProgress.percent}%)…` : '⏳ Reading Work Plan…') : '📤 Upload Current Work Plan'}</span>
               <input type="file" accept=".pdf,application/pdf" style={{ display: 'none' }} onChange={handleWorkPlanFileUpload} />
             </label>
           )}
@@ -2198,7 +2216,7 @@ export default function Planning() {
                       </div>
                       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                         <label className="btn btn-secondary btn-small" style={{ cursor: 'pointer', margin: 0 }}>
-                          <span>{parsingWorkPlanPdf ? '⏳ Reading Work Plan...' : '📤 Upload Current Work Plan (Onboarding)'}</span>
+                          <span>{parsingWorkPlanPdf ? (workPlanParseProgress?.percent ? `⏳ Reading (${workPlanParseProgress.percent}%)…` : '⏳ Reading Work Plan…') : '📤 Upload Current Work Plan (Onboarding)'}</span>
                           <input type="file" accept=".pdf,application/pdf" style={{ display: 'none' }} onChange={handleWorkPlanFileUpload} />
                         </label>
                         <button className="btn btn-primary btn-small" onClick={openCreateWorkPlan}>
@@ -2220,7 +2238,7 @@ export default function Planning() {
                         </p>
                         <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
                           <label className="btn btn-secondary" style={{ cursor: 'pointer', margin: 0 }}>
-                            <span>{parsingWorkPlanPdf ? '⏳ Reading Work Plan...' : '📤 Upload Current Semester 1 Work Plan (PDF)'}</span>
+                            <span>{parsingWorkPlanPdf ? (workPlanParseProgress?.percent ? `⏳ Reading (${workPlanParseProgress.percent}%)…` : '⏳ Reading Work Plan…') : '📤 Upload Current Semester 1 Work Plan (PDF)'}</span>
                             <input type="file" accept=".pdf,application/pdf" style={{ display: 'none' }} onChange={handleWorkPlanFileUpload} />
                           </label>
                           <button className="btn btn-primary" onClick={openCreateWorkPlan}>
@@ -3588,7 +3606,7 @@ export default function Planning() {
               <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
                 {(isTeacher || canManageCurriculum) && (
                   <label className="btn btn-secondary" style={{ cursor: 'pointer', margin: 0 }}>
-                    <span>{parsingWorkPlanPdf ? '⏳ Reading Work Plan...' : '📤 Upload Current Work Plan (Onboarding)'}</span>
+                    <span>{parsingWorkPlanPdf ? (workPlanParseProgress?.percent ? `⏳ Reading (${workPlanParseProgress.percent}%)…` : '⏳ Reading Work Plan…') : '📤 Upload Current Work Plan (Onboarding)'}</span>
                     <input type="file" accept=".pdf,application/pdf" style={{ display: 'none' }} onChange={handleWorkPlanFileUpload} />
                   </label>
                 )}
@@ -3906,6 +3924,158 @@ export default function Planning() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ===================================================================== */}
+      {/* MODAL: WORK PLAN PARSING PROGRESS BAR                                 */}
+      {/* ===================================================================== */}
+      {parsingWorkPlanPdf && workPlanParseProgress && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(15, 23, 42, 0.65)',
+            backdropFilter: 'blur(4px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 110,
+            padding: 16
+          }}
+        >
+          <div
+            className="card"
+            style={{
+              width: '100%',
+              maxWidth: 480,
+              padding: '28px 24px',
+              borderRadius: 16,
+              boxShadow: '0 20px 40px -15px rgba(0, 0, 0, 0.35)',
+              border: '1px solid #cbd5e1',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 16,
+              textAlign: 'center'
+            }}
+          >
+            {/* Top Icon & Title */}
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+              <div
+                style={{
+                  width: 52,
+                  height: 52,
+                  borderRadius: 14,
+                  background: 'linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%)',
+                  border: '1px solid #a7f3d0',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: 26
+                }}
+              >
+                📑
+              </div>
+              <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: '#0f172a' }}>
+                Parsing Work Plan PDF
+              </h3>
+              {workPlanParseProgress.fileName && (
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: '#475569',
+                    background: '#f1f5f9',
+                    padding: '3px 10px',
+                    borderRadius: 999,
+                    maxWidth: 360,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap'
+                  }}
+                >
+                  📄 {workPlanParseProgress.fileName}
+                </div>
+              )}
+            </div>
+
+            {/* Progress Bar & Stats */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, textAlign: 'left' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: '#1e293b' }}>
+                  {workPlanParseProgress.stage}
+                </span>
+                <span
+                  style={{
+                    fontSize: 15,
+                    fontWeight: 800,
+                    color: '#10b981',
+                    fontVariantNumeric: 'tabular-nums'
+                  }}
+                >
+                  {workPlanParseProgress.percent}%
+                </span>
+              </div>
+
+              {/* Progress Track */}
+              <div
+                style={{
+                  width: '100%',
+                  height: 10,
+                  backgroundColor: '#e2e8f0',
+                  borderRadius: 999,
+                  overflow: 'hidden',
+                  position: 'relative'
+                }}
+              >
+                <div
+                  style={{
+                    width: `${Math.max(5, Math.min(100, workPlanParseProgress.percent))}%`,
+                    height: '100%',
+                    background: 'linear-gradient(90deg, #10b981 0%, #059669 50%, #3b82f6 100%)',
+                    borderRadius: 999,
+                    transition: 'width 0.3s cubic-bezier(0.4, 0, 0.2, 1)'
+                  }}
+                />
+              </div>
+
+              {workPlanParseProgress.detail && (
+                <div style={{ fontSize: 12, color: '#64748b', fontStyle: 'italic' }}>
+                  {workPlanParseProgress.detail}
+                </div>
+              )}
+            </div>
+
+            {/* Step Milestones */}
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(4, 1fr)',
+                gap: 6,
+                padding: '12px 10px',
+                background: '#f8fafc',
+                borderRadius: 10,
+                border: '1px solid #e2e8f0',
+                fontSize: 11
+              }}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, color: workPlanParseProgress.percent >= 25 ? '#10b981' : '#94a3b8' }}>
+                <span>{workPlanParseProgress.percent >= 70 ? '✓' : '📄'}</span>
+                <span style={{ fontWeight: workPlanParseProgress.percent < 70 ? 700 : 500 }}>PDF Pages</span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, color: workPlanParseProgress.percent >= 75 ? '#10b981' : '#94a3b8' }}>
+                <span>{workPlanParseProgress.percent >= 85 ? '✓' : '📐'}</span>
+                <span style={{ fontWeight: workPlanParseProgress.percent >= 75 && workPlanParseProgress.percent < 85 ? 700 : 500 }}>Framework</span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, color: workPlanParseProgress.percent >= 85 ? '#10b981' : '#94a3b8' }}>
+                <span>{workPlanParseProgress.percent >= 95 ? '✓' : '🗓️'}</span>
+                <span style={{ fontWeight: workPlanParseProgress.percent >= 85 && workPlanParseProgress.percent < 95 ? 700 : 500 }}>Table Weeks</span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, color: workPlanParseProgress.percent >= 100 ? '#10b981' : '#94a3b8' }}>
+                <span>{workPlanParseProgress.percent >= 100 ? '✓' : '🎯'}</span>
+                <span style={{ fontWeight: workPlanParseProgress.percent >= 95 ? 700 : 500 }}>Objectives</span>
+              </div>
+            </div>
           </div>
         </div>
       )}

@@ -32,25 +32,54 @@ interface PositionedPdfItem {
   page: number
 }
 
+export interface WorkPlanParseProgress {
+  percent: number
+  stage: string
+  detail?: string
+  page?: number
+  totalPages?: number
+}
+
+export type WorkPlanParseProgressCallback = (progress: WorkPlanParseProgress) => void
+
 /**
  * Extracts raw text items and joined text per page from a PDF File
  */
-export async function extractWorkPlanTextFromPdf(file: File): Promise<{
+export async function extractWorkPlanTextFromPdf(
+  file: File,
+  onProgress?: WorkPlanParseProgressCallback
+): Promise<{
   pagesText: string[]
   fullText: string
   lines: string[]
   positionedItems: PositionedPdfItem[]
   pagesItems: PositionedPdfItem[][]
 }> {
+  onProgress?.({
+    percent: 5,
+    stage: 'Loading PDF document...',
+    detail: file.name
+  })
+
   const arrayBuffer = await file.arrayBuffer()
   const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) })
   const pdf = await loadingTask.promise
+  const totalPages = pdf.numPages
   const pagesText: string[] = []
   const allLines: string[] = []
   const positionedItems: PositionedPdfItem[] = []
   const pagesItems: PositionedPdfItem[][] = []
 
-  for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+  for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
+    const pagePercent = Math.round(10 + ((pageNum - 0.5) / totalPages) * 60)
+    onProgress?.({
+      percent: pagePercent,
+      stage: `Extracting page ${pageNum} of ${totalPages}...`,
+      detail: `Scanning text boxes and positional coordinates`,
+      page: pageNum,
+      totalPages
+    })
+
     const page = await pdf.getPage(pageNum)
     const content = await page.getTextContent()
     const pageLines: string[] = []
@@ -79,6 +108,14 @@ export async function extractWorkPlanTextFromPdf(file: File): Promise<{
 
     pagesText.push(pageLines.join('\n'))
     allLines.push(...pageLines)
+
+    onProgress?.({
+      percent: Math.round(10 + (pageNum / totalPages) * 60),
+      stage: `Read page ${pageNum} of ${totalPages}`,
+      detail: `${pageItemsList.length} text items indexed`,
+      page: pageNum,
+      totalPages
+    })
   }
 
   return {
@@ -625,9 +662,18 @@ function tryParseTabularWorkPlan(
 /**
  * Main parser for Semester Work Plans (supporting Cambridge & Leera/CambriFy layouts)
  */
-export async function parseWorkPlanPdf(file: File): Promise<ParsedWorkPlan> {
-  const { lines, fullText, pagesItems } = await extractWorkPlanTextFromPdf(file)
+export async function parseWorkPlanPdf(
+  file: File,
+  onProgress?: WorkPlanParseProgressCallback
+): Promise<ParsedWorkPlan> {
+  const { lines, fullText, pagesItems } = await extractWorkPlanTextFromPdf(file, onProgress)
   const textLower = fullText.toLowerCase()
+
+  onProgress?.({
+    percent: 75,
+    stage: 'Detecting curriculum framework & metadata...',
+    detail: 'Inspecting syllabus title, subject, and teacher'
+  })
 
   // First 35 lines for header inspection
   const headerLines = lines.slice(0, 35).join(' ')
@@ -761,10 +807,23 @@ export async function parseWorkPlanPdf(file: File): Promise<ParsedWorkPlan> {
     if (lineMatch) teacherName = lineMatch[1].trim()
   }
 
+  onProgress?.({
+    percent: 85,
+    stage: 'Analyzing table layout & week progression...',
+    detail: 'Clustering week columns and alignment'
+  })
+
   // 7. Parse Table of Weeks, Term Dates, Topics, Objectives, Coverage
   // Strategy 1: High-precision Tabular Parser using 2D coordinates
   const tabularWeeks = tryParseTabularWorkPlan(pagesItems, academicYear, subjectCode)
   if (tabularWeeks && tabularWeeks.length > 0) {
+    const totalObjs = tabularWeeks.reduce((acc, w) => acc + (w.objectives?.length || 0), 0)
+    onProgress?.({
+      percent: 100,
+      stage: 'Work plan parsed successfully!',
+      detail: `Extracted ${tabularWeeks.length} weeks and ${totalObjs} learning objectives`
+    })
+
     return {
       raw_text: fullText,
       title: `${subjectName || 'Subject'} Semester ${semester} Work Plan`,
@@ -959,6 +1018,13 @@ export async function parseWorkPlanPdf(file: File): Promise<ParsedWorkPlan> {
   }
 
   finalizeCurrentWeek()
+
+  const totalFallbackObjs = weeks.reduce((acc, w) => acc + (w.objectives?.length || 0), 0)
+  onProgress?.({
+    percent: 100,
+    stage: 'Work plan parsed successfully!',
+    detail: `Extracted ${weeks.length} weeks and ${totalFallbackObjs} learning objectives`
+  })
 
   return {
     raw_text: fullText,
