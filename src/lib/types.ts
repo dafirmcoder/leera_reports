@@ -501,7 +501,7 @@ export interface Api {
     remarks?: string
     objectives?: Array<{ objective_id?: string | null; code_snapshot: string; text_snapshot: string; is_met?: boolean }>
   }>): Promise<void>
-  importWorkPlan(input: ImportWorkPlanInput): Promise<ImportWorkPlanResult>
+  importWorkPlan(input: ImportWorkPlanInput, onProgress?: WorkPlanIngestProgressCallback): Promise<ImportWorkPlanResult>
   submitWorkPlan(id: string): Promise<void>
   reviewWorkPlan(id: string, status: 'approved' | 'returned', comment: string): Promise<void>
   deleteWorkPlan(id: string): Promise<void>
@@ -790,6 +790,14 @@ export interface ImportWorkPlanResult {
   weeksCount: number
   commedWeeksCount: number
 }
+
+export interface WorkPlanIngestProgress {
+  percent: number
+  stage: string
+  detail?: string
+}
+
+export type WorkPlanIngestProgressCallback = (progress: WorkPlanIngestProgress) => void
 
 /**
  * Determines whether a scheduled lesson time is in the past.

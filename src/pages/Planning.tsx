@@ -21,7 +21,8 @@ import {
   type WorkPlan,
   type WorkPlanWeek,
   type ParsedWorkPlan,
-  type ParsedWorkPlanWeek
+  type ParsedWorkPlanWeek,
+  type WorkPlanIngestProgress
 } from '../lib/types'
 import PlanningExecutiveDashboard from '../components/dashboards/PlanningExecutiveDashboard'
 import TeacherSyllabusCoverageCard from '../components/dashboards/TeacherSyllabusCoverageCard'
@@ -345,6 +346,8 @@ export default function Planning() {
   const [importWpAcademicYear, setImportWpAcademicYear] = useState('2026/2027')
   const [importWpSemester, setImportWpSemester] = useState('1')
   const [workPlanParseProgress, setWorkPlanParseProgress] = useState<(WorkPlanParseProgress & { fileName?: string }) | null>(null)
+  const [ingestingWorkPlan, setIngestingWorkPlan] = useState(false)
+  const [ingestProgress, setIngestProgress] = useState<WorkPlanIngestProgress | null>(null)
 
   // Lesson Plans State
   const [lessonPlans, setLessonPlans] = useState<LessonPlan[]>([])
@@ -1144,31 +1147,47 @@ export default function Planning() {
     const coveredCount = allObjs.filter((o) => o.is_met).length
     const uncoveredCount = allObjs.filter((o) => !o.is_met).length
 
-    try {
-      setLoading(true)
-      const res = await api.importWorkPlan({
-        class_id: importWpClassId,
-        subject_id: importWpSubjectId,
-        subject_code: importWpSubjectCode.trim(),
-        framework: importWpFramework,
-        academic_year: importWpAcademicYear,
-        semester: importWpSemester,
-        weeks: parsedWorkPlan.weeks
-      })
+    setIngestingWorkPlan(true)
+    setIngestProgress({
+      percent: 5,
+      stage: 'Preparing work plan ingestion...',
+      detail: `${allObjs.length} objectives across ${parsedWorkPlan.weeks.length} weeks`
+    })
 
-      setShowImportWorkPlanModal(false)
-      setParsedWorkPlan(null)
-      setSuccess(
-        `Work plan imported successfully! Extracted ${allObjs.length} objectives: ${coveredCount} marked as COVERED, ${uncoveredCount} marked as UNCOVERED for lesson planning (${res.objectivesIngested} new objectives added to curriculum library, zero duplicates).`
+    try {
+      const res = await api.importWorkPlan(
+        {
+          class_id: importWpClassId,
+          subject_id: importWpSubjectId,
+          subject_code: importWpSubjectCode.trim(),
+          framework: importWpFramework,
+          academic_year: importWpAcademicYear,
+          semester: importWpSemester,
+          weeks: parsedWorkPlan.weeks
+        },
+        (prog) => {
+          setIngestProgress(prog)
+        }
       )
-      await loadAllPlanningData()
-      if (res.workPlanId) {
-        await handleSelectWorkPlan(res.workPlanId)
-      }
+
+      // Allow 500ms pause at 100% so user sees completion check
+      setTimeout(async () => {
+        setIngestingWorkPlan(false)
+        setIngestProgress(null)
+        setShowImportWorkPlanModal(false)
+        setParsedWorkPlan(null)
+        setSuccess(
+          `Work plan imported successfully! Extracted ${allObjs.length} objectives: ${coveredCount} marked as COVERED, ${uncoveredCount} marked as UNCOVERED for lesson planning (${res.objectivesIngested} new objectives added to curriculum library, zero duplicates).`
+        )
+        await loadAllPlanningData()
+        if (res.workPlanId) {
+          await handleSelectWorkPlan(res.workPlanId)
+        }
+      }, 500)
     } catch (err: any) {
       setError(err?.message || 'Failed to import work plan.')
-    } finally {
-      setLoading(false)
+      setIngestingWorkPlan(false)
+      setIngestProgress(null)
     }
   }
 
@@ -4095,7 +4114,13 @@ export default function Planning() {
                   Import Semester 1 Work Plan
                 </h3>
               </div>
-              <button className="btn btn-ghost btn-small" onClick={() => setShowImportWorkPlanModal(false)}>✕</button>
+              <button
+                className="btn btn-ghost btn-small"
+                disabled={ingestingWorkPlan}
+                onClick={() => setShowImportWorkPlanModal(false)}
+              >
+                ✕
+              </button>
             </div>
 
             {/* Deduplication Guarantee Banner */}
@@ -4450,17 +4475,77 @@ export default function Planning() {
               </div>
             </div>
 
+            {/* Real-time Ingestion Progress Bar */}
+            {ingestingWorkPlan && ingestProgress && (
+              <div
+                style={{
+                  background: '#f0fdf4',
+                  border: '1px solid #bbf7d0',
+                  borderRadius: 12,
+                  padding: '14px 18px',
+                  marginTop: 14,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 8,
+                  boxShadow: '0 2px 8px rgba(16, 185, 129, 0.08)'
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 16 }}>{ingestProgress.percent >= 100 ? '✅' : '⚡'}</span>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: '#166534' }}>
+                      {ingestProgress.stage}
+                    </span>
+                  </div>
+                  <span style={{ fontSize: 15, fontWeight: 800, color: '#15803d' }}>
+                    {ingestProgress.percent}%
+                  </span>
+                </div>
+                <div
+                  style={{
+                    width: '100%',
+                    height: 10,
+                    backgroundColor: '#dcfce7',
+                    borderRadius: 999,
+                    overflow: 'hidden',
+                    border: '1px solid #86efac'
+                  }}
+                >
+                  <div
+                    style={{
+                      width: `${Math.max(5, Math.min(100, ingestProgress.percent))}%`,
+                      height: '100%',
+                      background: 'linear-gradient(90deg, #10b981 0%, #059669 60%, #15803d 100%)',
+                      borderRadius: 999,
+                      transition: 'width 0.35s cubic-bezier(0.4, 0, 0.2, 1)'
+                    }}
+                  />
+                </div>
+                {ingestProgress.detail && (
+                  <div style={{ fontSize: 12, color: '#166534', opacity: 0.85, fontStyle: 'italic' }}>
+                    {ingestProgress.detail}
+                  </div>
+                )}
+              </div>
+            )}
+
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 14 }}>
-              <button type="button" className="btn btn-ghost" onClick={() => setShowImportWorkPlanModal(false)}>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                disabled={ingestingWorkPlan}
+                onClick={() => setShowImportWorkPlanModal(false)}
+              >
                 Cancel
               </button>
               <button
                 type="button"
                 className="btn btn-primary"
-                disabled={!importWpClassId || !importWpSubjectId || !importWpSubjectCode.trim() || loading}
+                disabled={!importWpClassId || !importWpSubjectId || !importWpSubjectCode.trim() || ingestingWorkPlan}
                 onClick={handleConfirmImportWorkPlan}
+                style={{ minWidth: 260 }}
               >
-                {loading ? '⏳ Ingesting Work Plan...' : '✓ Confirm & Ingest Work Plan'}
+                {ingestingWorkPlan ? `⏳ Ingesting (${ingestProgress?.percent || 0}%)...` : '✓ Confirm & Ingest Work Plan'}
               </button>
             </div>
           </div>

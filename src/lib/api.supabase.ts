@@ -10,7 +10,7 @@ import {
   type SchoolPopulationSummary, type ScoreRow, type Student, type StudentReportRow, type Subject,
   type SubjectTestSummary, type TeacherAssignmentOverview, type TeacherDashboardData, type TeacherTestSummary, type UnitTest, type UnitTestSummaryItem, type UpdateUnitTestInput,
   type CurriculumScheme, type CurriculumTopic, type CurriculumObjective, type TeacherTimetable, type TeacherScheduleSlot, type WorkPlan, type WorkPlanWeek, type WorkPlanWeekObjective, type LessonPlan,
-  type ImportWorkPlanInput, type ImportWorkPlanResult, type ParsedWorkPlanWeek
+  type ImportWorkPlanInput, type ImportWorkPlanResult, type ParsedWorkPlanWeek, type WorkPlanIngestProgressCallback
 } from './types'
 
 function db() {
@@ -2822,7 +2822,11 @@ export const supabaseApi: Api = {
     }
   },
 
-  async importWorkPlan(input: ImportWorkPlanInput): Promise<ImportWorkPlanResult> {
+  async importWorkPlan(
+    input: ImportWorkPlanInput,
+    onProgress?: WorkPlanIngestProgressCallback
+  ): Promise<ImportWorkPlanResult> {
+    onProgress?.({ percent: 10, stage: 'Validating authorization and assignments...', detail: 'Checking class and subject permissions' })
     const tid = await uid()
     const profile = await this.getProfile()
     const isLeadership = profile?.role === 'director' || profile?.role === 'head_of_school' || profile?.role === 'curriculum_coordinator'
@@ -2854,6 +2858,8 @@ export const supabaseApi: Api = {
     let objectivesSkipped = 0
 
     try {
+      onProgress?.({ percent: 30, stage: 'Resolving curriculum scheme...', detail: `Mapping Cambridge Subject Code ${cleanCode}` })
+
       // 3. Resolve or create Curriculum Scheme
       if (!schemeId) {
         const subjects = await this.listSubjects().catch(() => [])
@@ -2910,6 +2916,7 @@ export const supabaseApi: Api = {
 
       // 4. Ingest and Deduplicate Objectives
       if (schemeId) {
+        onProgress?.({ percent: 55, stage: 'Ingesting & deduplicating learning objectives...', detail: 'Comparing with existing curriculum library' })
         const { data: existingObjs } = await db()
           .from('curriculum_objectives')
           .select('code')
@@ -2948,6 +2955,7 @@ export const supabaseApi: Api = {
       }
 
       // 5. Create or Update Work Plan
+      onProgress?.({ percent: 75, stage: 'Creating work plan record...', detail: `Semester ${semester} (${academicYear})` })
       let workPlanId = ''
       const { data: existingPlan } = await db()
         .from('work_plans')
@@ -2992,6 +3000,7 @@ export const supabaseApi: Api = {
 
       // 6. Save Weeks & Objectives (with is_met / commed coverage status preserved)
       if (workPlanId) {
+        onProgress?.({ percent: 90, stage: 'Saving weekly schedule & coverage tracking...', detail: `Saving ${input.weeks.length} weeks and coverage markers` })
         await this.saveWorkPlanWeeks(
           workPlanId,
           input.weeks.map((w) => ({
@@ -3017,6 +3026,8 @@ export const supabaseApi: Api = {
       }
 
       const commedWeeksCount = input.weeks.filter((w) => w.is_commed || (w.objectives || []).some((o) => o.is_met)).length
+
+      onProgress?.({ percent: 100, stage: 'Work plan ingested successfully!', detail: `Ingested ${objectivesIngested} objectives, mapped ${input.weeks.length} weeks` })
 
       return {
         workPlanId,
@@ -3157,6 +3168,8 @@ export const supabaseApi: Api = {
 
     localStorage.setItem('leera_work_plans', JSON.stringify(localPlans))
     const commedWeeksCount = input.weeks.filter((w) => w.is_commed || (w.objectives || []).some((o) => o.is_met)).length
+
+    onProgress?.({ percent: 100, stage: 'Work plan ingested successfully!', detail: 'Saved to local storage fallback' })
 
     return {
       workPlanId: plan.id,
