@@ -90,6 +90,67 @@ export async function extractWorkPlanTextFromPdf(file: File): Promise<{
   }
 }
 
+const BLOOM_VERBS = new Set([
+  'define', 'state', 'list', 'recall', 'identify', 'name', 'outline', 'recognise', 'recognize', 'label', 'mention',
+  'explain', 'describe', 'discuss', 'distinguish', 'differentiate', 'summarise', 'summarize', 'clarify', 'interpret',
+  'paraphrase', 'illustrate', 'understand', 'know', 'recap', 'overview',
+  'apply', 'calculate', 'solve', 'demonstrate', 'draw', 'construct', 'use', 'implement', 'prepare', 'show', 'convert',
+  'analyse', 'analyze', 'compare', 'contrast', 'categorise', 'categorize', 'classify', 'examine', 'investigate', 'explore',
+  'evaluate', 'assess', 'justify', 'appraise', 'critique', 'review', 'judge', 'prioritise', 'prioritize',
+  'design', 'formulate', 'create', 'compose', 'plan', 'devise', 'synthesise', 'synthesize', 'propose', 'build'
+])
+
+export function isBloomObjective(text: string): boolean {
+  const clean = text.replace(/^[•*▪▫◦►✓✔\-\—\d\.\)\(\s]+/, '').trim().toLowerCase()
+  const firstWord = clean.split(/\s+/)[0] || ''
+  if (BLOOM_VERBS.has(firstWord)) return true
+  if (/^(?:learners?|students?)\s+(?:will|should|are able to|can)\b/i.test(clean)) return true
+  if (/^(?:course overview|overview of|recap of)\b/i.test(clean)) return true
+  return false
+}
+
+export function cleanJoinedText(str: string): string {
+  return str
+    .replace(/\s+/g, ' ')
+    .replace(/(\w+)\s*-\s*(\w+)/g, '$1-$2')
+    .replace(/(\w+)\s*–\s*(\w+)/g, '$1 – $2')
+    .trim()
+}
+
+function assembleVisualLines(items: PositionedPdfItem[]): Array<{ y: number; x: number; text: string }> {
+  const lines: Array<{ y: number; x: number; text: string }> = []
+  let cur: PositionedPdfItem[] = []
+  let curY: number | null = null
+
+  for (const it of items) {
+    if (curY === null || Math.abs(it.y - curY) > 3.5) {
+      if (cur.length > 0) {
+        cur.sort((a, b) => a.x - b.x)
+        lines.push({
+          y: curY!,
+          x: cur[0].x,
+          text: cleanJoinedText(cur.map((ci) => ci.str).join(' '))
+        })
+      }
+      cur = [it]
+      curY = it.y
+    } else {
+      cur.push(it)
+    }
+  }
+
+  if (cur.length > 0) {
+    cur.sort((a, b) => a.x - b.x)
+    lines.push({
+      y: curY!,
+      x: cur[0].x,
+      text: cleanJoinedText(cur.map((ci) => ci.str).join(' '))
+    })
+  }
+
+  return lines
+}
+
 /**
  * Attempts to parse date range strings into ISO dates
  */
@@ -98,16 +159,19 @@ function parseTermDates(dateStr: string, defaultYear = 2026): { startDate: strin
 
   const cleaned = dateStr.replace(/(\d+)(?:st|nd|rd|th)/gi, '$1').replace(/\s+/g, ' ').trim()
 
-  // Format 1: "24 – 28 AUGUST" or "24TH – 28TH AUG" or "30 NOV – 4 DEC"
-  const wordMonthMatch = cleaned.match(/(\d{1,2})\s*(?:[A-Za-z]+)?\s*[–\-—]\s*(\d{1,2})\s*([A-Za-z]{3,9})/i)
+  // Format 1: "24 – 28 AUGUST" or "24TH – 28TH AUG" or "30 NOV – 4 DEC" or "31 AUG – 4 SEP"
+  const wordMonthMatch = cleaned.match(/(\d{1,2})\s*([A-Za-z]{3,9})?\s*[–\-—]\s*(\d{1,2})\s*([A-Za-z]{3,9})/i)
   if (wordMonthMatch) {
     const startDay = parseInt(wordMonthMatch[1], 10)
-    const endDay = parseInt(wordMonthMatch[2], 10)
-    const monthKey = wordMonthMatch[3].toUpperCase().slice(0, 3)
-    const monthIdx = MONTH_MAP[monthKey]
-    if (monthIdx !== undefined && !isNaN(startDay) && !isNaN(endDay)) {
-      const s = new Date(Date.UTC(defaultYear, monthIdx, startDay))
-      const e = new Date(Date.UTC(defaultYear, monthIdx, endDay))
+    const m1Key = (wordMonthMatch[2] || '').toUpperCase().slice(0, 3)
+    const endDay = parseInt(wordMonthMatch[3], 10)
+    const m2Key = wordMonthMatch[4].toUpperCase().slice(0, 3)
+    const endMonthIdx = MONTH_MAP[m2Key]
+    const startMonthIdx = m1Key && MONTH_MAP[m1Key] !== undefined ? MONTH_MAP[m1Key] : (endMonthIdx !== undefined ? (startDay > endDay ? (endMonthIdx + 11) % 12 : endMonthIdx) : undefined)
+
+    if (startMonthIdx !== undefined && endMonthIdx !== undefined && !isNaN(startDay) && !isNaN(endDay)) {
+      const s = new Date(Date.UTC(defaultYear, startMonthIdx, startDay))
+      const e = new Date(Date.UTC(defaultYear, endMonthIdx, endDay))
       return {
         startDate: s.toISOString().split('T')[0],
         endDate: e.toISOString().split('T')[0]
@@ -225,8 +289,8 @@ function tryParseTabularWorkPlan(
 
   for (let pNum = 0; pNum < pagesItems.length; pNum++) {
     const pItems = pagesItems[pNum]
-    const headerItem = pItems.find((it) => it.str === 'TOPIC/ LEARNING OBJECTIVE' || it.str === 'WEEK')
-    const tableTopY = headerItem ? headerItem.y - 8 : 580
+    const headerItem = (pNum === 0) ? pItems.find((it) => (it.str === 'TOPIC/ LEARNING OBJECTIVE' || it.str === 'WEEK') && it.y > 350) : null
+    const tableTopY = headerItem ? headerItem.y - 8 : 600
     const bodyItems = pItems.filter((it) => it.y < tableTopY && it.y > 25)
 
     const starters = bodyItems
@@ -268,16 +332,14 @@ function tryParseTabularWorkPlan(
 
     if (!nextW || nextW.pageIndex === pIndex) {
       // Next week is on same page, or this is the last week in document
-      // On page 6 (0-indexed page 5), stop before RESOURCES at y ~ 235
-      const bottomY = nextW ? nextW.y + 5 : (pIndex === 5 ? 235 : 25)
+      const resItem = pagesItems[pIndex].find((it) => /^RESOURCES?:?$/i.test(it.str))
+      const bottomY = nextW ? nextW.y + 5 : (resItem ? resItem.y : 25)
       weekItems = pagesItems[pIndex].filter((it) => it.y <= topY && it.y > bottomY)
     } else {
       // Week spans across page boundary to next page!
-      // Current page items: from topY down to page bottom
       const p1Items = pagesItems[pIndex].filter((it) => it.y <= topY && it.y > 25)
-      // Next page items: from top of next page table down to nextW.y + 5
-      const nextHeader = pagesItems[nextW.pageIndex].find((it) => it.str === 'TOPIC/ LEARNING OBJECTIVE' || it.str === 'WEEK')
-      const nextTableTop = nextHeader ? nextHeader.y - 8 : 580
+      const nextHeader = (nextW.pageIndex === 0) ? pagesItems[0].find((it) => (it.str === 'TOPIC/ LEARNING OBJECTIVE' || it.str === 'WEEK') && it.y > 350) : null
+      const nextTableTop = nextHeader ? nextHeader.y - 8 : 600
       const p2Items = pagesItems[nextW.pageIndex].filter((it) => it.y < nextTableTop && it.y > nextW.y + 5)
       weekItems = [...p1Items, ...p2Items]
     }
@@ -291,89 +353,154 @@ function tryParseTabularWorkPlan(
     }
 
     // 2. Dates in x: [110, 185]
-    const dateItems = weekItems.filter((it) => it.x >= 110 && it.x <= 185 && it.y < curW.y)
+    const dateItems = weekItems.filter((it) => it.x >= 110 && it.x <= 185 && Math.abs(it.y - curW.y) > 2)
     const termDates = dateItems.map((it) => it.str).join(' ').replace(/\s*–\s*/g, ' – ')
 
-    // 3. Topic in x: [180, 640]
-    const topicParts: string[] = []
-    const topicItems = weekItems.filter(
-      (it) => it.x >= 180 && it.x <= 640 && /^(?:UNIT|TOPIC|REVISION|SEMESTER|END OF)/i.test(it.str)
-    )
-    for (const ti of topicItems) {
-      const lineItems = weekItems.filter(
-        (it) => it.x >= 180 && it.x <= 640 && Math.abs(it.y - ti.y) < 4
-      )
-      const text = lineItems.map((it) => it.str).join(' ')
-      if (!topicParts.includes(text)) topicParts.push(text)
-    }
-    const topic = topicParts.join(' — ').replace(/\s*—\s*—\s*/g, ' — ') || 'General Curriculum'
+    // 3. Remarks in x >= 640
+    const remarksItems = weekItems.filter((it) => it.x >= 640).map((it) => it.str)
+    const remarks = cleanJoinedText(remarksItems.join(' '))
 
-    // 4. Learning Objectives in x: [180, 640]
-    // Filter out everything after "Weekly Lesson Breakdown" so lesson activities are NEVER parsed as objectives
-    const objectives: ParsedWorkPlanObjective[] = []
+    // 4. Learning Objectives & Topics in x: [180, 640]
     const colItems = weekItems.filter((it) => it.x >= 180 && it.x <= 640)
-    const breakdownIdx = colItems.findIndex(
-      (it) => it.str.includes('Weekly Lesson Breakdown') || it.str.startsWith('• Lesson')
+    const visualLines = assembleVisualLines(colItems)
+
+    // Filter out everything after "Weekly Lesson Breakdown" or lesson activities
+    const breakdownIdx = visualLines.findIndex((vl) =>
+      /Weekly Lesson Breakdown/i.test(vl.text) ||
+      /^•?\s*Lesson\s*\d+\s*[:\-]/i.test(vl.text) ||
+      /^Activities\s*[:\-]/i.test(vl.text)
     )
-    const candidateObjItems = breakdownIdx >= 0 ? colItems.slice(0, breakdownIdx) : colItems
+    const contentLines = breakdownIdx >= 0 ? visualLines.slice(0, breakdownIdx) : visualLines
 
-    // Regex that matches Cambridge LO codes: e.g. 9CS.01, 8Sc.01, 9DC.02, 0580.01
-    // Pattern: starts with letter or digit, has a dot+digits portion, optional trailing alphanum
-    const OBJ_CODE_RE = /^(?:[•*]\s*)?(\*?[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)*\.?\d{1,3}[A-Za-z0-9\-]*)\s*[:\-]?\s*(.*)/
+    // Structure parser for Topic, Subtopics, and Objectives
+    const topicsList: string[] = []
+    let activeTopicOrSubtopic = ''
+    const rawObjectives: ParsedWorkPlanObjective[] = []
+    let curObjective: { code: string; text: string; topic_title?: string } | null = null
 
-    for (let j = 0; j < candidateObjItems.length; j++) {
-      const it = candidateObjItems[j]
-      const codeMatch = it.str.match(OBJ_CODE_RE)
-      if (codeMatch && !it.str.includes('Weekly Lesson Breakdown') && !it.str.startsWith('• Lesson')) {
-        const code = codeMatch[1].replace(/^\*/, '').trim()
-        // Skip section/header words that match the code regex superficially
-        if (/^(?:UNIT|TOPIC|REVISION|SEMESTER|RESOURCES?|MONTH|WEEK|TERM|OBJECTIVES?)$/i.test(code)) continue
-        let text = codeMatch[2].trim()
-
-        let k = j + 1
-        while (k < candidateObjItems.length) {
-          const nextIt = candidateObjItems[k]
-          // Stop if next item is a new objective code, a bullet, or a section header
-          const isNextCode = OBJ_CODE_RE.test(nextIt.str)
-          if (
-            isNextCode ||
-            nextIt.str.startsWith('•') ||
-            nextIt.str.includes('Weekly Lesson Breakdown') ||
-            /^(?:UNIT|TOPIC|Learning Objectives)/i.test(nextIt.str)
-          ) {
-            break
-          }
-          text += ' ' + nextIt.str
-          k++
-        }
-
-        if (!text) continue // skip bare code with no description text
-
-        objectives.push({
-          code,
-          text: text.replace(/\s+/g, ' ').trim(),
+    const finalizeCurObjective = () => {
+      if (curObjective && curObjective.text.trim()) {
+        rawObjectives.push({
+          code: curObjective.code,
+          text: cleanJoinedText(curObjective.text),
           is_met: false,
-          topic_title: topic
+          topic_title: curObjective.topic_title || activeTopicOrSubtopic || 'General Curriculum'
         })
+        curObjective = null
       }
     }
 
-    // 5. Remarks in x >= 640
-    const remarksItems = weekItems.filter((it) => it.x >= 640).map((it) => it.str)
-    const remarks = remarksItems
-      .join(' ')
-      .replace(/\s+/g, ' ')
-      .replace(/\s*–\s*/g, ' – ')
-      .replace(/\s*—\s*/g, ' — ')
-      .trim()
+    const CAMBRIDGE_CODE_RE = /^(?:[•*▪▫◦►✓✔\-]\s*)?(\*?[0-9]{1,2}[A-Za-z]{1,4}\.[0-9]{1,3}[A-Za-z0-9\-]*)\s*[:\-]?\s*(.*)/
+    const NUMBERED_LO_RE = /^[•*▪▫◦►✓✔\-]\s*(\d+\.\d+)\s+([^:]+):\s*(.*)/
+    const BULLET_START_RE = /^[•*▪▫◦►✓✔\-\—]\s*(.*)/
+    const TOPIC_PREFIX_RE = /^(?:UNIT|TOPIC|CHAPTER|STRAND|SECTION)\s*(\d+|[A-Z0-9\.\-]+)?[:\.\-]?\s*(.*)/i
+    const NUMBERED_SUBTOPIC_RE = /^(\d+\.\d+)\s+([A-Za-z].*)/
+    const MILESTONE_RE = /^(?:REVISION\s*WEEK|END\s*OF\s*UNIT\s*TEST|SEMESTER\s*ASSESSMENTS?|END\s*OF\s*FIRST\s*SEMESTER|MID-TERM\s*BREAK|PUBLIC\s*HOLIDAY|PTC)/i
 
-    const { isCommed, updatedObjectives } = evaluateCoverageFromRemarks(remarks, objectives)
+    for (const vl of contentLines) {
+      const text = vl.text
+      if (!text) continue
+
+      if (/^Learning Objectives:?$/i.test(text)) {
+        finalizeCurObjective()
+        continue
+      }
+
+      // Cambridge explicit code: "• 9CS.01: Identify improvements..."
+      const cambMatch = text.match(CAMBRIDGE_CODE_RE)
+      if (cambMatch && !/^(?:UNIT|TOPIC|REVISION|SEMESTER|RESOURCES?|MONTH|WEEK|TERM|OBJECTIVES?)$/i.test(cambMatch[1])) {
+        finalizeCurObjective()
+        curObjective = {
+          code: cambMatch[1].replace(/^\*/, '').trim(),
+          text: cambMatch[2] || '',
+          topic_title: activeTopicOrSubtopic
+        }
+        continue
+      }
+
+      // Numbered LO with subtopic description: "• 5.1 Living standards: explain..."
+      const numLoMatch = text.match(NUMBERED_LO_RE)
+      if (numLoMatch) {
+        finalizeCurObjective()
+        const code = numLoMatch[1]
+        const subTitle = numLoMatch[2].trim()
+        const desc = numLoMatch[3].trim()
+        curObjective = {
+          code,
+          text: `${subTitle}: ${desc}`,
+          topic_title: activeTopicOrSubtopic || subTitle
+        }
+        continue
+      }
+
+      // Milestone / Non-instructional event line
+      if (MILESTONE_RE.test(text)) {
+        finalizeCurObjective()
+        if (!topicsList.includes(text)) topicsList.push(text)
+        activeTopicOrSubtopic = text
+        continue
+      }
+
+      // Numbered subtopic or Topic heading
+      const isNumSubtopic = NUMBERED_SUBTOPIC_RE.test(text) && !isBloomObjective(text)
+      const isTopicHead = TOPIC_PREFIX_RE.test(text) && !isBloomObjective(text)
+
+      if (isNumSubtopic || isTopicHead) {
+        finalizeCurObjective()
+        if (!topicsList.includes(text)) topicsList.push(text)
+        activeTopicOrSubtopic = text
+        continue
+      }
+
+      // Standard bullet point objective
+      const bulletMatch = text.match(BULLET_START_RE)
+      if (bulletMatch) {
+        finalizeCurObjective()
+        const objSeq = rawObjectives.length + 1
+        const code = `${defaultSubjectCode ? defaultSubjectCode + '.' : ''}W${curW.weekNum}.${objSeq}`
+        curObjective = {
+          code,
+          text: bulletMatch[1].trim(),
+          topic_title: activeTopicOrSubtopic
+        }
+        continue
+      }
+
+      // Continuation of current objective
+      if (curObjective) {
+        curObjective.text += ' ' + text
+        continue
+      }
+
+      // Unbulleted action-verb objective
+      if (isBloomObjective(text)) {
+        finalizeCurObjective()
+        const objSeq = rawObjectives.length + 1
+        const code = `${defaultSubjectCode ? defaultSubjectCode + '.' : ''}W${curW.weekNum}.${objSeq}`
+        curObjective = {
+          code,
+          text: text.trim(),
+          topic_title: activeTopicOrSubtopic
+        }
+        continue
+      }
+
+      // Unmatched leading text: title/topic component
+      if (!topicsList.includes(text) && text.length < 120) {
+        topicsList.push(text)
+        activeTopicOrSubtopic = text
+      }
+    }
+    finalizeCurObjective()
+
+    const topic = topicsList.join(' — ').replace(/\s*—\s*—\s*/g, ' — ') || activeTopicOrSubtopic || 'General Curriculum'
+    const { isCommed, updatedObjectives } = evaluateCoverageFromRemarks(remarks, rawObjectives)
     const { startDate, endDate } = parseTermDates(
       termDates ? `${termDates} ${currentMonth}` : '',
       defaultYearNum
     )
 
-    const isInstructional = !/(?:REVISION|ASSESSMENT|PTC|EXAM|HOLIDAY|BREAK)/i.test(topic)
+    const isInstructional = !/(?:REVISION|ASSESSMENT|PTC|EXAM|HOLIDAY|BREAK)/i.test(topic) || rawObjectives.length > 0
 
     parsedWeeks.push({
       sequence: curW.weekNum,
@@ -473,6 +600,8 @@ export async function parseWorkPlanPdf(file: File): Promise<ParsedWorkPlan> {
       else if (subjectName === 'Global Perspectives') subjectCode = '1129'
     } else if (framework === 'CAMBRIDGE_IGCSE') {
       if (subjectName === 'Computer Science') subjectCode = '0478'
+      else if (subjectName === 'Economics') subjectCode = '0455'
+      else if (subjectName === 'Business Studies' || subjectName === 'Business') subjectCode = '0450'
       else if (subjectName === 'Mathematics') subjectCode = '0580'
       else if (subjectName === 'Biology') subjectCode = '0610'
       else if (subjectName === 'Chemistry') subjectCode = '0620'
@@ -481,6 +610,8 @@ export async function parseWorkPlanPdf(file: File): Promise<ParsedWorkPlan> {
       else if (subjectName === 'Global Perspectives') subjectCode = '0457'
     } else if (framework === 'CAMBRIDGE_AS_A_LEVEL') {
       if (subjectName === 'Computer Science') subjectCode = '9618'
+      else if (subjectName === 'Economics') subjectCode = '9708'
+      else if (subjectName === 'Business Studies' || subjectName === 'Business') subjectCode = '9609'
       else if (subjectName === 'Mathematics') subjectCode = '9709'
       else if (subjectName === 'Biology') subjectCode = '9700'
       else if (subjectName === 'Chemistry') subjectCode = '9701'
@@ -646,39 +777,50 @@ export async function parseWorkPlanPdf(file: File): Promise<ParsedWorkPlan> {
     }
 
     const objBulletMatch = rawLine.match(OBJECTIVE_BULLET_PATTERN)
-    // Improved code regex: matches Cambridge LO codes like 9CS.01, 8Sc.01, 0580.01
-    const SEQ_CODE_RE = /^(\*?[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)*\.?\d{1,3}[A-Za-z0-9\-]*)\s*[:\-]?\s+(.*)/
+    const SEQ_CODE_RE = /^(\*?[0-9]{1,2}[A-Za-z]{1,4}\.[0-9]{1,3}[A-Za-z0-9\-]*)\s*[:\-]?\s*(.*)/
+    const NUMBERED_LO_RE = /^[•*▪▫◦►✓✔\-]\s*(\d+\.\d+)\s+([^:]+):\s*(.*)/
     const codeMatch = rawLine.match(SEQ_CODE_RE)
+    const numLoMatch = rawLine.match(NUMBERED_LO_RE)
+    const isBloom = isBloomObjective(rawLine)
 
-    if (objBulletMatch || codeMatch) {
+    if (objBulletMatch || codeMatch || numLoMatch || isBloom) {
+      if (/^Lesson\s*\d+/i.test(rawLine) || /Weekly Lesson Breakdown/i.test(rawLine) || /^Activities/i.test(rawLine)) {
+        continue
+      }
+
       let code = ''
       let text = ''
 
-      if (codeMatch) {
+      if (numLoMatch) {
+        code = numLoMatch[1]
+        text = cleanJoinedText(`${numLoMatch[2].trim()}: ${numLoMatch[3].trim()}`)
+      } else if (codeMatch) {
         const candidateCode = codeMatch[1].replace(/^\*/, '').trim()
-        // Skip tokens that are header words and not real LO codes
         if (/^(?:UNIT|TOPIC|REVISION|SEMESTER|RESOURCES?|MONTH|WEEK|TERM|OBJECTIVES?)$/i.test(candidateCode)) {
           // Fall through to topic/remarks handling below
         } else {
           code = candidateCode
-          text = codeMatch[2].trim()
+          text = cleanJoinedText(codeMatch[2])
         }
       }
 
       if (!code && objBulletMatch) {
         const afterBullet = objBulletMatch[1].trim()
-        if (/^Lesson\s*\d+/i.test(afterBullet) || /Weekly Lesson Breakdown/i.test(afterBullet)) {
-          continue
-        }
         const innerCodeMatch = afterBullet.match(SEQ_CODE_RE)
         if (innerCodeMatch) {
           code = innerCodeMatch[1].replace(/^\*/, '').trim()
-          text = innerCodeMatch[2].trim()
+          text = cleanJoinedText(innerCodeMatch[2])
         } else {
           const objSeq = (currentWeek.objectives?.length || 0) + 1
-          code = `${subjectCode || 'LO'}.W${currentWeek.sequence || 1}.${objSeq}`
-          text = afterBullet
+          code = `${subjectCode ? subjectCode + '.' : ''}W${currentWeek.sequence || 1}.${objSeq}`
+          text = cleanJoinedText(afterBullet)
         }
+      }
+
+      if (!code && isBloom) {
+        const objSeq = (currentWeek.objectives?.length || 0) + 1
+        code = `${subjectCode ? subjectCode + '.' : ''}W${currentWeek.sequence || 1}.${objSeq}`
+        text = cleanJoinedText(rawLine)
       }
 
       if (code && text && !text.includes('Weekly Lesson Breakdown') && !code.startsWith('Lesson')) {
