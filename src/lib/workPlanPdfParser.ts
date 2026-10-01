@@ -97,13 +97,19 @@ const BLOOM_VERBS = new Set([
   'apply', 'calculate', 'solve', 'demonstrate', 'draw', 'construct', 'use', 'implement', 'prepare', 'show', 'convert',
   'analyse', 'analyze', 'compare', 'contrast', 'categorise', 'categorize', 'classify', 'examine', 'investigate', 'explore',
   'evaluate', 'assess', 'justify', 'appraise', 'critique', 'review', 'judge', 'prioritise', 'prioritize',
-  'design', 'formulate', 'create', 'compose', 'plan', 'devise', 'synthesise', 'synthesize', 'propose', 'build'
+  'design', 'formulate', 'create', 'compose', 'plan', 'devise', 'synthesise', 'synthesize', 'propose', 'build',
+  'carry', 'sketch', 'select', 'locate', 'find', 'determine',
+  'give', 'ask', 'spell', 'deduce', 'read', 'write'
 ])
 
 export function isBloomObjective(text: string): boolean {
-  const clean = text.replace(/^[•*▪▫◦►✓✔\-\—\d\.\)\(\s]+/, '').trim().toLowerCase()
+  const normalized = text.replace(/^([A-Z])\s+([a-z]{2,})/i, '$1$2')
+  const clean = normalized.replace(/^[•*▪▫◦►✓✔\-\—\d\.\)\(\s\uF0B7\uF0A7\uFFFD]+/, '').trim().toLowerCase()
   const firstWord = clean.split(/\s+/)[0] || ''
   if (BLOOM_VERBS.has(firstWord)) return true
+  const stemmed = firstWord.replace(/(?:ing|es|s|ed)$/, '')
+  if (BLOOM_VERBS.has(stemmed)) return true
+  if (BLOOM_VERBS.has(stemmed + 'e')) return true
   if (/^(?:learners?|students?)\s+(?:will|should|are able to|can)\b/i.test(clean)) return true
   if (/^(?:course overview|overview of|recap of)\b/i.test(clean)) return true
   return false
@@ -111,6 +117,7 @@ export function isBloomObjective(text: string): boolean {
 
 export function cleanJoinedText(str: string): string {
   return str
+    .replace(/^([A-Z])\s+([a-z]{2,})/g, '$1$2')
     .replace(/\s+/g, ' ')
     .replace(/(\w+)\s*-\s*(\w+)/g, '$1-$2')
     .replace(/(\w+)\s*–\s*(\w+)/g, '$1 – $2')
@@ -284,33 +291,102 @@ function tryParseTabularWorkPlan(
 ): ParsedWorkPlanWeek[] | null {
   if (!pagesItems || pagesItems.length === 0) return null
 
-  // 1. Locate all week sequence numbers across pages (digits in column x ~ 110-185)
-  const weekStarters: Array<{ pageIndex: number; y: number; weekNum: number }> = []
+  // 1. Table Header detection on page 0
+  const headerItem = pagesItems[0]?.find(
+    (it) => /^(?:TOPIC|TOPIC\/\s*LEARNING OBJECTIVE|TOPIC\s*\/\s*LEARNING OBJECTIVES\s*\/\s*MATERIALS|WEEK|WEEK\s*\/\s*ITEM)$/i.test(it.str) && it.y > 300
+  )
+  const tableTopP0 = headerItem ? headerItem.y - 5 : 500
+  const remarksHeader = pagesItems[0]?.find(
+    (it) => /^(?:REMARKS?|COMMENTS?|REMARKS\s*\/\s*USE IN THIS PLAN)$/i.test(it.str) && it.y > 300
+  )
+  const remarksColMinX = remarksHeader ? remarksHeader.x - 20 : 640
 
-  for (let pNum = 0; pNum < pagesItems.length; pNum++) {
-    const pItems = pagesItems[pNum]
-    const headerItem = (pNum === 0) ? pItems.find((it) => (it.str === 'TOPIC/ LEARNING OBJECTIVE' || it.str === 'WEEK') && it.y > 350) : null
-    const tableTopY = headerItem ? headerItem.y - 8 : 600
-    const bodyItems = pItems.filter((it) => it.y < tableTopY && it.y > 25)
-
-    const starters = bodyItems
-      .filter((it) => it.x >= 110 && it.x <= 185 && /^\d{1,2}$/.test(it.str))
-      .sort((a, b) => b.y - a.y)
-
-    for (const ws of starters) {
-      weekStarters.push({
-        pageIndex: pNum,
-        y: ws.y,
-        weekNum: parseInt(ws.str, 10)
-      })
+  // 2. Week Sequence detection (monotonically increasing 1..30 across pages)
+  const digits: Array<{ pageIndex: number; y: number; x: number; val: number }> = []
+  for (let p = 0; p < pagesItems.length; p++) {
+    const maxY = p === 0 ? tableTopP0 : 590
+    for (const it of pagesItems[p]) {
+      const m = it.str.match(/^(?:WEEK\s*|WK\s*|W\s*)?(\d{1,2})$/i)
+      if (it.y < maxY && it.y > 25 && it.x > 30 && it.x < 250 && m) {
+        const val = parseInt(m[1], 10)
+        if (val >= 1 && val <= 30) {
+          digits.push({ pageIndex: p, y: it.y, x: it.x, val })
+        }
+      }
     }
   }
 
-  // If fewer than 4 weeks detected, fallback to standard stream parser
-  if (weekStarters.length < 4) return null
+  let bestSeq: Array<{ pageIndex: number; y: number; x: number; val: number }> = []
+  let bestWeekX = 0
+  const uniqueXs = [...new Set(digits.map((d) => Math.round(d.x)))]
+  for (const testX of uniqueXs) {
+    const inBucket = digits.filter((d) => Math.abs(d.x - testX) <= 6)
+    inBucket.sort((a, b) => a.pageIndex - b.pageIndex || b.y - a.y)
+    const seq: Array<{ pageIndex: number; y: number; x: number; val: number }> = []
+    let nextExpected = 1
+    for (const d of inBucket) {
+      if (d.val === nextExpected) {
+        seq.push(d)
+        nextExpected++
+      }
+    }
+    if (seq.length > bestSeq.length) {
+      bestSeq = seq
+      bestWeekX = testX
+    }
+  }
 
-  // Sort weeks by sequence
-  weekStarters.sort((a, b) => a.weekNum - b.weekNum)
+  if (bestSeq.length < 4) return null
+
+  // Dynamic content column start
+  let contentColMinX = 180
+  if (bestWeekX < 100) {
+    contentColMinX = 135
+  } else if (bestWeekX > 175) {
+    contentColMinX = 235
+  }
+
+  // Helper: determine the start Y of a week row on its page
+  function getWeekRowStartY(
+    w: { pageIndex: number; y: number; x: number; val: number },
+    prevW: { pageIndex: number; y: number; x: number; val: number } | null,
+    pageIndex: number
+  ): number {
+    const pItems = pagesItems[pageIndex]
+    const maxAllowedY = pageIndex === 0 ? tableTopP0 : 590
+
+    if (!prevW || prevW.pageIndex !== pageIndex) {
+      // First week starting on this page: check if there is a UNIT heading above it
+      const unitAbove = pItems.find(
+        (it) =>
+          it.y >= w.y &&
+          it.y < maxAllowedY &&
+          it.x >= contentColMinX &&
+          it.x < remarksColMinX &&
+          /^(?:UNIT|TOPIC|CHAPTER)\b/i.test(it.str)
+      )
+      if (unitAbove) return unitAbove.y + 5
+      return pageIndex === 0 ? tableTopP0 : w.y + 5
+    }
+
+    // Previous week was on this same page:
+    // Look for UNIT heading or Milestone between prevW.y - 12 and w.y
+    const unitBetween = pItems.filter(
+      (it) =>
+        it.y < prevW.y - 12 &&
+        it.y >= w.y &&
+        it.x >= contentColMinX &&
+        it.x < remarksColMinX &&
+        (/^(?:UNIT|TOPIC|CHAPTER)\b/i.test(it.str) ||
+          /^(?:END\s*OF\s*UNIT|REVISION\s*WEEK|SEMESTER\s*ASSESSMENT)/i.test(it.str))
+    )
+    if (unitBetween.length > 0) {
+      unitBetween.sort((a, b) => b.y - a.y)
+      return unitBetween[0].y + 5
+    }
+
+    return w.y + 5
+  }
 
   let defaultYearNum = 2026
   try {
@@ -320,28 +396,34 @@ function tryParseTabularWorkPlan(
   const parsedWeeks: ParsedWorkPlanWeek[] = []
   let currentMonth = 'AUGUST'
 
-  for (let i = 0; i < weekStarters.length; i++) {
-    const curW = weekStarters[i]
-    const pIndex = curW.pageIndex
-    const nextW = weekStarters[i + 1]
+  for (let i = 0; i < bestSeq.length; i++) {
+    const curW = bestSeq[i]
+    const prevW = i > 0 ? bestSeq[i - 1] : null
+    const nextW = i < bestSeq.length - 1 ? bestSeq[i + 1] : null
+    const pIdx = curW.pageIndex
 
-    let weekItems: PositionedPdfItem[] = []
+    const rowStartY = getWeekRowStartY(curW, prevW, pIdx)
 
-    // Each week row begins just above its starter digit
-    const topY = curW.y + 5
-
-    if (!nextW || nextW.pageIndex === pIndex) {
-      // Next week is on same page, or this is the last week in document
-      const resItem = pagesItems[pIndex].find((it) => /^RESOURCES?:?$/i.test(it.str))
-      const bottomY = nextW ? nextW.y + 5 : (resItem ? resItem.y : 25)
-      weekItems = pagesItems[pIndex].filter((it) => it.y <= topY && it.y > bottomY)
+    // Row end Y on this page
+    let rowEndY: number
+    if (nextW && nextW.pageIndex === pIdx) {
+      rowEndY = getWeekRowStartY(nextW, curW, pIdx)
     } else {
-      // Week spans across page boundary to next page!
-      const p1Items = pagesItems[pIndex].filter((it) => it.y <= topY && it.y > 25)
-      const nextHeader = (nextW.pageIndex === 0) ? pagesItems[0].find((it) => (it.str === 'TOPIC/ LEARNING OBJECTIVE' || it.str === 'WEEK') && it.y > 350) : null
-      const nextTableTop = nextHeader ? nextHeader.y - 8 : 600
-      const p2Items = pagesItems[nextW.pageIndex].filter((it) => it.y < nextTableTop && it.y > nextW.y + 5)
-      weekItems = [...p1Items, ...p2Items]
+      const resItem = pagesItems[pIdx].find((it) => /^(?:SUPPORTING\s+)?RESOURCES?:?$/i.test(it.str))
+      rowEndY = resItem ? resItem.y : 25
+    }
+
+    let weekItems = pagesItems[pIdx].filter((it) => it.y <= rowStartY && it.y > rowEndY)
+
+    // Multi-page continuation
+    if (nextW && nextW.pageIndex > pIdx) {
+      const nextPIdx = nextW.pageIndex
+      const nextRowStart = getWeekRowStartY(nextW, curW, nextPIdx)
+      // Continuation items are strictly those on nextPIdx above nextRowStart
+      const continuationItems = pagesItems[nextPIdx].filter((it) => it.y < 590 && it.y > nextRowStart)
+      if (continuationItems.length > 0) {
+        weekItems = [...weekItems, ...continuationItems]
+      }
     }
 
     // 1. Month update in x < 100
@@ -352,23 +434,26 @@ function tryParseTabularWorkPlan(
       currentMonth = mItem.str.toUpperCase()
     }
 
-    // 2. Dates in x: [110, 185]
-    const dateItems = weekItems.filter((it) => it.x >= 110 && it.x <= 185 && Math.abs(it.y - curW.y) > 2)
+    // 2. Dates in week gutter
+    const dateItems = weekItems.filter(
+      (it) => it.x < contentColMinX && it.x >= 35 && Math.abs(it.y - curW.y) > 2
+    )
     const termDates = dateItems.map((it) => it.str).join(' ').replace(/\s*–\s*/g, ' – ')
 
-    // 3. Remarks in x >= 640
-    const remarksItems = weekItems.filter((it) => it.x >= 640).map((it) => it.str)
+    // 3. Remarks
+    const remarksItems = weekItems.filter((it) => it.x >= remarksColMinX).map((it) => it.str)
     const remarks = cleanJoinedText(remarksItems.join(' '))
 
-    // 4. Learning Objectives & Topics in x: [180, 640]
-    const colItems = weekItems.filter((it) => it.x >= 180 && it.x <= 640)
+    // 4. Learning Objectives & Topics in content column
+    const colItems = weekItems.filter((it) => it.x >= contentColMinX && it.x < remarksColMinX)
     const visualLines = assembleVisualLines(colItems)
 
     // Filter out everything after "Weekly Lesson Breakdown" or lesson activities
-    const breakdownIdx = visualLines.findIndex((vl) =>
-      /Weekly Lesson Breakdown/i.test(vl.text) ||
-      /^•?\s*Lesson\s*\d+\s*[:\-]/i.test(vl.text) ||
-      /^Activities\s*[:\-]/i.test(vl.text)
+    const breakdownIdx = visualLines.findIndex(
+      (vl) =>
+        /Weekly Lesson Breakdown/i.test(vl.text) ||
+        /^•?\s*Lesson\s*\d+\s*[:\-]/i.test(vl.text) ||
+        /^Activities\s*[:\-]/i.test(vl.text)
     )
     const contentLines = breakdownIdx >= 0 ? visualLines.slice(0, breakdownIdx) : visualLines
 
@@ -390,10 +475,11 @@ function tryParseTabularWorkPlan(
       }
     }
 
-    const CAMBRIDGE_CODE_RE = /^(?:[•*▪▫◦►✓✔\-]\s*)?(\*?[0-9]{1,2}[A-Za-z]{1,4}\.[0-9]{1,3}[A-Za-z0-9\-]*)\s*[:\-]?\s*(.*)/
-    const NUMBERED_LO_RE = /^[•*▪▫◦►✓✔\-]\s*(\d+\.\d+)\s+([^:]+):\s*(.*)/
-    const BULLET_START_RE = /^[•*▪▫◦►✓✔\-\—]\s*(.*)/
-    const TOPIC_PREFIX_RE = /^(?:UNIT|TOPIC|CHAPTER|STRAND|SECTION)\s*(\d+|[A-Z0-9\.\-]+)?[:\.\-]?\s*(.*)/i
+    const CAMBRIDGE_CODE_RE = /^(?:[•*▪▫◦►✓✔\-\—\uF0B7\uF0A7\uFFFD]\s*)?(\*?[0-9]{1,2}[A-Za-z]{1,4}\.[0-9]{1,3}[A-Za-z0-9\-]*)\s*[:\-]?\s*(.*)/
+    const NUMBERED_MATH_LO_RE = /^(\d+)\s*\.\s*(\d+)\s*\.?\s+(.*)/
+    const NUMBERED_LO_RE = /^[•*▪▫◦►✓✔\-\—\uF0B7\uF0A7\uFFFD]\s*(\d+\.\d+)\s+([^:]+):\s*(.*)/
+    const BULLET_START_RE = /^[•*▪▫◦►✓✔\-\—\uF0B7\uF0A7\uFFFD]\s*(.*)/
+    const TOPIC_PREFIX_RE = /^(?:UNIT|TOPIC|CHAPTER|STRAND|SECTION)\s*(\d+|[A-Z0-9\.\-]+)?[:\.\-·]?\s*(.*)/i
     const NUMBERED_SUBTOPIC_RE = /^(\d+\.\d+)\s+([A-Za-z].*)/
     const MILESTONE_RE = /^(?:REVISION\s*WEEK|END\s*OF\s*UNIT\s*TEST|SEMESTER\s*ASSESSMENTS?|END\s*OF\s*FIRST\s*SEMESTER|MID-TERM\s*BREAK|PUBLIC\s*HOLIDAY|PTC)/i
 
@@ -433,6 +519,19 @@ function tryParseTabularWorkPlan(
         continue
       }
 
+      // Numbered Math objective: "1.1. Carry out..."
+      const numMathMatch = text.match(NUMBERED_MATH_LO_RE)
+      if (numMathMatch && isBloomObjective(numMathMatch[3])) {
+        finalizeCurObjective()
+        const code = `${numMathMatch[1]}.${numMathMatch[2]}`
+        curObjective = {
+          code,
+          text: numMathMatch[3].trim(),
+          topic_title: activeTopicOrSubtopic
+        }
+        continue
+      }
+
       // Milestone / Non-instructional event line
       if (MILESTONE_RE.test(text)) {
         finalizeCurObjective()
@@ -457,7 +556,7 @@ function tryParseTabularWorkPlan(
       if (bulletMatch) {
         finalizeCurObjective()
         const objSeq = rawObjectives.length + 1
-        const code = `${defaultSubjectCode ? defaultSubjectCode + '.' : ''}W${curW.weekNum}.${objSeq}`
+        const code = `${defaultSubjectCode ? defaultSubjectCode + '.' : ''}W${curW.val}.${objSeq}`
         curObjective = {
           code,
           text: bulletMatch[1].trim(),
@@ -476,7 +575,7 @@ function tryParseTabularWorkPlan(
       if (isBloomObjective(text)) {
         finalizeCurObjective()
         const objSeq = rawObjectives.length + 1
-        const code = `${defaultSubjectCode ? defaultSubjectCode + '.' : ''}W${curW.weekNum}.${objSeq}`
+        const code = `${defaultSubjectCode ? defaultSubjectCode + '.' : ''}W${curW.val}.${objSeq}`
         curObjective = {
           code,
           text: text.trim(),
@@ -503,8 +602,8 @@ function tryParseTabularWorkPlan(
     const isInstructional = !/(?:REVISION|ASSESSMENT|PTC|EXAM|HOLIDAY|BREAK)/i.test(topic) || rawObjectives.length > 0
 
     parsedWeeks.push({
-      sequence: curW.weekNum,
-      week_label: `Week ${curW.weekNum}`,
+      sequence: curW.val,
+      week_label: `Week ${curW.val}`,
       month_label: currentMonth,
       term_dates: termDates,
       start_date: startDate,
@@ -598,6 +697,12 @@ export async function parseWorkPlanPdf(file: File): Promise<ParsedWorkPlan> {
       else if (subjectName === 'Science') subjectCode = '0893'
       else if (subjectName === 'English') subjectCode = '0861'
       else if (subjectName === 'Global Perspectives') subjectCode = '1129'
+    } else if (framework === 'CAMBRIDGE_PRIMARY') {
+      if (subjectName === 'Computing') subjectCode = '0059'
+      else if (subjectName === 'Mathematics') subjectCode = '0096'
+      else if (subjectName === 'Science') subjectCode = '0097'
+      else if (subjectName === 'English') subjectCode = '0058'
+      else if (subjectName === 'Global Perspectives') subjectCode = '0838'
     } else if (framework === 'CAMBRIDGE_IGCSE') {
       if (subjectName === 'Computer Science') subjectCode = '0478'
       else if (subjectName === 'Economics') subjectCode = '0455'
@@ -650,6 +755,10 @@ export async function parseWorkPlanPdf(file: File): Promise<ParsedWorkPlan> {
       teacherName = m[1].trim()
       break
     }
+  }
+  if (!teacherName) {
+    const lineMatch = headerLines.match(/[·•]\s*([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)+)\s*(?:\||SEMESTER)/)
+    if (lineMatch) teacherName = lineMatch[1].trim()
   }
 
   // 7. Parse Table of Weeks, Term Dates, Topics, Objectives, Coverage
