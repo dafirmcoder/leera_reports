@@ -126,6 +126,25 @@ export function getClassCode(className: string): string {
   return year
 }
 
+/**
+ * Normalizes class names into a canonical year/grade level group.
+ * e.g. "Year 9 ATLANTIC", "Year 9 PACIFIC", "Year 9", "Y9" -> "Year 9"
+ * e.g. "Year 7 A", "Year 7" -> "Year 7"
+ */
+export function getYearLevelFromClassName(className?: string | null): string {
+  if (!className) return ''
+  const clean = className.trim()
+  const m = clean.match(/(?:Year|Grade|Form|Yr|Stage)\s*([0-9]+)/i) || clean.match(/^Y([0-9]+)/i)
+  if (m && m[1]) {
+    return `Year ${m[1]}`
+  }
+  const digitMatch = clean.match(/^([0-9]+)/)
+  if (digitMatch && digitMatch[1]) {
+    return `Year ${digitMatch[1]}`
+  }
+  return clean
+}
+
 export function getYearSuffix(academicYear?: string): string {
   if (!academicYear) return String(new Date().getFullYear()).slice(-2)
   const m = academicYear.match(/([0-9]{4})/)

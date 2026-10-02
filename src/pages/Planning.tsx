@@ -24,6 +24,8 @@ import {
   type ParsedWorkPlanWeek,
   type WorkPlanIngestProgress
 } from '../lib/types'
+import { getYearLevelFromClassName } from '../lib/report'
+import { subjectNamesMatch } from '../lib/api.supabase'
 import PlanningExecutiveDashboard from '../components/dashboards/PlanningExecutiveDashboard'
 import TeacherSyllabusCoverageCard from '../components/dashboards/TeacherSyllabusCoverageCard'
 import { AiStageButton } from '../components/AiStageButton'
@@ -106,6 +108,53 @@ export function findMatchingLessonPlan(
 
     return true
   })
+}
+
+export function findMatchingWorkPlan(
+  plans: WorkPlan[],
+  targetClassId: string,
+  targetSubjectId: string,
+  classes: ClassInfo[],
+  subjects: Subject[]
+): WorkPlan | undefined {
+  if (!targetClassId || !targetSubjectId || !plans || plans.length === 0) return undefined
+
+  // 1. Exact class_id + subject_id match
+  const direct = plans.find((wp) => wp.class_id === targetClassId && wp.subject_id === targetSubjectId)
+  if (direct) return direct
+
+  const targetClass = classes.find((c) => c.id === targetClassId)
+  const targetSubj = subjects.find((s) => s.id === targetSubjectId)
+  const targetYear = getYearLevelFromClassName(targetClass?.name)
+
+  // 2. Direct class_id + harmonized subject match (e.g. ICT vs Computing)
+  if (targetSubj) {
+    const classSubjMatch = plans.find(
+      (wp) =>
+        wp.class_id === targetClassId &&
+        (wp.subject_id === targetSubjectId || subjectNamesMatch(wp.subject_name || '', targetSubj.name))
+    )
+    if (classSubjMatch) return classSubjMatch
+  }
+
+  // 3. Year-level fallback match:
+  // If target class is "Year 9 PACIFIC", look for work plans in "Year 9 ATLANTIC" (or any Year 9 class)
+  // for the same subject (or harmonized subject name).
+  if (targetYear && targetSubj) {
+    const yearLevelMatch = plans.find((wp) => {
+      const wpClass = classes.find((c) => c.id === wp.class_id)
+      const wpClassName = wpClass?.name || wp.class_name || ''
+      const wpYear = getYearLevelFromClassName(wpClassName)
+      const wpSubjName = wp.subject_name || subjects.find((s) => s.id === wp.subject_id)?.name || ''
+      return (
+        wpYear === targetYear &&
+        (wp.subject_id === targetSubjectId || subjectNamesMatch(wpSubjName, targetSubj.name))
+      )
+    })
+    if (yearLevelMatch) return yearLevelMatch
+  }
+
+  return undefined
 }
 
 export interface TeachingActivityStages {
@@ -767,7 +816,7 @@ export default function Planning() {
     const fetchMatchingWp = async () => {
       setLoadingMatchingWp(true)
       try {
-        const match = workPlans.find((wp) => wp.class_id === createLpClassId && wp.subject_id === createLpSubjectId)
+        const match = findMatchingWorkPlan(workPlans, createLpClassId, createLpSubjectId, classes, subjects)
         if (match) {
           const fullWp = await api.getWorkPlan(match.id)
           if (active) {
@@ -807,7 +856,7 @@ export default function Planning() {
     return () => {
       active = false
     }
-  }, [createLpClassId, createLpSubjectId, showCreateLessonPlanModal, workPlans])
+  }, [createLpClassId, createLpSubjectId, showCreateLessonPlanModal, workPlans, classes, subjects])
 
   // Fetch matching work plan for selected lesson plan to allow adding more uncovered objectives
   useEffect(() => {
@@ -817,8 +866,12 @@ export default function Planning() {
     }
     let active = true
     const loadWp = async () => {
-      const match = workPlans.find(
-        (wp) => wp.class_id === selectedLessonPlan.class_id && wp.subject_id === selectedLessonPlan.subject_id
+      const match = findMatchingWorkPlan(
+        workPlans,
+        selectedLessonPlan.class_id,
+        selectedLessonPlan.subject_id,
+        classes,
+        subjects
       )
       if (match) {
         try {
@@ -835,7 +888,7 @@ export default function Planning() {
     return () => {
       active = false
     }
-  }, [selectedLessonPlan?.id, selectedLessonPlan?.class_id, selectedLessonPlan?.subject_id, workPlans])
+  }, [selectedLessonPlan?.id, selectedLessonPlan?.class_id, selectedLessonPlan?.subject_id, workPlans, classes, subjects])
 
   // Extract all objectives and uncovered objectives for the active modal
   const availableLpObjectives = (matchingWorkPlanForLp?.weeks || []).flatMap((w) =>
@@ -1177,8 +1230,15 @@ export default function Planning() {
         setIngestProgress(null)
         setShowImportWorkPlanModal(false)
         setParsedWorkPlan(null)
+        const chosenClass = classes.find((c) => c.id === importWpClassId)
+        const yr = getYearLevelFromClassName(chosenClass?.name)
+        const siblings = yr ? classes.filter((c) => getYearLevelFromClassName(c.name) === yr) : []
+        const multiStreamNote = siblings.length > 1
+          ? ` Shared across all ${yr} classes (${siblings.map((s) => s.name).join(', ')}).`
+          : ''
+
         setSuccess(
-          `Work plan imported successfully! Extracted ${allObjs.length} objectives: ${coveredCount} marked as COVERED, ${uncoveredCount} marked as UNCOVERED for lesson planning (${res.objectivesIngested} new objectives added to curriculum library, zero duplicates).`
+          `Work plan imported successfully!${multiStreamNote} Extracted ${allObjs.length} objectives: ${coveredCount} marked as COVERED, ${uncoveredCount} marked as UNCOVERED for lesson planning (${res.objectivesIngested} new objectives added to curriculum library, zero duplicates).`
         )
         await loadAllPlanningData()
         if (res.workPlanId) {
@@ -4185,6 +4245,19 @@ export default function Planning() {
                     Detected in PDF: <strong>{parsedWorkPlan.class_name}</strong>
                   </span>
                 )}
+                {importWpClassId && (() => {
+                  const chosenClass = classes.find((c) => c.id === importWpClassId)
+                  const yr = getYearLevelFromClassName(chosenClass?.name)
+                  const siblings = yr ? classes.filter((c) => getYearLevelFromClassName(c.name) === yr) : []
+                  if (siblings.length > 1) {
+                    return (
+                      <div style={{ marginTop: 6, padding: '6px 10px', background: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: 6, fontSize: 11.5, color: '#065f46' }}>
+                        ✨ <strong>Multi-Stream Coverage:</strong> All {yr} classes ({siblings.map((s) => s.name).join(', ')}) will automatically share and use this work plan.
+                      </div>
+                    )
+                  }
+                  return null
+                })()}
               </div>
 
               <div>

@@ -474,6 +474,7 @@ export interface Api {
   seedCambridgeFrameworks(): Promise<{ schemesCreated: number }>
   deleteCurriculumScheme(schemeId: string): Promise<void>
   clearCurriculumLibrary(): Promise<void>
+  resetDemoPlanningData(): Promise<{ success: boolean; message: string }>
 
   // teacher timetables & schedule slots
   getTeacherTimetable(teacherId?: string): Promise<{ timetable: TeacherTimetable | null; slots: TeacherScheduleSlot[] }>
