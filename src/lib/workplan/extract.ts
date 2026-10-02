@@ -689,12 +689,23 @@ export function extractWorkplan(pages: PageInput[], options: ExtractOptions = {}
 
       const anchor = findWeekAnchor(row.cells.get('week'), current?.week ?? null);
       const weekCellLines = row.cells.get('week') || [];
-      const dates =
+      let dates =
         weekCellLines
           .filter((l) => l !== anchor?.line)
           .map((l) => tidy(l.text))
           .filter(Boolean)
           .join(' ') || null;
+
+      if (!dates && anchor?.line) {
+        const fullAnchorText = tidy(anchor.line.text);
+        const withoutWeekNum = fullAnchorText
+          .replace(/^WEEK\s*[0-9]{1,2}\s*[:\-–—]?\s*/i, '')
+          .replace(/^[0-9]{1,2}\s*[:\-–—]?\s*/, '')
+          .trim();
+        if (withoutWeekNum && (/\d/.test(withoutWeekNum) || monthFromText(withoutWeekNum))) {
+          dates = withoutWeekNum;
+        }
+      }
 
       if (anchor) {
         const label = tidy(anchor.line.text);

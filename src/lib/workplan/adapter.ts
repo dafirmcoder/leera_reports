@@ -89,6 +89,79 @@ function checkObjectiveMet(code: string, remarks: string | null, remarkCodes: st
   return false
 }
 
+function parseIsoDateRange(
+  datesStr: string | null | undefined,
+  monthStr: string | null | undefined,
+  sessionStr: string | null | undefined
+): { startDate?: string; endDate?: string } {
+  if (!datesStr) return {}
+
+  const isoMatch = datesStr.match(/(\d{4}-\d{2}-\d{2})\s*(?:[–\-—]|to)\s*(\d{4}-\d{2}-\d{2})/)
+  if (isoMatch) {
+    return { startDate: isoMatch[1], endDate: isoMatch[2] }
+  }
+
+  let year = new Date().getFullYear()
+  if (sessionStr) {
+    const yMatch = sessionStr.match(/\b(20\d{2})\b/)
+    if (yMatch) year = parseInt(yMatch[1], 10)
+  }
+
+  const nums = [...datesStr.matchAll(/(?:^|\D)(\d{1,2})(?:st|nd|rd|th)?(?!\d)/gi)].map((m) => parseInt(m[1], 10))
+  if (!nums.length) return {}
+
+  const startDay = nums[0]
+  const endDay = nums.length > 1 ? nums[nums.length - 1] : startDay
+
+  const monthMap: Record<string, number> = {
+    jan: 1, january: 1, feb: 2, february: 2, mar: 3, march: 3,
+    apr: 4, april: 4, may: 5, jun: 6, june: 6, jul: 7, july: 7,
+    aug: 8, august: 8, sep: 9, sept: 9, september: 9,
+    oct: 10, october: 10, nov: 11, november: 11, dec: 12, december: 12
+  }
+
+  const monthsInDates = [...datesStr.matchAll(/\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b/gi)]
+    .map((m) => monthMap[m[1].toLowerCase()])
+
+  let startMonthNum = 0
+  let endMonthNum = 0
+
+  if (monthsInDates.length === 1) {
+    startMonthNum = monthsInDates[0]
+    endMonthNum = monthsInDates[0]
+  } else if (monthsInDates.length >= 2) {
+    startMonthNum = monthsInDates[0]
+    endMonthNum = monthsInDates[1]
+  } else if (monthStr) {
+    const cleanM = monthStr.toLowerCase()
+    for (const [k, v] of Object.entries(monthMap)) {
+      if (cleanM.includes(k)) {
+        startMonthNum = v
+        endMonthNum = v
+        break
+      }
+    }
+  }
+
+  if (startMonthNum && endMonthNum === startMonthNum && startDay > endDay) {
+    endMonthNum = (startMonthNum % 12) + 1
+    if (endMonthNum === 1) year += 1
+  }
+
+  if (startMonthNum > 0 && startDay >= 1 && startDay <= 31) {
+    const sMonthPad = String(startMonthNum).padStart(2, '0')
+    const sDayPad = String(startDay).padStart(2, '0')
+    const eMonthPad = String(endMonthNum || startMonthNum).padStart(2, '0')
+    const eDayPad = String(endDay).padStart(2, '0')
+    return {
+      startDate: `${year}-${sMonthPad}-${sDayPad}`,
+      endDate: `${year}-${eMonthPad}-${eDayPad}`
+    }
+  }
+
+  return {}
+}
+
 /**
  * Adapter that runs the new layout-driven parser and converts its output
  * to the Leera-Reports ParsedWorkPlan structure used by Planning.tsx and api.importWorkPlan.
@@ -149,12 +222,15 @@ export async function parseWorkPlanPdf(
 
     const topicTitle = w.unit || (w.topics.length > 0 ? w.topics[0] : (w.assessments[0] || 'General Curriculum'))
     const subtopicTitle = w.topics.length > 1 ? w.topics.slice(1).join('; ') : undefined
+    const { startDate, endDate } = parseIsoDateRange(w.dates, w.month, doc.session)
 
     return {
       sequence: seq,
       week_label: w.label ? (w.label.toUpperCase().startsWith('WEEK') ? w.label : `Week ${w.label}`) : `Week ${seq}`,
       month_label: w.month || undefined,
       term_dates: w.dates || undefined,
+      start_date: startDate || undefined,
+      end_date: endDate || undefined,
       is_instructional: isInstructional,
       event_label: eventLabel,
       topic_title: topicTitle,

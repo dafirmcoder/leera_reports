@@ -2,6 +2,19 @@ import { jsPDF } from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import type { LessonPlan, School, WorkPlan } from './types'
 import { LEERA_LESSON_PLAN_LOGO_DATA_URL } from './lessonPlanLogo'
+import { renderWorkplanPdf, workPlanToParsedWorkplan } from './render'
+
+/**
+ * Generates Semester Work Plan PDF matching standard LIS landscape layout with embedded logos and font.
+ */
+export async function generateWorkPlanPdf(plan: WorkPlan, school: School): Promise<jsPDF> {
+  const parsed = workPlanToParsedWorkplan(plan, school)
+  return renderWorkplanPdf(parsed, {
+    schoolName: school.name,
+    pageSize: 'a4',
+    footer: true
+  })
+}
 
 // Helper for ordinal day formatting (e.g. 24 -> 24TH)
 function formatOrdinalDay(day: number): string {
@@ -26,9 +39,9 @@ function formatDateRangeOrdinal(startStr?: string | null, endStr?: string | null
 }
 
 /**
- * Generates Semester Work Plan PDF matching CAMBRIFY's exact landscape layout.
+ * Legacy Work Plan PDF generator (fallback)
  */
-export async function generateWorkPlanPdf(plan: WorkPlan, school: School): Promise<jsPDF> {
+export async function generateWorkPlanPdfLegacy(plan: WorkPlan, school: School): Promise<jsPDF> {
   const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'landscape' })
   const pageW = 297
   const margin = 10

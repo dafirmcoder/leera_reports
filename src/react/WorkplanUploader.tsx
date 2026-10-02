@@ -20,7 +20,7 @@
  * it can be dropped into any layout. Override the look with `className` and
  * the `styles` prop when needed.
  */
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, DragEvent, ReactNode } from 'react';
 import {
   downloadFileName,
@@ -31,6 +31,7 @@ import {
   type PdfJsLike,
   type WorkplanRow,
 } from '../lib/workplan';
+import { downloadWorkplanPdf, workplanPdfUrl, type RenderWorkplanOptions } from '../lib/render';
 import { useWorkplanParser } from './useWorkplanParser';
 
 export interface WorkplanUploaderProps {
@@ -52,6 +53,12 @@ export interface WorkplanUploaderProps {
   showResults?: boolean;
   /** Show the per-file JSON/CSV download buttons (default true). */
   downloads?: boolean;
+  /** Show a "work plan PDF" button per document (default true). */
+  workplanPdf?: boolean;
+  /** Open the generated PDF in an inline preview when it is created (default false). */
+  autoPreviewPdf?: boolean;
+  /** Options forwarded to the standard work plan PDF generator. */
+  pdfOptions?: RenderWorkplanOptions;
   /** Extra content rendered under everything. */
   children?: ReactNode;
   className?: string;
@@ -85,6 +92,9 @@ export function WorkplanUploader({
   hint = 'Drop the LIS work plan PDFs here, or click to choose files. Nothing leaves the browser.',
   showResults = true,
   downloads = true,
+  workplanPdf = true,
+  autoPreviewPdf = false,
+  pdfOptions,
   children,
   className,
   styles,
@@ -92,6 +102,7 @@ export function WorkplanUploader({
   const { parseMany, docs, rows, busy, progress, errors, reset } = useWorkplanParser({ pdfjs });
   const [dragging, setDragging] = useState(false);
   const [openDoc, setOpenDoc] = useState<string | null>(null);
+  const [previewUrls, setPreviewUrls] = useState<Record<string, string>>({});
   const inputRef = useRef<HTMLInputElement>(null);
   const attempts: Attempt[] = useMemo(
     () => errors.filter((e) => !!e.file).map((e) => ({ name: e.file as string, error: e.message })),
@@ -109,9 +120,46 @@ export function WorkplanUploader({
       if (parsed.length) {
         onParsed?.(parsed);
         onRows?.(parsed.flatMap((d) => toFlatRows(d)));
+        if (autoPreviewPdf) {
+          const keyOf = (d: ParsedWorkplan) => d.fileName ?? `doc-${d.weeks.length}`;
+          setPreviewUrls((prev) => {
+            const next = { ...prev };
+            for (const d of parsed) {
+              const k = keyOf(d);
+              if (!next[k]) next[k] = workplanPdfUrl(d, pdfOptions);
+            }
+            return next;
+          });
+        }
       }
     },
-    [multiple, onParsed, onRows, parseMany],
+    [autoPreviewPdf, multiple, onParsed, onRows, parseMany, pdfOptions],
+  );
+
+  const togglePreview = useCallback(
+    (doc: ParsedWorkplan, key: string) => {
+      setPreviewUrls((prev) => {
+        if (prev[key]) {
+          URL.revokeObjectURL(prev[key]);
+          const next = { ...prev };
+          delete next[key];
+          return next;
+        }
+        return { ...prev, [key]: workplanPdfUrl(doc, pdfOptions) };
+      });
+    },
+    [pdfOptions],
+  );
+
+  // release the object URLs when the component goes away
+  useEffect(
+    () => () => {
+      setPreviewUrls((prev) => {
+        for (const url of Object.values(prev)) URL.revokeObjectURL(url);
+        return prev;
+      });
+    },
+    [],
   );
 
   const onDrop = (e: DragEvent<HTMLDivElement>) => {
@@ -257,7 +305,21 @@ export function WorkplanUploader({
                   )}
 
                   {downloads && (
-                    <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                    <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+                      {workplanPdf && (
+                        <button
+                          type="button"
+                          style={{ ...s.smallButton, ...s.primarySmall }}
+                          onClick={() => downloadWorkplanPdf(doc, pdfOptions)}
+                        >
+                          Download work plan PDF
+                        </button>
+                      )}
+                      {workplanPdf && (
+                        <button type="button" style={s.smallButton} onClick={() => togglePreview(doc, key)}>
+                          {previewUrls[key] ? 'Hide PDF preview' : 'Preview work plan PDF'}
+                        </button>
+                      )}
                       <button
                         type="button"
                         style={s.smallButton}
@@ -277,6 +339,14 @@ export function WorkplanUploader({
                         Download CSV
                       </button>
                     </div>
+                  )}
+
+                  {workplanPdf && previewUrls[key] && (
+                    <iframe
+                      title={`work plan PDF — ${doc.fileName ?? 'document'}`}
+                      src={previewUrls[key]}
+                      style={s.pdfFrame}
+                    />
                   )}
                 </div>
               )}
@@ -330,6 +400,20 @@ const s: Record<string, CSSProperties> = {
     fontSize: 13,
     cursor: 'pointer',
     padding: 4,
+  },
+  primarySmall: {
+    background: '#0f172a',
+    borderColor: '#0f172a',
+    color: '#fff',
+    fontWeight: 600,
+  },
+  pdfFrame: {
+    width: '100%',
+    height: 460,
+    marginTop: 10,
+    border: '1px solid #e2e8f0',
+    borderRadius: 10,
+    background: '#fff',
   },
   smallButton: {
     background: '#fff',

@@ -28,6 +28,7 @@ import PlanningExecutiveDashboard from '../components/dashboards/PlanningExecuti
 import TeacherSyllabusCoverageCard from '../components/dashboards/TeacherSyllabusCoverageCard'
 import { AiStageButton } from '../components/AiStageButton'
 import { GeminiApiKeyModal } from '../components/GeminiApiKeyModal'
+import { WorkplanPdfModal } from '../react'
 import {
   generateAllStages,
   hasGeminiApiKey,
@@ -5308,24 +5309,12 @@ export default function Planning() {
       {/* ===================================================================== */}
       {/* MODAL: PDF VIEWER PREVIEW                                             */}
       {/* ===================================================================== */}
-      {showPdfPreviewModal && pdfPreviewUrl && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 110, padding: 16 }}>
-          <div className="card" style={{ width: '100%', maxWidth: 960, height: '90vh', display: 'flex', flexDirection: 'column', padding: 16 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-              <h3 style={{ margin: 0, fontSize: 15 }}>{pdfPreviewTitle}</h3>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <a href={pdfPreviewUrl} download={`${pdfPreviewTitle}.pdf`} className="btn btn-primary btn-small">
-                  💾 Download PDF
-                </a>
-                <button className="btn btn-ghost btn-small" onClick={() => setShowPdfPreviewModal(false)}>
-                  ✕ Close
-                </button>
-              </div>
-            </div>
-            <iframe src={pdfPreviewUrl} style={{ width: '100%', flex: 1, border: 'none', borderRadius: 8 }} title="PDF Preview" />
-          </div>
-        </div>
-      )}
+      <WorkplanPdfModal
+        isOpen={showPdfPreviewModal && !!pdfPreviewUrl}
+        onClose={() => setShowPdfPreviewModal(false)}
+        url={pdfPreviewUrl}
+        title={pdfPreviewTitle}
+      />
 
       {/* ===================================================================== */}
       {/* MODAL: GEMINI API KEY CONFIGURATION                                   */}
