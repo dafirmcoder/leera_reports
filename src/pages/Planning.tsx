@@ -4,7 +4,7 @@ import { useSchool } from '../context/SchoolContext'
 import { api } from '../lib/api'
 import { can } from '../lib/permissions'
 import { parseSyllabusPdf, type ExtractedSyllabus } from '../lib/syllabusPdfParser'
-import { parseWorkPlanPdf, type WorkPlanParseProgress } from '../lib/workPlanPdfParser'
+import { parseWorkPlanPdf, type WorkPlanParseProgress } from '../lib/workplan'
 import { parseTeacherTimetablePdf } from '../lib/timetablePdfParser'
 import { generateLessonPlanPdf, generateWorkPlanPdf } from '../lib/planningPdf'
 import {
