@@ -157,6 +157,46 @@ export function findMatchingWorkPlan(
   return undefined
 }
 
+export function harmonizeYearGroupWorkPlans(
+  plans: WorkPlan[],
+  classes: ClassInfo[],
+  subjects: Subject[]
+): boolean {
+  let changed = false
+  const groups = new Map<string, WorkPlan[]>()
+
+  for (const p of plans) {
+    const cls = classes.find((c) => c.id === p.class_id)
+    const yr = getYearLevelFromClassName(cls?.name || p.class_name)
+    if (!yr) continue
+    const subj = subjects.find((s) => s.id === p.subject_id)
+    const subjKey = subj?.name.trim().toLowerCase() || p.subject_name?.trim().toLowerCase() || p.subject_id
+    const key = `${p.academic_year || ''}_${p.semester || '1'}_${subjKey}_${yr}`
+    const list = groups.get(key) || []
+    list.push(p)
+    groups.set(key, list)
+  }
+
+  for (const [, group] of groups) {
+    if (group.length <= 1) continue
+    const weekCounts = group.map((p) => p.weeks?.length || 0).filter((c) => c > 0)
+    if (weekCounts.length === 0) continue
+    const minWeeks = Math.min(...weekCounts)
+    const maxWeeks = Math.max(...weekCounts)
+
+    if (minWeeks > 0 && maxWeeks > minWeeks) {
+      for (const p of group) {
+        if ((p.weeks?.length || 0) > minWeeks) {
+          p.weeks = p.weeks!.slice(0, minWeeks)
+          changed = true
+        }
+      }
+    }
+  }
+
+  return changed
+}
+
 export interface TeachingActivityStages {
   starter: string
   exposition: string
@@ -533,6 +573,7 @@ export default function Planning() {
         }
       })
 
+      harmonizeYearGroupWorkPlans(synchedWps, classes, subjects)
       setWorkPlans(synchedWps)
       setLessonPlans(lps)
 
@@ -975,7 +1016,12 @@ export default function Planning() {
           setError('Draft work plans are only visible once submitted.')
           return
         }
-        setSelectedWorkPlan(wp)
+        const allPlans = [...workPlans]
+        const wpIdx = allPlans.findIndex((p) => p.id === wp.id)
+        if (wpIdx >= 0) allPlans[wpIdx] = wp
+        else allPlans.push(wp)
+        harmonizeYearGroupWorkPlans(allPlans, classes, subjects)
+        setSelectedWorkPlan(allPlans.find((p) => p.id === wp.id) || wp)
       }
     } catch (e: any) {
       setError(e?.message || 'Failed to load work plan details.')
@@ -2406,11 +2452,12 @@ export default function Planning() {
 
                 // Match Full Syllabus Scheme
                 const matchingScheme = schemes.find(
-                  (s) => s.id === selectedWorkPlan.scheme_id ||
-                    s.subject_code === selectedWorkPlan.subject_id ||
-                    s.subject_name?.toLowerCase().trim() === selectedWorkPlan.subject_name?.toLowerCase().trim()
+                  (s) => (selectedWorkPlan.scheme_id && s.id === selectedWorkPlan.scheme_id) ||
+                    (s.subject_code && selectedWorkPlan.subject_id && s.subject_code === selectedWorkPlan.subject_id) ||
+                    (s.subject_name && selectedWorkPlan.subject_name && subjectNamesMatch(s.subject_name, selectedWorkPlan.subject_name))
                 )
-                const totalSyllabusObjs = matchingScheme?.objectives_count || allObjs.length
+                const hasRealSyllabus = Boolean(matchingScheme && matchingScheme.objectives_count && matchingScheme.objectives_count > 0)
+                const totalSyllabusObjs = hasRealSyllabus ? matchingScheme!.objectives_count! : 0
                 const sylPct = totalSyllabusObjs > 0 ? Math.min(100, Math.round((coveredCount / totalSyllabusObjs) * 100)) : 0
 
                 return (
@@ -2432,11 +2479,18 @@ export default function Planning() {
                         <div style={{ fontSize: 11, color: '#0f766e', fontWeight: 700 }}>1. WORK PLAN COVERAGE</div>
                         <div style={{ fontSize: 19, fontWeight: 800, color: '#0f766e' }}>{wpPct}%</div>
                       </div>
-                      {totalSyllabusObjs > 0 && (
+                      {hasRealSyllabus ? (
                         <div style={{ textAlign: 'center' }}>
                           <div style={{ fontSize: 11, color: '#4C2570', fontWeight: 700 }}>2. SYLLABUS COVERAGE</div>
                           <div style={{ fontSize: 19, fontWeight: 800, color: '#4C2570' }}>
                             {sylPct}% <span style={{ fontSize: 11, color: '#64748b' }}>({coveredCount}/{totalSyllabusObjs})</span>
+                          </div>
+                        </div>
+                      ) : (
+                        <div style={{ textAlign: 'center', opacity: 0.75 }}>
+                          <div style={{ fontSize: 11, color: '#64748b', fontWeight: 700 }}>2. SYLLABUS COVERAGE</div>
+                          <div style={{ fontSize: 12, fontWeight: 600, color: '#64748b', marginTop: 4 }}>
+                            No Syllabus Uploaded
                           </div>
                         </div>
                       )}

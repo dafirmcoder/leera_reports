@@ -2287,6 +2287,7 @@ export const supabaseApi: Api = {
 
   async deleteCurriculumScheme(schemeId: string): Promise<void> {
     try {
+      await db().from('work_plans').update({ scheme_id: null }).eq('scheme_id', schemeId)
       await db().from('curriculum_objectives').delete().eq('scheme_id', schemeId)
       await db().from('curriculum_topics').delete().eq('scheme_id', schemeId)
       await db().from('curriculum_schemes').delete().eq('id', schemeId)
@@ -2306,11 +2307,24 @@ export const supabaseApi: Api = {
         delete customSchemes[schemeId]
         localStorage.setItem('leera_custom_schemes_detail', JSON.stringify(customSchemes))
       }
+      // Unlink scheme_id in cached work plans
+      const localPlans: WorkPlan[] = JSON.parse(localStorage.getItem('leera_work_plans') || '[]')
+      let plansUpdated = false
+      localPlans.forEach((p) => {
+        if (p.scheme_id === schemeId) {
+          p.scheme_id = null
+          plansUpdated = true
+        }
+      })
+      if (plansUpdated) {
+        localStorage.setItem('leera_work_plans', JSON.stringify(localPlans))
+      }
     } catch {}
   },
 
   async clearCurriculumLibrary(): Promise<void> {
     try {
+      await db().from('work_plans').update({ scheme_id: null }).neq('id', '00000000-0000-0000-0000-000000000000')
       await db().from('curriculum_objectives').delete().neq('id', '00000000-0000-0000-0000-000000000000')
       await db().from('curriculum_topics').delete().neq('id', '00000000-0000-0000-0000-000000000000')
       await db().from('curriculum_schemes').delete().neq('id', '00000000-0000-0000-0000-000000000000')
@@ -2321,6 +2335,9 @@ export const supabaseApi: Api = {
     try {
       localStorage.removeItem('leera_curriculum_schemes')
       localStorage.removeItem('leera_custom_schemes_detail')
+      const localPlans: WorkPlan[] = JSON.parse(localStorage.getItem('leera_work_plans') || '[]')
+      localPlans.forEach((p) => { p.scheme_id = null })
+      localStorage.setItem('leera_work_plans', JSON.stringify(localPlans))
     } catch {}
   },
 
@@ -2804,6 +2821,22 @@ export const supabaseApi: Api = {
     objectives?: Array<{ objective_id?: string; code_snapshot: string; text_snapshot: string; is_met?: boolean }>
   }>): Promise<void> {
     try {
+      // 1. Purge stale weeks for this work plan that are not in the new weeks list
+      const incomingSequences = weeks.map((w) => w.sequence)
+      const { data: existingWeeks } = await db()
+        .from('work_plan_weeks')
+        .select('id, sequence')
+        .eq('work_plan_id', workPlanId)
+
+      if (existingWeeks && existingWeeks.length > 0) {
+        const staleWeeks = existingWeeks.filter((ew: any) => !incomingSequences.includes(ew.sequence))
+        if (staleWeeks.length > 0) {
+          const staleIds = staleWeeks.map((sw: any) => sw.id)
+          await db().from('work_plan_week_objectives').delete().in('work_plan_week_id', staleIds)
+          await db().from('work_plan_weeks').delete().in('id', staleIds)
+        }
+      }
+
       for (const w of weeks) {
         let weekId = w.id
         const weekPayload = {
@@ -2826,22 +2859,35 @@ export const supabaseApi: Api = {
         if (weekId && !weekId.startsWith('week-')) {
           await db().from('work_plan_weeks').update(weekPayload).eq('id', weekId)
         } else {
-          const { data: insWeek } = await db().from('work_plan_weeks').upsert(weekPayload, { onConflict: 'work_plan_id,sequence' }).select().single()
+          const { data: insWeek } = await db()
+            .from('work_plan_weeks')
+            .upsert(weekPayload, { onConflict: 'work_plan_id,sequence' })
+            .select()
+            .single()
           if (insWeek) weekId = insWeek.id
         }
 
-        // Save week objectives
+        // Save week objectives with deduplication by code_snapshot within the week
         if (weekId && w.objectives) {
           await db().from('work_plan_week_objectives').delete().eq('work_plan_week_id', weekId)
           if (w.objectives.length > 0) {
-            const objRows = w.objectives.map((o) => ({
-              work_plan_week_id: weekId,
-              objective_id: o.objective_id || null,
-              code_snapshot: o.code_snapshot,
-              text_snapshot: o.text_snapshot,
-              is_met: !!o.is_met
-            }))
-            await db().from('work_plan_week_objectives').insert(objRows)
+            const seenCodes = new Set<string>()
+            const objRows: any[] = []
+            for (const o of w.objectives) {
+              const codeKey = (o.code_snapshot || o.text_snapshot || '').trim().toLowerCase()
+              if (!codeKey || seenCodes.has(codeKey)) continue
+              seenCodes.add(codeKey)
+              objRows.push({
+                work_plan_week_id: weekId,
+                objective_id: o.objective_id || null,
+                code_snapshot: o.code_snapshot || '',
+                text_snapshot: o.text_snapshot || '',
+                is_met: !!o.is_met
+              })
+            }
+            if (objRows.length > 0) {
+              await db().from('work_plan_week_objectives').insert(objRows)
+            }
           }
         }
       }
@@ -2853,32 +2899,42 @@ export const supabaseApi: Api = {
     const localPlans: WorkPlan[] = JSON.parse(localStorage.getItem('leera_work_plans') || '[]')
     const p = localPlans.find((plan) => plan.id === workPlanId)
     if (p) {
-      p.weeks = weeks.map((w, idx) => ({
-        id: w.id || `week-${workPlanId}-${idx + 1}`,
-        work_plan_id: workPlanId,
-        sequence: w.sequence,
-        week_label: w.week_label,
-        month_label: w.month_label || '',
-        start_date: w.start_date || null,
-        end_date: w.end_date || null,
-        is_instructional: w.is_instructional,
-        event_label: w.event_label || '',
-        topic_id: w.topic_id || null,
-        topic_title: w.topic_title || '',
-        challenge_title: w.challenge_title || '',
-        subtopic_title: w.subtopic_title || '',
-        lessons_per_week: w.lessons_per_week || 1,
-        remarks: w.remarks || '',
-        objectives: (w.objectives || []).map((o, oidx) => ({
-          id: `wpo-${idx}-${oidx}`,
-          work_plan_week_id: w.id || `week-${workPlanId}-${idx + 1}`,
-          objective_id: o.objective_id || null,
-          code_snapshot: o.code_snapshot,
-          text_snapshot: o.text_snapshot,
-          is_met: !!o.is_met,
-          met_at: null
-        }))
-      }))
+      p.weeks = weeks.map((w, idx) => {
+        const seenCodes = new Set<string>()
+        const cleanObjectives = (w.objectives || []).filter((o) => {
+          const codeKey = (o.code_snapshot || o.text_snapshot || '').trim().toLowerCase()
+          if (!codeKey || seenCodes.has(codeKey)) return false
+          seenCodes.add(codeKey)
+          return true
+        })
+
+        return {
+          id: w.id || `week-${workPlanId}-${idx + 1}`,
+          work_plan_id: workPlanId,
+          sequence: w.sequence,
+          week_label: w.week_label,
+          month_label: w.month_label || '',
+          start_date: w.start_date || null,
+          end_date: w.end_date || null,
+          is_instructional: w.is_instructional,
+          event_label: w.event_label || '',
+          topic_id: w.topic_id || null,
+          topic_title: w.topic_title || '',
+          challenge_title: w.challenge_title || '',
+          subtopic_title: w.subtopic_title || '',
+          lessons_per_week: w.lessons_per_week || 1,
+          remarks: w.remarks || '',
+          objectives: cleanObjectives.map((o, oidx) => ({
+            id: `wpo-${idx}-${oidx}`,
+            work_plan_week_id: w.id || `week-${workPlanId}-${idx + 1}`,
+            objective_id: o.objective_id || null,
+            code_snapshot: o.code_snapshot,
+            text_snapshot: o.text_snapshot,
+            is_met: !!o.is_met,
+            met_at: null
+          }))
+        }
+      })
       p.updated_at = new Date().toISOString()
       localStorage.setItem('leera_work_plans', JSON.stringify(localPlans))
     }
@@ -2954,66 +3010,8 @@ export const supabaseApi: Api = {
             }
           }
         }
-
-        // 3c. Still no match – create a fresh scheme
-        if (!schemeId) {
-          const { data: createdScheme } = await db()
-            .from('curriculum_schemes')
-            .insert({
-              school_id: school?.id || null,
-              framework,
-              subject_code: cleanCode,
-              subject_name: subjName,
-              year_group: 'General',
-              title: `${subjName} (${cleanCode})`,
-              syllabus_years: '2023-2027',
-              is_active: true
-            })
-            .select()
-            .single()
-
-          if (createdScheme) schemeId = createdScheme.id
-        }
-      }
-
-      // 4. Ingest and Deduplicate Objectives
-      if (schemeId) {
-        onProgress?.({ percent: 55, stage: 'Ingesting & deduplicating learning objectives...', detail: 'Comparing with existing curriculum library' })
-        const { data: existingObjs } = await db()
-          .from('curriculum_objectives')
-          .select('code')
-          .eq('scheme_id', schemeId)
-
-        const existingCodes = new Set((existingObjs || []).map((o: any) => o.code.trim().toLowerCase()))
-        const toInsert: any[] = []
-        let seqCounter = (existingObjs?.length || 0) + 1
-
-        for (const w of input.weeks) {
-          for (const obj of (w.objectives || [])) {
-            const normCode = obj.code.trim().toLowerCase()
-            if (!normCode) continue
-
-            if (existingCodes.has(normCode)) {
-              objectivesSkipped++
-            } else {
-              existingCodes.add(normCode)
-              toInsert.push({
-                scheme_id: schemeId,
-                topic_id: null,
-                code: obj.code.trim(),
-                text: obj.text.trim(),
-                subtopic: '',
-                challenge_title: obj.challenge_title || w.challenge_title || '',
-                sequence: seqCounter++
-              })
-              objectivesIngested++
-            }
-          }
-        }
-
-        if (toInsert.length > 0) {
-          await db().from('curriculum_objectives').insert(toInsert)
-        }
+        // NOTE: We do NOT auto-create a curriculum_scheme here if no syllabus was uploaded.
+        // A work plan upload only links to an existing syllabus scheme if one exists.
       }
 
       // 5. Create or Update Work Plan
@@ -3139,54 +3137,9 @@ export const supabaseApi: Api = {
     // Primary: match by subject_code; secondary: match by normalised subject name (harmonization)
     const localSubjects = await this.listSubjects().catch(() => [])
     const localSubjName = localSubjects.find((s) => s.id === input.subject_id)?.name || 'Subject'
-    let foundScheme = localSchemes.find((s) => s.subject_code === cleanCode)
+    const foundScheme = localSchemes.find((s) => s.subject_code === cleanCode)
       || localSchemes.find((s) => subjectNamesMatch(s.subject_name, localSubjName))
-    if (!foundScheme) {
-      foundScheme = {
-        id: `scheme-${cleanCode}-${Date.now()}`,
-        school_id: school?.id || null,
-        framework: input.framework || (cleanCode.startsWith('9') ? 'CAMBRIDGE_AS_A_LEVEL' : cleanCode.startsWith('0') ? 'CAMBRIDGE_IGCSE' : 'CAMBRIDGE_LOWER_SECONDARY'),
-        subject_code: cleanCode,
-        subject_name: localSubjName,
-        year_group: 'General',
-        title: `${localSubjName} (${cleanCode})`,
-        syllabus_years: '2023-2027',
-        is_active: true
-      }
-      localSchemes.push(foundScheme)
-      localStorage.setItem('leera_curriculum_schemes', JSON.stringify(localSchemes))
-    }
-    schemeId = foundScheme.id
-
-    // Deduplicate in custom scheme details
-    const customSchemes = JSON.parse(localStorage.getItem('leera_custom_schemes_detail') || '{}')
-    const detail = customSchemes[schemeId] || { scheme: foundScheme, topics: [], objectives: [] }
-    const localObjCodes = new Set(detail.objectives.map((o: any) => o.code.trim().toLowerCase()))
-
-    for (const w of input.weeks) {
-      for (const obj of (w.objectives || [])) {
-        const normCode = obj.code.trim().toLowerCase()
-        if (!normCode) continue
-        if (localObjCodes.has(normCode)) {
-          objectivesSkipped++
-        } else {
-          localObjCodes.add(normCode)
-          detail.objectives.push({
-            id: `obj-${schemeId}-${detail.objectives.length + 1}`,
-            scheme_id: schemeId,
-            topic_id: null,
-            code: obj.code.trim(),
-            text: obj.text.trim(),
-            subtopic: '',
-            challenge_title: obj.challenge_title || w.challenge_title || '',
-            sequence: detail.objectives.length + 1
-          })
-          objectivesIngested++
-        }
-      }
-    }
-    customSchemes[schemeId] = detail
-    localStorage.setItem('leera_custom_schemes_detail', JSON.stringify(customSchemes))
+    schemeId = foundScheme ? foundScheme.id : null
 
     // Create work plan in local storage across all classes in the same Year Level
     const classes = await this.listClasses()
