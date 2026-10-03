@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import type { CurriculumScheme, LessonPlan, WorkPlan } from '../../lib/types'
+import { subjectNamesMatch } from '../../lib/api.supabase'
 
 interface Props {
   teacherId?: string
@@ -71,23 +72,22 @@ export default function TeacherSyllabusCoverageCard({
     ? Math.min(100, Math.round((coveredWpObjectives / totalWpObjectives) * 100))
     : 0
 
-  // 2. FULL SYLLABUS / CURRICULUM METRICS
-  const linkedSchemes = schemes.filter((s) => myWorkPlans.some((wp) => wp.scheme_id === s.id))
-  const subjectSchemes = schemes.filter((s) =>
-    myWorkPlans.some((wp) => wp.subject_id === s.subject_code || wp.subject_name?.toLowerCase().trim() === s.subject_name?.toLowerCase().trim())
+  // 2. FULL SYLLABUS / CURRICULUM METRICS (only count authentic uploaded syllabuses, not auto-generated General placeholders)
+  const validSchemes = (schemes || []).filter((s) => s.year_group !== 'General' && (s.objectives_count || 0) > 0)
+  const linkedSchemes = validSchemes.filter((s) => myWorkPlans.some((wp) => wp.scheme_id === s.id))
+  const subjectSchemes = validSchemes.filter((s) =>
+    myWorkPlans.some((wp) => wp.subject_id === s.subject_code || (wp.subject_name && subjectNamesMatch(wp.subject_name, s.subject_name)))
   )
-  const activeSchemes = linkedSchemes.length > 0 ? linkedSchemes : (subjectSchemes.length > 0 ? subjectSchemes : schemes)
+  const activeSchemes = linkedSchemes.length > 0 ? linkedSchemes : subjectSchemes
+  const hasSyllabus = activeSchemes.length > 0
 
-  let totalSyllabusObjectives = activeSchemes.reduce((acc, s) => acc + (s.objectives_count || 0), 0)
-  if (totalSyllabusObjectives === 0 && totalWpObjectives > 0) {
-    totalSyllabusObjectives = totalWpObjectives
-  }
+  const totalSyllabusObjectives = hasSyllabus ? activeSchemes.reduce((acc, s) => acc + (s.objectives_count || 0), 0) : 0
 
   const totalSyllabusCovered = coveredWpObjectives > 0
     ? coveredWpObjectives
     : new Set([...uniqueCoveredCodes, ...lessonPlanCoveredCodes]).size
 
-  const syllabusCoveragePct = totalSyllabusObjectives > 0
+  const syllabusCoveragePct = hasSyllabus && totalSyllabusObjectives > 0
     ? Math.min(100, Math.round((totalSyllabusCovered / totalSyllabusObjectives) * 100))
     : 0
 
@@ -116,16 +116,20 @@ export default function TeacherSyllabusCoverageCard({
     }).length
     const thisWpPct = totalObjs > 0 ? Math.min(100, Math.round((coveredCount / totalObjs) * 100)) : 0
 
-    const matchingScheme = schemes.find(
-      (s) => s.id === wp.scheme_id || s.subject_code === wp.subject_id || s.subject_name?.toLowerCase().trim() === wp.subject_name?.toLowerCase().trim()
+    const matchingScheme = validSchemes.find(
+      (s) => (wp.scheme_id && s.id === wp.scheme_id) ||
+        (s.subject_code && wp.subject_id && s.subject_code === wp.subject_id) ||
+        (s.subject_name && wp.subject_name && subjectNamesMatch(s.subject_name, wp.subject_name))
     )
-    const schemeObjsCount = matchingScheme?.objectives_count || totalObjs
+    const hasItemSyllabus = Boolean(matchingScheme && (matchingScheme.objectives_count || 0) > 0)
+    const schemeObjsCount = hasItemSyllabus ? matchingScheme!.objectives_count! : 0
     const thisSylPct = schemeObjsCount > 0 ? Math.min(100, Math.round((coveredCount / schemeObjsCount) * 100)) : 0
 
     return {
       id: wp.id,
       title: `${wp.subject_name || 'Subject'} — ${wp.class_name || 'Class'}`,
-      schemeTitle: matchingScheme ? `${matchingScheme.title} (${matchingScheme.year_group})` : 'Curriculum Framework',
+      schemeTitle: hasItemSyllabus ? `${matchingScheme!.title} (${matchingScheme!.year_group})` : 'No Syllabus Linked',
+      hasSyllabus: hasItemSyllabus,
       wpTotal: totalObjs,
       wpCovered: coveredCount,
       wpPct: thisWpPct,
@@ -236,25 +240,46 @@ export default function TeacherSyllabusCoverageCard({
         >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
             <div>
-              <span style={{ fontSize: 11, fontWeight: 800, color: '#4C2570', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+              <span style={{ fontSize: 11, fontWeight: 800, color: hasSyllabus ? '#4C2570' : '#64748b', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                 2. Full Syllabus Coverage
               </span>
-              <div style={{ fontSize: 20, fontWeight: 800, color: '#0f172a', marginTop: 2 }}>
-                {totalSyllabusCovered} <span style={{ fontSize: 13, color: '#64748b', fontWeight: 600 }}>/ {totalSyllabusObjectives || '—'} Objectives</span>
-              </div>
+              {hasSyllabus ? (
+                <div style={{ fontSize: 20, fontWeight: 800, color: '#0f172a', marginTop: 2 }}>
+                  {totalSyllabusCovered} <span style={{ fontSize: 13, color: '#64748b', fontWeight: 600 }}>/ {totalSyllabusObjectives} Objectives</span>
+                </div>
+              ) : (
+                <div style={{ fontSize: 15, fontWeight: 700, color: '#64748b', marginTop: 4 }}>
+                  No Syllabus Uploaded
+                </div>
+              )}
             </div>
-            <span
-              style={{
-                padding: '3px 8px',
-                borderRadius: 9999,
-                fontSize: 11,
-                fontWeight: 700,
-                backgroundColor: sylStatus.bg,
-                color: sylStatus.text
-              }}
-            >
-              {syllabusCoveragePct}% ({sylStatus.label})
-            </span>
+            {hasSyllabus ? (
+              <span
+                style={{
+                  padding: '3px 8px',
+                  borderRadius: 9999,
+                  fontSize: 11,
+                  fontWeight: 700,
+                  backgroundColor: sylStatus.bg,
+                  color: sylStatus.text
+                }}
+              >
+                {syllabusCoveragePct}% ({sylStatus.label})
+              </span>
+            ) : (
+              <span
+                style={{
+                  padding: '3px 8px',
+                  borderRadius: 9999,
+                  fontSize: 11,
+                  fontWeight: 600,
+                  backgroundColor: '#f1f5f9',
+                  color: '#64748b'
+                }}
+              >
+                Pending
+              </span>
+            )}
           </div>
 
           {/* Progress Bar */}
@@ -262,7 +287,7 @@ export default function TeacherSyllabusCoverageCard({
             <div
               style={{
                 height: '100%',
-                width: `${Math.max(3, syllabusCoveragePct)}%`,
+                width: hasSyllabus ? `${Math.max(3, syllabusCoveragePct)}%` : '0%',
                 backgroundColor: '#4C2570',
                 borderRadius: 9999,
                 transition: 'width 0.4s ease'
@@ -270,7 +295,9 @@ export default function TeacherSyllabusCoverageCard({
             />
           </div>
           <div style={{ fontSize: 11, color: '#64748b' }}>
-            Total curriculum syllabus objectives mastered across the full academic year.
+            {hasSyllabus
+              ? 'Total curriculum syllabus objectives mastered across the full academic year.'
+              : 'Upload official Cambridge syllabus in Curriculum Schemes to track full year coverage.'}
           </div>
         </div>
       </div>
@@ -297,7 +324,7 @@ export default function TeacherSyllabusCoverageCard({
                   <strong style={{ fontSize: 13, color: '#0f172a' }}>{item.title}</strong>
                   <span style={{ fontSize: 11, fontWeight: 700, color: '#0f766e' }}>{item.wpPct}% WP</span>
                 </div>
-                <div style={{ fontSize: 11, color: '#64748b', marginBottom: 8 }}>
+                <div style={{ fontSize: 11, color: item.hasSyllabus ? '#64748b' : '#94a3b8', marginBottom: 8 }}>
                   Framework: {item.schemeTitle}
                 </div>
 
@@ -313,7 +340,7 @@ export default function TeacherSyllabusCoverageCard({
                     </div>
                   </div>
 
-                  {item.sylTotal > 0 && (
+                  {item.hasSyllabus ? (
                     <div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
                         <span>Full Cambridge Syllabus:</span>
@@ -321,6 +348,13 @@ export default function TeacherSyllabusCoverageCard({
                       </div>
                       <div style={{ width: '100%', height: 5, backgroundColor: '#f1f5f9', borderRadius: 9999, overflow: 'hidden' }}>
                         <div style={{ width: `${item.sylPct}%`, height: '100%', backgroundColor: '#4C2570', borderRadius: 9999 }} />
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2, color: '#94a3b8' }}>
+                        <span>Full Cambridge Syllabus:</span>
+                        <span style={{ fontStyle: 'italic', fontSize: 10.5 }}>No Syllabus Uploaded</span>
                       </div>
                     </div>
                   )}

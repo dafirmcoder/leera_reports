@@ -2006,8 +2006,20 @@ export const supabaseApi: Api = {
       if (framework) q = q.eq('framework', framework)
       const { data, error } = await q.order('subject_name').order('year_group')
       if (!error && data) {
-        // Fetch objective counts from curriculum_objectives
-        const schemeIds = data.map((s: any) => s.id)
+        // Purge any residual ghost schemes created by old work plan imports (year_group 'General')
+        const ghostSchemes = data.filter((s: any) => s.year_group === 'General')
+        if (ghostSchemes.length > 0) {
+          const ghostIds = ghostSchemes.map((s: any) => s.id)
+          Promise.all([
+            db().from('work_plans').update({ scheme_id: null }).in('scheme_id', ghostIds),
+            db().from('curriculum_objectives').delete().in('scheme_id', ghostIds),
+            db().from('curriculum_topics').delete().in('scheme_id', ghostIds),
+            db().from('curriculum_schemes').delete().in('id', ghostIds)
+          ]).catch(() => {})
+        }
+
+        const validData = data.filter((s: any) => s.year_group !== 'General')
+        const schemeIds = validData.map((s: any) => s.id)
         const countMap = new Map<string, number>()
         if (schemeIds.length > 0) {
           try {
@@ -2024,7 +2036,7 @@ export const supabaseApi: Api = {
           } catch {}
         }
 
-        return data.map((s: any) => ({
+        return validData.map((s: any) => ({
           ...s,
           objectives_count: countMap.get(s.id) || s.objectives_count || 0
         })) as CurriculumScheme[]
@@ -2038,7 +2050,11 @@ export const supabaseApi: Api = {
     if (cached) {
       try {
         const parsed: CurriculumScheme[] = JSON.parse(cached)
-        return framework ? parsed.filter((s) => s.framework === framework) : parsed
+        const clean = parsed.filter((s) => s.year_group !== 'General')
+        if (clean.length !== parsed.length) {
+          localStorage.setItem('leera_curriculum_schemes', JSON.stringify(clean))
+        }
+        return framework ? clean.filter((s) => s.framework === framework) : clean
       } catch {}
     }
 

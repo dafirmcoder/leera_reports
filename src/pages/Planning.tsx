@@ -605,6 +605,14 @@ export default function Planning() {
       const scs = await api.listCurriculumSchemes()
       setSchemes(scs)
 
+      // Ensure work plans unlinked from purged or non-existent schemes have scheme_id = null
+      synchedWps.forEach((wp) => {
+        if (wp.scheme_id && !scs.some((s) => s.id === wp.scheme_id)) {
+          wp.scheme_id = null
+        }
+      })
+      setWorkPlans([...synchedWps])
+
       // Fetch Class Subject Teacher Assignments
       const ass = await api.listAssignments().catch(() => [] as Assignment[])
       setAssignments(ass)
