@@ -217,9 +217,9 @@ export async function generateStudentPdf(ctx: PdfContext): Promise<jsPDF> {
       cells.push(
         r.title,
         fmtDate(r.test_date),
-        String(r.score),
+        r.score !== null && r.score !== undefined ? String(r.score) : '—',
         String(r.max_mark),
-        fmtPct((r.score / (r.max_mark || 1)) * 100)
+        r.score !== null && r.score !== undefined ? fmtPct((r.score / (r.max_mark || 1)) * 100) : '—'
       )
       body.push(cells)
     })

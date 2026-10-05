@@ -1086,21 +1086,58 @@ export const supabaseApi: Api = {
   },
 
   async getStudentReport(studentId: string): Promise<StudentReportRow[]> {
-    const { data, error } = await db()
+    // 1. Fetch student's class_id
+    const { data: st, error: stErr } = await db()
+      .from('students')
+      .select('id, class_id')
+      .eq('id', studentId)
+      .maybeSingle()
+    if (stErr) throw new Error(stErr.message)
+
+    // 2. Fetch all unit tests created for this student's class
+    let classTests: any[] = []
+    if (st?.class_id) {
+      const { data: tests, error: tErr } = await db()
+        .from('unit_tests')
+        .select('id, title, test_date, created_at, max_mark, subjects!inner(name)')
+        .eq('class_id', st.class_id)
+        .order('test_date', { ascending: false })
+      if (tErr) throw new Error(tErr.message)
+      classTests = tests ?? []
+    }
+
+    // 3. Fetch all scores recorded for this student
+    const { data: scoresData, error: sErr } = await db()
       .from('scores')
-      .select('score, unit_tests!inner(id, title, test_date, created_at, max_mark, subjects!inner(name))')
+      .select('score, test_id, unit_tests!inner(id, title, test_date, created_at, max_mark, subjects!inner(name))')
       .eq('student_id', studentId)
-      .not('score', 'is', null)
-    if (error) throw new Error(error.message)
-    return (data ?? []).map((r: any) => ({
-      test_id: r.unit_tests.id,
-      created_at: r.unit_tests.created_at,
-      subject: r.unit_tests.subjects.name,
-      title: r.unit_tests.title,
-      test_date: r.unit_tests.test_date,
-      score: Number(r.score),
-      max_mark: Number(r.unit_tests.max_mark)
-    }))
+    if (sErr) throw new Error(sErr.message)
+
+    const scoreMap = new Map<string, number | null>()
+    const extraTests: any[] = []
+
+    for (const sc of (scoresData ?? []) as any[]) {
+      const parsed = sc.score !== null && sc.score !== undefined && sc.score !== '' ? Number(sc.score) : null
+      scoreMap.set(sc.test_id, parsed !== null && !isNaN(parsed) ? parsed : null)
+      if (!classTests.some((t) => t.id === sc.test_id)) {
+        extraTests.push(sc.unit_tests)
+      }
+    }
+
+    const allTests = [...classTests, ...extraTests]
+
+    return allTests.map((t) => {
+      const userScore = scoreMap.has(t.id) ? scoreMap.get(t.id)! : null
+      return {
+        test_id: t.id,
+        created_at: t.created_at,
+        subject: t.subjects.name,
+        title: t.title,
+        test_date: t.test_date,
+        score: userScore,
+        max_mark: Number(t.max_mark)
+      }
+    })
   },
 
   async getPopulationSummary(): Promise<SchoolPopulationSummary> {
@@ -1624,24 +1661,51 @@ export const supabaseApi: Api = {
     const students = await this.listStudents(classId)
     const ids = students.map((s) => s.id)
     if (ids.length === 0) return {}
-    const { data, error } = await db()
+
+    // 1. Fetch all unit tests for this class
+    const { data: tests, error: tErr } = await db()
+      .from('unit_tests')
+      .select('id, title, test_date, created_at, max_mark, subjects!inner(name)')
+      .eq('class_id', classId)
+      .order('test_date', { ascending: false })
+    if (tErr) throw new Error(tErr.message)
+
+    // 2. Fetch all scores recorded for these students
+    const { data: scoresData, error: sErr } = await db()
       .from('scores')
-      .select('student_id, score, unit_tests!inner(id, title, test_date, created_at, max_mark, subjects!inner(name))')
+      .select('student_id, test_id, score, unit_tests!inner(id, title, test_date, created_at, max_mark, subjects!inner(name))')
       .in('student_id', ids)
-      .not('score', 'is', null)
-    if (error) throw new Error(error.message)
-    const out: Record<string, StudentReportRow[]> = {}
-    for (const r of (data ?? []) as any[]) {
-      const row: StudentReportRow = {
-        test_id: r.unit_tests.id,
-        created_at: r.unit_tests.created_at,
-        subject: r.unit_tests.subjects.name,
-        title: r.unit_tests.title,
-        test_date: r.unit_tests.test_date,
-        score: Number(r.score),
-        max_mark: Number(r.unit_tests.max_mark)
+    if (sErr) throw new Error(sErr.message)
+
+    const scoreMap = new Map<string, number | null>()
+    const extraTestsByStudent = new Map<string, any[]>()
+
+    for (const sc of (scoresData ?? []) as any[]) {
+      const parsed = sc.score !== null && sc.score !== undefined && sc.score !== '' ? Number(sc.score) : null
+      scoreMap.set(`${sc.student_id}_${sc.test_id}`, parsed !== null && !isNaN(parsed) ? parsed : null)
+      if (!(tests ?? []).some((t: any) => t.id === sc.test_id)) {
+        const list = extraTestsByStudent.get(sc.student_id) || []
+        list.push(sc.unit_tests)
+        extraTestsByStudent.set(sc.student_id, list)
       }
-      ;(out[r.student_id] ??= []).push(row)
+    }
+
+    const out: Record<string, StudentReportRow[]> = {}
+    for (const s of students) {
+      const studentTests = [...(tests ?? []), ...(extraTestsByStudent.get(s.id) || [])]
+      out[s.id] = studentTests.map((t: any) => {
+        const key = `${s.id}_${t.id}`
+        const rawScore = scoreMap.has(key) ? scoreMap.get(key)! : null
+        return {
+          test_id: t.id,
+          created_at: t.created_at,
+          subject: t.subjects.name,
+          title: t.title,
+          test_date: t.test_date,
+          score: rawScore,
+          max_mark: Number(t.max_mark)
+        }
+      })
     }
     return out
   },

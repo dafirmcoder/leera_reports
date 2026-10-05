@@ -74,7 +74,7 @@ export function buildReport(rows: StudentReportRow[]): ReportData {
       map.set(key, entry)
     }
     entry.rows.push(r)
-    entry.totalScore += r.score
+    entry.totalScore += (r.score ?? 0)
     entry.totalMax += r.max_mark
   }
 

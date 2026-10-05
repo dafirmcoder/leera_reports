@@ -334,7 +334,7 @@ export interface StudentReportRow {
   subject: string
   title: string
   test_date: string
-  score: number
+  score: number | null
   max_mark: number
 }
 

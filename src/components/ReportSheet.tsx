@@ -81,9 +81,9 @@ export default function ReportSheet({ student, school, className, teacherName, r
                     )}
                     <td>{r.title}</td>
                     <td className="c">{fmtDate(r.test_date)}</td>
-                    <td className="c">{r.score}</td>
+                    <td className="c">{r.score !== null && r.score !== undefined ? r.score : '—'}</td>
                     <td className="c">{r.max_mark}</td>
-                    <td className="c">{fmtPct((r.score / r.max_mark) * 100)}</td>
+                    <td className="c">{r.score !== null && r.score !== undefined ? fmtPct((r.score / r.max_mark) * 100) : '—'}</td>
                   </tr>
                 ))}
                 {s.count > 1 && (
