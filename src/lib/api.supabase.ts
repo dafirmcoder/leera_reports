@@ -1109,7 +1109,7 @@ export const supabaseApi: Api = {
     // 3. Fetch all scores recorded for this student
     const { data: scoresData, error: sErr } = await db()
       .from('scores')
-      .select('score, test_id, unit_tests!inner(id, title, test_date, created_at, max_mark, subjects!inner(name))')
+      .select('score, unit_test_id, unit_tests!inner(id, title, test_date, created_at, max_mark, subjects!inner(name))')
       .eq('student_id', studentId)
     if (sErr) throw new Error(sErr.message)
 
@@ -1118,8 +1118,8 @@ export const supabaseApi: Api = {
 
     for (const sc of (scoresData ?? []) as any[]) {
       const parsed = sc.score !== null && sc.score !== undefined && sc.score !== '' ? Number(sc.score) : null
-      scoreMap.set(sc.test_id, parsed !== null && !isNaN(parsed) ? parsed : null)
-      if (!classTests.some((t) => t.id === sc.test_id)) {
+      scoreMap.set(sc.unit_test_id, parsed !== null && !isNaN(parsed) ? parsed : null)
+      if (!classTests.some((t) => t.id === sc.unit_test_id)) {
         extraTests.push(sc.unit_tests)
       }
     }
@@ -1673,7 +1673,7 @@ export const supabaseApi: Api = {
     // 2. Fetch all scores recorded for these students
     const { data: scoresData, error: sErr } = await db()
       .from('scores')
-      .select('student_id, test_id, score, unit_tests!inner(id, title, test_date, created_at, max_mark, subjects!inner(name))')
+      .select('student_id, unit_test_id, score, unit_tests!inner(id, title, test_date, created_at, max_mark, subjects!inner(name))')
       .in('student_id', ids)
     if (sErr) throw new Error(sErr.message)
 
@@ -1682,8 +1682,8 @@ export const supabaseApi: Api = {
 
     for (const sc of (scoresData ?? []) as any[]) {
       const parsed = sc.score !== null && sc.score !== undefined && sc.score !== '' ? Number(sc.score) : null
-      scoreMap.set(`${sc.student_id}_${sc.test_id}`, parsed !== null && !isNaN(parsed) ? parsed : null)
-      if (!(tests ?? []).some((t: any) => t.id === sc.test_id)) {
+      scoreMap.set(`${sc.student_id}_${sc.unit_test_id}`, parsed !== null && !isNaN(parsed) ? parsed : null)
+      if (!(tests ?? []).some((t: any) => t.id === sc.unit_test_id)) {
         const list = extraTestsByStudent.get(sc.student_id) || []
         list.push(sc.unit_tests)
         extraTestsByStudent.set(sc.student_id, list)
