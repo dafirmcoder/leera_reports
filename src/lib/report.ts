@@ -38,8 +38,27 @@ export function filterReportRows(
 }
 
 /**
- * Build the report exactly like the Excel VBA did:
- *  - subjects sorted alphabetically
+ * Extract and normalize a comparable ISO date string (YYYY-MM-DD) from a report row.
+ */
+function getRowDate(r: StudentReportRow): string {
+  const raw = (r.test_date || r.created_at || '').trim()
+  if (!raw) return ''
+  const match = raw.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/)
+  if (match) {
+    const [, y, m, d] = match
+    return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`
+  }
+  const parsed = new Date(raw)
+  if (!isNaN(parsed.getTime())) {
+    return parsed.toISOString().slice(0, 10)
+  }
+  return raw.slice(0, 10)
+}
+
+/**
+ * Build the report for End of Unit Tests:
+ *  - subjects arranged by test date with the newest date first
+ *  - individual tests within each subject arranged with the newest date first
  *  - subject average = total score / total max x 100 (subject row shown
  *    separately when a subject has more than one test)
  *  - overall average = mean of the subject averages
@@ -59,6 +78,20 @@ export function buildReport(rows: StudentReportRow[]): ReportData {
     entry.totalMax += r.max_mark
   }
 
+  // Sort tests within each subject by test date descending (newest date first)
+  for (const entry of map.values()) {
+    entry.rows.sort((a, b) => {
+      const dateA = getRowDate(a)
+      const dateB = getRowDate(b)
+      if (dateA && !dateB) return -1
+      if (!dateA && dateB) return 1
+      const dateCmp = dateB.localeCompare(dateA) // newest date first
+      if (dateCmp !== 0) return dateCmp
+      return (a.title || '').localeCompare(b.title || '')
+    })
+  }
+
+  // Arrange subjects by date with newest date first (using the subject's latest test date)
   const subjects: ReportSubject[] = [...map.values()]
     .map((e) => ({
       name: e.rows[0].subject,
@@ -68,7 +101,15 @@ export function buildReport(rows: StudentReportRow[]): ReportData {
       totalMax: e.totalMax,
       average: pct(e.totalScore, e.totalMax)
     }))
-    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
+    .sort((a, b) => {
+      const dateA = a.rows.length > 0 ? getRowDate(a.rows[0]) : ''
+      const dateB = b.rows.length > 0 ? getRowDate(b.rows[0]) : ''
+      if (dateA && !dateB) return -1
+      if (!dateA && dateB) return 1
+      const dateCmp = dateB.localeCompare(dateA) // newest date first
+      if (dateCmp !== 0) return dateCmp
+      return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+    })
 
   const overall =
     subjects.length > 0

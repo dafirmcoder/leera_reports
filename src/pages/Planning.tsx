@@ -181,13 +181,68 @@ export function harmonizeYearGroupWorkPlans(
     if (group.length <= 1) continue
     const weekCounts = group.map((p) => p.weeks?.length || 0).filter((c) => c > 0)
     if (weekCounts.length === 0) continue
-    const minWeeks = Math.min(...weekCounts)
     const maxWeeks = Math.max(...weekCounts)
 
-    if (minWeeks > 0 && maxWeeks > minWeeks) {
+    // Identify the master plan with the most weeks and richest objectives
+    let masterPlan = group[0]
+    let maxObjCount = -1
+    for (const p of group) {
+      const objCount = (p.weeks || []).reduce((acc, w) => acc + (w.objectives?.length || 0), 0)
+      const wCount = p.weeks?.length || 0
+      if (wCount === maxWeeks && objCount > maxObjCount) {
+        maxObjCount = objCount
+        masterPlan = p
+      }
+    }
+
+    if (masterPlan && masterPlan.weeks && masterPlan.weeks.length > 0) {
       for (const p of group) {
-        if ((p.weeks?.length || 0) > minWeeks) {
-          p.weeks = p.weeks!.slice(0, minWeeks)
+        if (p === masterPlan) continue
+        const curObjCount = (p.weeks || []).reduce((acc, w) => acc + (w.objectives?.length || 0), 0)
+        const curWCount = p.weeks?.length || 0
+
+        if (curWCount < maxWeeks || curObjCount < maxObjCount) {
+          const existingSeqMap = new Map((p.weeks || []).map((w) => [w.sequence, w]))
+          p.weeks = masterPlan.weeks.map((mw) => {
+            const existing = existingSeqMap.get(mw.sequence)
+            if (existing) {
+              const existingObjs = existing.objectives || []
+              const masterObjs = mw.objectives || []
+              if (masterObjs.length > existingObjs.length) {
+                const existingCodeMap = new Map(
+                  existingObjs.map((o) => [(o.code_snapshot || o.text_snapshot).trim().toLowerCase(), o])
+                )
+                const mergedObjs = masterObjs.map((mo, oidx) => {
+                  const key = (mo.code_snapshot || mo.text_snapshot).trim().toLowerCase()
+                  const found = existingCodeMap.get(key)
+                  return found || {
+                    ...mo,
+                    id: `wpo-${p.id}-${mw.sequence}-${oidx}`,
+                    work_plan_week_id: existing.id
+                  }
+                })
+                return {
+                  ...existing,
+                  topic_title: existing.topic_title || mw.topic_title,
+                  challenge_title: existing.challenge_title || mw.challenge_title,
+                  subtopic_title: existing.subtopic_title || mw.subtopic_title,
+                  objectives: mergedObjs
+                }
+              }
+              return existing
+            }
+            // Missing week in sibling: lift from master plan
+            return {
+              ...mw,
+              id: `week-${p.id}-${mw.sequence}`,
+              work_plan_id: p.id,
+              objectives: (mw.objectives || []).map((o, oidx) => ({
+                ...o,
+                id: `wpo-${p.id}-${mw.sequence}-${oidx}`,
+                work_plan_week_id: `week-${p.id}-${mw.sequence}`
+              }))
+            }
+          })
           changed = true
         }
       }

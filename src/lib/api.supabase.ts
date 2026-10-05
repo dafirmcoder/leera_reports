@@ -2883,21 +2883,28 @@ export const supabaseApi: Api = {
           if (insWeek) weekId = insWeek.id
         }
 
-        // Save week objectives with deduplication by code_snapshot within the week
+        // Save week objectives ensuring uniqueness for the database constraint without dropping any objective
         if (weekId && w.objectives) {
           await db().from('work_plan_week_objectives').delete().eq('work_plan_week_id', weekId)
           if (w.objectives.length > 0) {
-            const seenCodes = new Set<string>()
+            const codeCounts = new Map<string, number>()
             const objRows: any[] = []
-            for (const o of w.objectives) {
-              const codeKey = (o.code_snapshot || o.text_snapshot || '').trim().toLowerCase()
-              if (!codeKey || seenCodes.has(codeKey)) continue
-              seenCodes.add(codeKey)
+            for (let oidx = 0; oidx < w.objectives.length; oidx++) {
+              const o = w.objectives[oidx]
+              const rawCode = (o.code_snapshot || '').trim()
+              const rawText = (o.text_snapshot || '').trim()
+              if (!rawCode && !rawText) continue
+
+              const baseCode = rawCode || `OBJ.${oidx + 1}`
+              const count = (codeCounts.get(baseCode.toLowerCase()) || 0) + 1
+              codeCounts.set(baseCode.toLowerCase(), count)
+              const uniqueCode = count === 1 ? baseCode : `${baseCode} (${count})`
+
               objRows.push({
                 work_plan_week_id: weekId,
                 objective_id: o.objective_id || null,
-                code_snapshot: o.code_snapshot || '',
-                text_snapshot: o.text_snapshot || '',
+                code_snapshot: uniqueCode,
+                text_snapshot: rawText || uniqueCode,
                 is_met: !!o.is_met
               })
             }
@@ -2916,13 +2923,27 @@ export const supabaseApi: Api = {
     const p = localPlans.find((plan) => plan.id === workPlanId)
     if (p) {
       p.weeks = weeks.map((w, idx) => {
-        const seenCodes = new Set<string>()
-        const cleanObjectives = (w.objectives || []).filter((o) => {
-          const codeKey = (o.code_snapshot || o.text_snapshot || '').trim().toLowerCase()
-          if (!codeKey || seenCodes.has(codeKey)) return false
-          seenCodes.add(codeKey)
-          return true
-        })
+        const codeCounts = new Map<string, number>()
+        const cleanObjectives = (w.objectives || []).map((o, oidx) => {
+          const rawCode = (o.code_snapshot || '').trim()
+          const rawText = (o.text_snapshot || '').trim()
+          if (!rawCode && !rawText) return null
+
+          const baseCode = rawCode || `OBJ.${oidx + 1}`
+          const count = (codeCounts.get(baseCode.toLowerCase()) || 0) + 1
+          codeCounts.set(baseCode.toLowerCase(), count)
+          const uniqueCode = count === 1 ? baseCode : `${baseCode} (${count})`
+
+          return {
+            id: (o as any).id || `wpo-${idx}-${oidx}`,
+            work_plan_week_id: w.id || `week-${workPlanId}-${idx + 1}`,
+            objective_id: o.objective_id || null,
+            code_snapshot: uniqueCode,
+            text_snapshot: rawText || uniqueCode,
+            is_met: !!o.is_met,
+            met_at: (o as any).met_at || (o.is_met ? new Date().toISOString() : null)
+          }
+        }).filter(Boolean) as WorkPlanWeekObjective[]
 
         return {
           id: w.id || `week-${workPlanId}-${idx + 1}`,
@@ -2940,15 +2961,7 @@ export const supabaseApi: Api = {
           subtopic_title: w.subtopic_title || '',
           lessons_per_week: w.lessons_per_week || 1,
           remarks: w.remarks || '',
-          objectives: cleanObjectives.map((o, oidx) => ({
-            id: `wpo-${idx}-${oidx}`,
-            work_plan_week_id: w.id || `week-${workPlanId}-${idx + 1}`,
-            objective_id: o.objective_id || null,
-            code_snapshot: o.code_snapshot,
-            text_snapshot: o.text_snapshot,
-            is_met: !!o.is_met,
-            met_at: null
-          }))
+          objectives: cleanObjectives
         }
       })
       p.updated_at = new Date().toISOString()
@@ -2988,7 +3001,8 @@ export const supabaseApi: Api = {
     const semester = input.semester || school?.semester || '1'
 
     let schemeId = input.scheme_id || null
-    let objectivesIngested = 0
+    const totalObjectivesCount = input.weeks.reduce((acc, w) => acc + (w.objectives?.length || 0), 0)
+    let objectivesIngested = totalObjectivesCount
     let objectivesSkipped = 0
 
     try {

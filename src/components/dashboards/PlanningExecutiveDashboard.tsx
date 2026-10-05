@@ -503,22 +503,30 @@ export default function PlanningExecutiveDashboard({
 
                       {/* Syllabus Coverage Bar */}
                       <td style={{ padding: '10px 14px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 3 }}>
-                          <span style={{ fontWeight: 700, color: '#4C2570' }}>{t.syllabusCoverage.coveragePct}%</span>
-                          <span style={{ color: '#64748b' }}>
-                            {t.syllabusCoverage.coveredObjectives} / {t.syllabusCoverage.totalSyllabusObjectives || '—'}
-                          </span>
-                        </div>
-                        <div style={{ width: '100%', height: 6, backgroundColor: '#e2e8f0', borderRadius: 9999, overflow: 'hidden' }}>
-                          <div
-                            style={{
-                              width: `${Math.max(4, t.syllabusCoverage.coveragePct)}%`,
-                              height: '100%',
-                              backgroundColor: '#4C2570',
-                              borderRadius: 9999
-                            }}
-                          />
-                        </div>
+                        {t.syllabusCoverage.hasSyllabus && t.syllabusCoverage.totalSyllabusObjectives > 0 ? (
+                          <>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 3 }}>
+                              <span style={{ fontWeight: 700, color: '#4C2570' }}>{t.syllabusCoverage.coveragePct}%</span>
+                              <span style={{ color: '#64748b' }}>
+                                {t.syllabusCoverage.coveredObjectives} / {t.syllabusCoverage.totalSyllabusObjectives}
+                              </span>
+                            </div>
+                            <div style={{ width: '100%', height: 6, backgroundColor: '#e2e8f0', borderRadius: 9999, overflow: 'hidden' }}>
+                              <div
+                                style={{
+                                  width: `${Math.max(4, t.syllabusCoverage.coveragePct)}%`,
+                                  height: '100%',
+                                  backgroundColor: '#4C2570',
+                                  borderRadius: 9999
+                                }}
+                              />
+                            </div>
+                          </>
+                        ) : (
+                          <div style={{ fontSize: 11, color: '#94a3b8', fontStyle: 'italic' }}>
+                            No Syllabus Uploaded
+                          </div>
+                        )}
                       </td>
 
                       {/* Plan Status Badges */}

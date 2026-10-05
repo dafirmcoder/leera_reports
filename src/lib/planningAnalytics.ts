@@ -73,6 +73,7 @@ export interface TeacherComplianceStats {
 
   // Syllabus coverage metrics
   syllabusCoverage: {
+    hasSyllabus: boolean
     totalSyllabusObjectives: number
     coveredObjectives: number
     coveragePct: number
@@ -286,16 +287,17 @@ export function calculateTeacherComplianceAndCoverage(params: {
 
     // 3. Full Syllabus / Schemes coverage
     let totalSyllabusObjectives = 0
-    const teacherSchemes = schemes.filter((sc) => subjectIds.has(sc.subject_code) || teacherWorkPlans.some((wp) => wp.scheme_id === sc.id))
+    const teacherSchemes = schemes.filter(
+      (sc) => (subjectIds.has(sc.subject_code) || teacherWorkPlans.some((wp) => wp.scheme_id === sc.id)) &&
+        (sc.objectives_count || 0) > 0
+    )
     teacherSchemes.forEach((sc) => {
       totalSyllabusObjectives += sc.objectives_count || 0
     })
-    if (totalSyllabusObjectives === 0 && totalWorkPlanObjectives > 0) {
-      totalSyllabusObjectives = totalWorkPlanObjectives
-    }
+    const hasSyllabus = totalSyllabusObjectives > 0
 
-    const coveredSyllabusObjectives = coveredWpObjectives > 0 ? coveredWpObjectives : coveredObjectivesSet.size
-    const syllabusCoveragePct = totalSyllabusObjectives > 0
+    const coveredSyllabusObjectives = hasSyllabus ? (coveredWpObjectives > 0 ? coveredWpObjectives : coveredObjectivesSet.size) : 0
+    const syllabusCoveragePct = hasSyllabus && totalSyllabusObjectives > 0
       ? Math.min(100, Math.round((coveredSyllabusObjectives / totalSyllabusObjectives) * 100))
       : 0
 
@@ -326,6 +328,7 @@ export function calculateTeacherComplianceAndCoverage(params: {
         coveragePct: workPlanCoveragePct
       },
       syllabusCoverage: {
+        hasSyllabus,
         totalSyllabusObjectives,
         coveredObjectives: coveredSyllabusObjectives,
         coveragePct: syllabusCoveragePct,
