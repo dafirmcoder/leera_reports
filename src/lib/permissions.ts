@@ -22,6 +22,7 @@ export type Capability =
   | 'viewPlanning'       // academic roles + director (admin is excluded)
   | 'manageCurriculum'   // upload syllabus PDFs and seed schemes (HOS + coordinator)
   | 'manageMarksLock'    // coordinators, HOS, and admin can lock/unlock marks
+  | 'deleteWorkPlans'    // curriculum coordinators + HOS + director + admin
 
 export function isCoordinatorOrLeadership(
   profile?: { id?: string; role?: Role; additional_roles?: Role[] } | null
@@ -102,6 +103,8 @@ export function can(role: Role | undefined, cap: Capability, additionalRoles: Ro
       return roles.has('head_of_school') || roles.has('curriculum_coordinator')
     case 'manageMarksLock':
       return roles.has('curriculum_coordinator') || roles.has('head_of_school') || roles.has('admin')
+    case 'deleteWorkPlans':
+      return roles.has('curriculum_coordinator') || roles.has('head_of_school') || roles.has('director') || roles.has('admin')
     default:
       return false
   }

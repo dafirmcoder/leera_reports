@@ -450,6 +450,8 @@ export default function Planning() {
   const isHeadOfSchool = profile?.role === 'head_of_school' || Boolean(profile?.additional_roles && profile.additional_roles.includes('head_of_school'))
   const hasExecutiveAccess = isLeadership || isDirector || isHeadOfSchool || isCoordinator
   const isTeacher = profile?.role === 'homeroom_teacher' || profile?.role === 'subject_teacher' || isCoordinator || !isLeadership
+  const isDeleteWorkPlanEnabled = import.meta.env.VITE_ENABLE_WORKPLAN_DELETE === 'true'
+  const canDeleteWorkPlans = isDeleteWorkPlanEnabled && (isCoordinator || isHeadOfSchool || isDirector || can(profile?.role, 'deleteWorkPlans', profile?.additional_roles))
 
   const [activeTab, setActiveTab] = useState<PlanningSubTab>(() => {
     if (profile?.role === 'director' || profile?.role === 'head_of_school') {
@@ -1839,6 +1841,26 @@ export default function Planning() {
     }
   }
 
+  const handleDeleteWorkPlan = async (workPlanId: string, planName?: string) => {
+    const label = planName ? `"${planName}"` : 'this work plan'
+    if (!window.confirm(`Are you sure you want to delete ${label}? All associated weekly schedules and objectives for this work plan will be permanently deleted.`)) {
+      return
+    }
+    try {
+      setLoading(true)
+      await api.deleteWorkPlan(workPlanId)
+      if (selectedWorkPlan?.id === workPlanId) {
+        setSelectedWorkPlan(null)
+      }
+      setSuccess(`Work plan ${label} deleted successfully.`)
+      await loadAllPlanningData()
+    } catch (err: any) {
+      setError(err?.message || 'Failed to delete work plan.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   // -------------------------------------------------------------------------
   // REVIEW QUEUE ACTIONS
   // -------------------------------------------------------------------------
@@ -2455,7 +2477,7 @@ export default function Planning() {
                         Teacher: <strong>{wp.teacher_name}</strong>
                       </div>
 
-                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginTop: 'auto' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginTop: 'auto', alignItems: 'center' }}>
                         <button className="btn btn-secondary btn-small grow" onClick={() => handleSelectWorkPlan(wp.id)}>
                           ✏ Open & Edit
                         </button>
@@ -2465,6 +2487,16 @@ export default function Planning() {
                         {(wp.status === 'draft' || wp.status === 'returned') && (
                           <button className="btn btn-primary btn-small" onClick={() => handleSubmitWorkPlan(wp.id)}>
                             Submit
+                          </button>
+                        )}
+                        {canDeleteWorkPlans && (
+                          <button
+                            className="btn btn-ghost btn-small"
+                            style={{ color: '#dc2626' }}
+                            onClick={() => handleDeleteWorkPlan(wp.id, `${wp.subject_name} · ${wp.class_name}`)}
+                            title="Delete this work plan"
+                          >
+                            🗑
                           </button>
                         )}
                       </div>
@@ -2491,7 +2523,7 @@ export default function Planning() {
                   </div>
                 </div>
 
-                <div style={{ display: 'flex', gap: 8 }}>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                   <button className="btn btn-secondary btn-small" onClick={() => handlePreviewWorkPlanPdf(selectedWorkPlan)}>
                     📄 Preview PDF
                   </button>
@@ -2501,6 +2533,16 @@ export default function Planning() {
                   {(selectedWorkPlan.status === 'draft' || selectedWorkPlan.status === 'returned') && (
                     <button className="btn btn-small" style={{ background: '#10b981', color: '#fff', fontWeight: 700 }} onClick={() => handleSubmitWorkPlan(selectedWorkPlan.id)}>
                       🚀 Submit for Review
+                    </button>
+                  )}
+                  {canDeleteWorkPlans && (
+                    <button
+                      className="btn btn-ghost btn-small"
+                      style={{ color: '#dc2626' }}
+                      onClick={() => handleDeleteWorkPlan(selectedWorkPlan.id, `${selectedWorkPlan.subject_name} · ${selectedWorkPlan.class_name}`)}
+                      title="Delete this work plan"
+                    >
+                      🗑 Delete Plan
                     </button>
                   )}
                 </div>
@@ -3977,6 +4019,16 @@ export default function Planning() {
                     >
                       ↩ Return
                     </button>
+                    {canDeleteWorkPlans && (
+                      <button
+                        className="btn btn-ghost btn-small"
+                        style={{ color: '#dc2626' }}
+                        onClick={() => handleDeleteWorkPlan(wp.id, `${wp.subject_name} · ${wp.class_name}`)}
+                        title="Delete this work plan"
+                      >
+                        🗑
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}

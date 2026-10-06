@@ -3365,8 +3365,17 @@ export const supabaseApi: Api = {
 
   async deleteWorkPlan(id: string): Promise<void> {
     try {
+      const { data: weeks } = await db().from('work_plan_weeks').select('id').eq('work_plan_id', id)
+      if (weeks && weeks.length > 0) {
+        const weekIds = weeks.map((w: any) => w.id)
+        await db().from('work_plan_week_objectives').delete().in('work_plan_week_id', weekIds)
+        await db().from('work_plan_weeks').delete().eq('work_plan_id', id)
+      }
+      await db().from('work_plan_events').delete().eq('work_plan_id', id)
       await db().from('work_plans').delete().eq('id', id)
-    } catch {}
+    } catch (e) {
+      console.warn('deleteWorkPlan error:', e)
+    }
 
     const localPlans: WorkPlan[] = JSON.parse(localStorage.getItem('leera_work_plans') || '[]')
     const filtered = localPlans.filter((p) => p.id !== id)
