@@ -68,11 +68,15 @@ export default function ScoreEntry() {
         const assignments = await api.listAssignments(classId).catch(() => [])
         const isAssignedSubjectTeacher = assignments.some((a) => a.teacher_id === profile.id && a.subject_id === selected.subject_id)
 
-        const isLockedForSubjectTeacher = Boolean(lock?.is_locked && !isLead)
+        const isTestLockedForTeacher = Boolean(
+          lock?.is_locked &&
+          !isLead &&
+          (!selected.created_at || !lock.locked_at || new Date(selected.created_at).getTime() <= new Date(lock.locked_at).getTime())
+        )
 
         setCanEdit(
           !isDirector &&
-          !isLockedForSubjectTeacher &&
+          !isTestLockedForTeacher &&
           (isHomeroomOfClass || isAssignedSubjectTeacher || selected.created_by === profile.id || isLead)
         )
       }).catch(() => {})
@@ -120,10 +124,16 @@ export default function ScoreEntry() {
 
   const maxMark = test?.max_mark ?? 100
 
+  const isCurrentTestLocked = Boolean(
+    lockInfo?.is_locked &&
+    !isCoordinatorLead &&
+    (!test?.created_at || !lockInfo.locked_at || new Date(test.created_at).getTime() <= new Date(lockInfo.locked_at).getTime())
+  )
+
   const setScore = (studentId: string, value: string) => {
     if (!canEdit || isDirector) return
-    if (lockInfo?.is_locked && !isCoordinatorLead) {
-      setError('Marks for this class are locked because reports have been downloaded. Only Curriculum Coordinators can make changes.')
+    if (isCurrentTestLocked) {
+      setError('Marks for this test are locked because reports have been downloaded. Only Curriculum Coordinators can make changes.')
       return
     }
     const raw = value.trim()
@@ -250,7 +260,7 @@ export default function ScoreEntry() {
       {error && <div className="notice notice-error">{error}</div>}
 
       {/* Marks Lock Banners */}
-      {lockInfo?.is_locked && !isCoordinatorLead && (
+      {lockInfo?.is_locked && !isCoordinatorLead && isCurrentTestLocked && (
         <div
           style={{
             background: '#fff1f2',
@@ -271,7 +281,34 @@ export default function ScoreEntry() {
               <span style={{ fontSize: '11px', background: '#ffe4e6', color: '#9f1239', padding: '1px 6px', borderRadius: '10px' }}>Reports Generated</span>
             </div>
             <div style={{ fontSize: '12.5px', color: '#881337', marginTop: '2px' }}>
-              The homeroom teacher has downloaded reports for this class. Subject marks are locked and cannot be edited by subject teachers. If a mark change is needed, please ask the Curriculum Coordinator to unlock this class.
+              The homeroom teacher has downloaded reports for this class. Marks for this existing test are locked and cannot be edited by subject teachers. If a mark change is needed, please ask the Curriculum Coordinator to unlock this class.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {lockInfo?.is_locked && !isCoordinatorLead && !isCurrentTestLocked && (
+        <div
+          style={{
+            background: '#ecfdf5',
+            border: '1.5px solid #a7f3d0',
+            borderRadius: '10px',
+            padding: '12px 16px',
+            marginBottom: '16px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
+            boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
+          }}
+        >
+          <span style={{ fontSize: '24px' }}>✨</span>
+          <div>
+            <div style={{ fontWeight: 700, color: '#065f46', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span>New Test (Open for Grading)</span>
+              <span style={{ fontSize: '11px', background: '#d1fae5', color: '#065f46', padding: '1px 6px', borderRadius: '10px' }}>Editable</span>
+            </div>
+            <div style={{ fontSize: '12.5px', color: '#047857', marginTop: '2px' }}>
+              This test was created after reports were downloaded for this class. You can record and edit marks for this test normally.
             </div>
           </div>
         </div>
@@ -476,6 +513,13 @@ export default function ScoreEntry() {
                     <input
                       type="number" min={0} max={maxMark} step="any" className="score-input"
                       disabled={!canEdit}
+                      title={
+                        isDirector
+                          ? 'View only'
+                          : isCurrentTestLocked
+                          ? '🔒 Scores locked: Marks for this existing test cannot be edited after reports download.'
+                          : undefined
+                      }
                       value={r.score === null ? '' : String(r.score)}
                       onChange={(e) => setScore(r.student_id, e.target.value)}
                       inputMode="decimal"

@@ -143,7 +143,7 @@ export default function ReportView() {
                 alignItems: 'center',
                 gap: '4px'
               }}
-              title="Marks are locked for subject teachers because reports have been downloaded"
+              title="Marks for existing tests are locked for subject teachers because reports have been downloaded"
             >
               <span>🔒</span>
               <span>Marks Locked</span>

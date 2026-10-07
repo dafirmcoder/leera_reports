@@ -501,7 +501,7 @@ export default function ClassMarksheetPage() {
                 </span>
               </div>
               <p style={{ margin: '2px 0 0', fontSize: '12px', color: '#7f1d1d' }}>
-                Reports for {currentClass?.name || 'this class'} have been downloaded{lockInfo.locked_at ? ` on ${new Date(lockInfo.locked_at).toLocaleDateString()}` : ''}{lockInfo.locked_by_name ? ` by ${lockInfo.locked_by_name}` : ''}. Subject teachers cannot modify marks.
+                Reports for {currentClass?.name || 'this class'} have been downloaded{lockInfo.locked_at ? ` on ${new Date(lockInfo.locked_at).toLocaleDateString()}` : ''}{lockInfo.locked_by_name ? ` by ${lockInfo.locked_by_name}` : ''}. Marks for tests created prior to download are locked. New tests can still be created and graded.
               </p>
             </div>
           </div>

@@ -734,14 +734,6 @@ export const supabaseApi: Api = {
     classId: string,
     input: { subject_id: string; title: string; test_date: string; max_mark: number; examPaperFile?: File | null }
   ): Promise<string> {
-    const lockInfo = await this.getClassMarksLock(classId)
-    if (lockInfo.is_locked) {
-      const profile = await this.getProfile().catch(() => null)
-      if (!isCoordinatorOrLeadership(profile)) {
-        throw new Error('Marks and assessments for this class are locked because reports have been downloaded. Only Curriculum Coordinators can create tests.')
-      }
-    }
-
     const d = db()
     const { examPaperFile, ...testData } = input
     let exam_paper_url: string | null = null
@@ -750,6 +742,7 @@ export const supabaseApi: Api = {
 
     const { data, error } = await d.from('unit_tests').insert({
       class_id: classId,
+      created_at: new Date().toISOString(),
       ...testData
     }).select().single()
     if (error) throw new Error(error.message)
@@ -802,7 +795,7 @@ export const supabaseApi: Api = {
     const d = db()
     const { data: testData, error: fetchErr } = await d
       .from('unit_tests')
-      .select('id, class_id, exam_paper_path')
+      .select('id, class_id, created_at, exam_paper_path')
       .eq('id', id)
       .single()
     if (fetchErr) throw new Error(fetchErr.message)
@@ -810,9 +803,12 @@ export const supabaseApi: Api = {
     if (testData?.class_id) {
       const lockInfo = await this.getClassMarksLock(testData.class_id)
       if (lockInfo.is_locked) {
-        const profile = await this.getProfile().catch(() => null)
-        if (!isCoordinatorOrLeadership(profile)) {
-          throw new Error('Marks and assessments for this class are locked because reports have been downloaded. Only Curriculum Coordinators can edit tests.')
+        const isLocked = !lockInfo.locked_at || !testData.created_at || new Date(testData.created_at).getTime() <= new Date(lockInfo.locked_at).getTime()
+        if (isLocked) {
+          const profile = await this.getProfile().catch(() => null)
+          if (!isCoordinatorOrLeadership(profile)) {
+            throw new Error('Marks and assessments for this test are locked because reports have been downloaded. Only Curriculum Coordinators can edit tests.')
+          }
         }
       }
     }
@@ -857,14 +853,17 @@ export const supabaseApi: Api = {
 
   async deleteUnitTest(id: string): Promise<void> {
     const d = db()
-    const { data: testData } = await d.from('unit_tests').select('class_id, exam_paper_path').eq('id', id).maybeSingle()
+    const { data: testData } = await d.from('unit_tests').select('class_id, created_at, exam_paper_path').eq('id', id).maybeSingle()
 
     if (testData?.class_id) {
       const lockInfo = await this.getClassMarksLock(testData.class_id)
       if (lockInfo.is_locked) {
-        const profile = await this.getProfile().catch(() => null)
-        if (!isCoordinatorOrLeadership(profile)) {
-          throw new Error('Marks and assessments for this class are locked because reports have been downloaded. Only Curriculum Coordinators can delete tests.')
+        const isLocked = !lockInfo.locked_at || !testData.created_at || new Date(testData.created_at).getTime() <= new Date(lockInfo.locked_at).getTime()
+        if (isLocked) {
+          const profile = await this.getProfile().catch(() => null)
+          if (!isCoordinatorOrLeadership(profile)) {
+            throw new Error('Marks and assessments for this test are locked because reports have been downloaded. Only Curriculum Coordinators can delete tests.')
+          }
         }
       }
     }
@@ -945,7 +944,7 @@ export const supabaseApi: Api = {
   async saveScore(unit_test_id: string, student_id: string, score: number | null): Promise<void> {
     const { data: testData } = await db()
       .from('unit_tests')
-      .select('id, class_id')
+      .select('id, class_id, created_at')
       .eq('id', unit_test_id)
       .maybeSingle()
 
@@ -953,9 +952,12 @@ export const supabaseApi: Api = {
     if (classId) {
       const lockInfo = await this.getClassMarksLock(classId)
       if (lockInfo.is_locked) {
-        const profile = await this.getProfile().catch(() => null)
-        if (!isCoordinatorOrLeadership(profile)) {
-          throw new Error('Marks for this class are locked because reports have been downloaded. Only Curriculum Coordinators can make changes.')
+        const isLocked = !lockInfo.locked_at || !testData?.created_at || new Date(testData.created_at).getTime() <= new Date(lockInfo.locked_at).getTime()
+        if (isLocked) {
+          const profile = await this.getProfile().catch(() => null)
+          if (!isCoordinatorOrLeadership(profile)) {
+            throw new Error('Marks for this test are locked because reports have been downloaded. Only Curriculum Coordinators can make changes.')
+          }
         }
       }
     }

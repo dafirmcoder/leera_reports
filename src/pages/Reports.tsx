@@ -223,7 +223,7 @@ export default function Reports() {
                 <span style={{ fontSize: '11px', background: '#fee2e2', color: '#991b1b', padding: '2px 8px', borderRadius: '12px', border: '1px solid #fca5a5' }}>Locked</span>
               </div>
               <p style={{ margin: '2px 0 0', fontSize: '12.5px', color: '#7f1d1d' }}>
-                Reports for this class have been downloaded{lockInfo.locked_at ? ` on ${new Date(lockInfo.locked_at).toLocaleDateString()}` : ''}{lockInfo.locked_by_name ? ` by ${lockInfo.locked_by_name}` : ''}. Subject teachers can no longer modify marks for this class.
+                Reports for this class have been downloaded{lockInfo.locked_at ? ` on ${new Date(lockInfo.locked_at).toLocaleDateString()}` : ''}{lockInfo.locked_by_name ? ` by ${lockInfo.locked_by_name}` : ''}. Marks for tests created prior to download are locked. Teachers can still create new tests and grade them.
               </p>
             </div>
           </div>

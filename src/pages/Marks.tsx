@@ -84,7 +84,13 @@ export default function Marks() {
 
   const isCoordinatorLead = isCoordinatorOrLeadership(profile)
   const isClassLocked = Boolean(lockInfo?.is_locked)
-  const canModifyAssessments = !isClassLocked || isCoordinatorLead
+
+  // A test is locked if the class marks are locked AND the test was created at or before the lock timestamp
+  const isTestLocked = (t: UnitTest) => {
+    if (!lockInfo?.is_locked || isCoordinatorLead) return false
+    if (!lockInfo.locked_at || !t.created_at) return true
+    return new Date(t.created_at).getTime() <= new Date(lockInfo.locked_at).getTime()
+  }
 
   const isLeadership = hasRole(profile?.role, 'head_of_school', profile?.additional_roles)
     || hasRole(profile?.role, 'curriculum_coordinator', profile?.additional_roles)
@@ -96,19 +102,20 @@ export default function Marks() {
     ? subjects
     : subjects.filter((s) => myAssignments.some((a) => a.subject_id === s.id))
 
-  const canAdd = roleCanAdd && canModifyAssessments && (
+  // Teachers should still be able to create new tests even if reports were downloaded
+  const canAdd = roleCanAdd && (
     isLeadership
     || isOwnClass
     || mySubjects.length > 0
   )
 
-  const canEditTest = (test: UnitTest) => canModifyAssessments && (
+  const canEditTest = (test: UnitTest) => !isTestLocked(test) && (
     isLeadership
     || (isOwnClass && test.class_id === profile?.class_id)
     || myAssignments.some((a) => a.class_id === test.class_id && a.subject_id === test.subject_id)
     || test.created_by === profile?.id
   )
-  const canDeleteTest = canModifyAssessments && can(profile?.role, 'deleteTests', profile?.additional_roles)
+  const canDeleteTest = (test: UnitTest) => !isTestLocked(test) && can(profile?.role, 'deleteTests', profile?.additional_roles)
 
   const startEditing = (t: UnitTest) => {
     setEditingTest(t)
@@ -128,8 +135,8 @@ export default function Marks() {
 
   const submitEdit = async (e: FormEvent) => {
     e.preventDefault()
-    if (isClassLocked && !isCoordinatorLead) {
-      setError('Marks and assessments for this class are locked because reports have been downloaded. Only Curriculum Coordinators can edit tests.')
+    if (editingTest && isTestLocked(editingTest)) {
+      setError('Marks and assessments for this test are locked because reports have been downloaded. Only Curriculum Coordinators can edit tests.')
       return
     }
     if (!editingTest || !editForm.title.trim()) {
@@ -222,10 +229,6 @@ export default function Marks() {
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
-    if (isClassLocked && !isCoordinatorLead) {
-      setError('Marks and assessments for this class are locked because reports have been downloaded. Only Curriculum Coordinators can create tests.')
-      return
-    }
     if (!selectedClassId || !form.subject_id || !form.title.trim()) {
       setError('Choose a subject and enter a unit/topic.')
       return
@@ -257,11 +260,11 @@ export default function Marks() {
   }
 
   const remove = async (t: UnitTest) => {
-    if (isClassLocked && !isCoordinatorLead) {
-      setError('Marks and assessments for this class are locked because reports have been downloaded. Only Curriculum Coordinators can delete tests.')
+    if (isTestLocked(t)) {
+      setError('Marks and assessments for this test are locked because reports have been downloaded. Only Curriculum Coordinators can delete tests.')
       return
     }
-    if (!canDeleteTest) {
+    if (!canDeleteTest(t)) {
       setError('Only coordinators and leadership can delete a unit test.')
       return
     }
@@ -436,13 +439,13 @@ export default function Marks() {
             <span style={{ fontSize: '24px' }}>🔒</span>
             <div>
               <div style={{ fontWeight: 700, color: isCoordinatorLead ? '#1e40af' : '#9f1239', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span>Marks & Assessments Locked for Subject Teachers</span>
+                <span>Marks Locked for Existing Tests</span>
                 <span style={{ fontSize: '11px', background: isCoordinatorLead ? '#dbeafe' : '#ffe4e6', color: isCoordinatorLead ? '#1e40af' : '#9f1239', padding: '1px 8px', borderRadius: '10px' }}>
-                  {isCoordinatorLead ? 'Coordinator Access' : 'Locked'}
+                  {isCoordinatorLead ? 'Coordinator Access' : 'Existing Tests Locked'}
                 </span>
               </div>
               <p style={{ margin: '2px 0 0', fontSize: '12.5px', color: isCoordinatorLead ? '#1e3a8a' : '#881337' }}>
-                Reports for {className || 'this class'} have been downloaded{lockInfo.locked_at ? ` on ${new Date(lockInfo.locked_at).toLocaleDateString()}` : ''}{lockInfo.locked_by_name ? ` by ${lockInfo.locked_by_name}` : ''}. Subject teachers can no longer create or edit tests and marks.
+                Reports for {className || 'this class'} were downloaded{lockInfo.locked_at ? ` on ${new Date(lockInfo.locked_at).toLocaleDateString()}` : ''}{lockInfo.locked_by_name ? ` by ${lockInfo.locked_by_name}` : ''}. Marks for tests created prior to download are locked. You can still create new tests and enter marks for them.
               </p>
             </div>
           </div>
@@ -582,7 +585,18 @@ export default function Marks() {
           {grp.tests.map((t) => (
             <div key={t.id} className="list-row">
               <div className="list-main">
-                <strong>{t.title}</strong>
+                <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
+                  <strong>{t.title}</strong>
+                  {isTestLocked(t) ? (
+                    <span style={{ fontSize: 11, padding: '1px 6px', borderRadius: 4, background: '#fee2e2', color: '#991b1b', fontWeight: 600 }}>
+                      🔒 Locked
+                    </span>
+                  ) : lockInfo?.is_locked ? (
+                    <span style={{ fontSize: 11, padding: '1px 6px', borderRadius: 4, background: '#ecfdf5', color: '#065f46', fontWeight: 600 }}>
+                      ✨ New Test (Open)
+                    </span>
+                  ) : null}
+                </div>
                 <span className="muted"> {fmtDate(t.test_date)} · Max {t.max_mark}</span>
               </div>
               <div className="list-actions">
@@ -604,7 +618,12 @@ export default function Marks() {
                     ⚠️ Missing PDF
                   </span>
                 )}{' '}
-                <Link to={`/marks/${t.class_id}/${t.id}?view=entry`} className="btn btn-small btn-primary">Enter scores</Link>{' '}
+                <Link
+                  to={`/marks/${t.class_id}/${t.id}?view=${isTestLocked(t) ? 'marksheet' : 'entry'}`}
+                  className="btn btn-small btn-primary"
+                >
+                  {isTestLocked(t) ? 'View scores' : 'Enter scores'}
+                </Link>{' '}
                 {canEditTest(t) && (
                   <button
                     type="button"
@@ -615,7 +634,7 @@ export default function Marks() {
                     ✏️ Update
                   </button>
                 )}{' '}
-                {canDeleteTest && <button className="btn btn-small btn-danger" onClick={() => remove(t)}>Delete</button>}
+                {canDeleteTest(t) && <button className="btn btn-small btn-danger" onClick={() => remove(t)}>Delete</button>}
               </div>
             </div>
           ))}
