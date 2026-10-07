@@ -89,7 +89,8 @@ const NON_LESSON_KEYWORDS = [
   'short',
   'primary:',
   'secondary:',
-  'total:'
+  'total:',
+  'subjects'
 ]
 
 function isNonLesson(str: string): boolean {
@@ -210,6 +211,7 @@ function resolveClass(
   knownClasses: Array<{ id: string; name: string }>
 ): { name: string; id: string | null } {
   let clean = rawText
+    .replace(/\b9\s*-\s*Atlanti\s*c\b/gi, 'Year 9 Atlantic')
     .replace(/\s+c$/i, 'c')
     .replace(/\s*-\s*/g, '-')
     .trim()
@@ -222,10 +224,21 @@ function resolveClass(
 
   const cleanNorm = clean.toLowerCase().replace(/[\s\-_]+/g, '')
 
+  // 1. Exact match
   for (const c of knownClasses) {
     const cNorm = c.name.toLowerCase().replace(/[\s\-_]+/g, '')
-    if (cNorm === cleanNorm || cleanNorm.includes(cNorm) || cNorm.includes(cleanNorm)) {
+    if (cNorm === cleanNorm) {
       return { name: c.name, id: c.id }
+    }
+  }
+
+  // 2. Substring match (ensure at least 4 characters and avoid matching bare 'year')
+  if (cleanNorm.length >= 4 && cleanNorm !== 'year') {
+    for (const c of knownClasses) {
+      const cNorm = c.name.toLowerCase().replace(/[\s\-_]+/g, '')
+      if (cleanNorm.includes(cNorm) || (cNorm.includes(cleanNorm) && /\d/.test(cleanNorm))) {
+        return { name: c.name, id: c.id }
+      }
     }
   }
 
@@ -490,11 +503,18 @@ function tryParseDaysInRows(
 
   if (dayItems.length < 3) return null
 
+  // Detect if there is a legend table on the right (e.g. 'Subjects', 'Count' in aSc timetables)
+  const legendHeader = items.find(
+    (it) => it.y > dayItems[0].y && (/^subjects$/i.test(it.str) || /^count$/i.test(it.str))
+  )
+  const gridRightBoundary = legendHeader ? legendHeader.x - 10 : 99999
+
   // Header cutoff is above the first day label
-  const headerCutoff = dayItems[0].y + 40
+  const headerCutoff = dayItems[0].y + 15
   const topItems = items.filter(
     (it) =>
       it.y >= headerCutoff &&
+      it.x < gridRightBoundary &&
       !isNonLesson(it.str) &&
       !/primary|secondary|years|timetable|schools|combined/i.test(it.str)
   )
@@ -566,8 +586,9 @@ function tryParseDaysInRows(
   const headerBottom = Math.min(...[...rawPNumItems, ...rawTimeItems].map((it) => it.y)) - 3
   const footerItems = items.filter(
     (it) =>
+      it.x < gridRightBoundary &&
       it.y < dayItems[dayItems.length - 1].y &&
-      (it.str.includes('Timetable') || it.str.includes('generated') || it.str.includes('Lessons'))
+      (it.str.includes('Timetable') || it.str.includes('generated') || it.str.includes('Lessons') || it.str.includes('aSc'))
   )
   const gridBottom = footerItems.length > 0 ? Math.max(...footerItems.map((f) => f.y)) + 5 : 25
   const totalHeight = headerBottom - gridBottom
@@ -586,7 +607,7 @@ function tryParseDaysInRows(
   })
 
   const slots: Array<Omit<TeacherScheduleSlot, 'id' | 'timetable_id' | 'teacher_id'>> = []
-  const lessonItems = items.filter((it) => it.x >= 75 && it.y < headerBottom && !isNonLesson(it.str))
+  const lessonItems = items.filter((it) => it.x >= 75 && it.x < gridRightBoundary && it.y < headerBottom && !isNonLesson(it.str))
 
   for (const dRow of dayRows) {
     const rowItems = lessonItems.filter((it) => it.y >= dRow.yMin && it.y < dRow.yMax)
