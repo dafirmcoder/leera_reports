@@ -618,9 +618,21 @@ export default function Planning() {
             return obj
           })
           const allMet = synchedObjs.length > 0 && synchedObjs.every((o) => o.is_met)
+          const metCount = synchedObjs.filter((o) => o.is_met).length
+          let updatedRemarks = wk.remarks || ''
+          if (allMet) {
+            if (!updatedRemarks || /not covered/i.test(updatedRemarks)) {
+              updatedRemarks = 'Covered'
+            }
+          } else if (metCount > 0) {
+            if (!updatedRemarks || /not covered/i.test(updatedRemarks)) {
+              updatedRemarks = `Partially covered (${metCount}/${synchedObjs.length})`
+            }
+          }
           return {
             ...wk,
             objectives: synchedObjs,
+            remarks: updatedRemarks,
             is_commed: wk.is_commed || allMet
           }
         })
@@ -1081,6 +1093,46 @@ export default function Planning() {
           setError('Draft work plans are only visible once submitted.')
           return
         }
+
+        // Sync coverage with lesson plans for this class and subject
+        const coveredCodes = new Set<string>()
+        const coveredTexts = new Set<string>()
+        lessonPlans.forEach((lp) => {
+          if (lp.class_id === wp.class_id && lp.subject_id === wp.subject_id) {
+            (lp.objectives || []).forEach((o) => {
+              if (o.code_snapshot?.trim()) coveredCodes.add(o.code_snapshot.trim().toLowerCase())
+              if (o.text_snapshot?.trim() && o.text_snapshot.trim().length > 5) coveredTexts.add(o.text_snapshot.trim().toLowerCase())
+            })
+          }
+        })
+
+        if (wp.weeks && wp.weeks.length > 0) {
+          wp.weeks = wp.weeks.map((wk) => {
+            const synchedObjs = (wk.objectives || []).map((obj) => {
+              const c = (obj.code_snapshot || '').trim().toLowerCase()
+              const t = (obj.text_snapshot || '').trim().toLowerCase()
+              if (!obj.is_met && (coveredCodes.has(c) || (t.length > 5 && coveredTexts.has(t)))) {
+                return { ...obj, is_met: true, met_at: obj.met_at || new Date().toISOString() }
+              }
+              return obj
+            })
+            const allMet = synchedObjs.length > 0 && synchedObjs.every((o) => o.is_met)
+            const metCount = synchedObjs.filter((o) => o.is_met).length
+            let updatedRemarks = wk.remarks || ''
+            if (allMet) {
+              if (!updatedRemarks || /not covered/i.test(updatedRemarks)) updatedRemarks = 'Covered'
+            } else if (metCount > 0) {
+              if (!updatedRemarks || /not covered/i.test(updatedRemarks)) updatedRemarks = `Partially covered (${metCount}/${synchedObjs.length})`
+            }
+            return {
+              ...wk,
+              objectives: synchedObjs,
+              remarks: updatedRemarks,
+              is_commed: wk.is_commed || allMet
+            }
+          })
+        }
+
         const allPlans = [...workPlans]
         const wpIdx = allPlans.findIndex((p) => p.id === wp.id)
         if (wpIdx >= 0) allPlans[wpIdx] = wp
@@ -1172,13 +1224,17 @@ export default function Planning() {
       return
     }
     try {
-      // Ensure weeks are loaded
-      const fullPlan = wp.weeks ? wp : (await api.getWorkPlan(wp.id)) || wp
+      // Find the most up-to-date plan with synchronized coverage from memory
+      const statePlan = workPlans.find((p) => p.id === wp.id)
+      const currentPlan = (selectedWorkPlan?.id === wp.id ? selectedWorkPlan : null) || statePlan || wp
+      const fullPlan = (currentPlan.weeks && currentPlan.weeks.length > 0)
+        ? currentPlan
+        : (await api.getWorkPlan(wp.id)) || currentPlan
       const doc = await generateWorkPlanPdf(fullPlan, school)
       const blob = doc.output('blob')
       const url = URL.createObjectURL(blob)
       setPdfPreviewUrl(url)
-      setPdfPreviewTitle(`Work Plan — ${wp.subject_name || 'Subject'} (${wp.class_name || 'Class'})`)
+      setPdfPreviewTitle(`Work Plan — ${fullPlan.subject_name || wp.subject_name || 'Subject'} (${fullPlan.class_name || wp.class_name || 'Class'})`)
       setShowPdfPreviewModal(true)
     } catch (err: any) {
       setError(err?.message || 'Could not generate work plan PDF.')
@@ -1508,6 +1564,20 @@ export default function Planning() {
           girls_attendance: initialGirls,
           objectives: chosenObjectives
         })
+
+        if (chosenObjectives.length > 0) {
+          try {
+            await api.markWorkPlanObjectivesCovered(
+              classId,
+              subjectId,
+              chosenObjectives.map((o) => o.code_snapshot),
+              lessonDate
+            )
+          } catch (e) {
+            console.warn('Auto-marking workplan objectives covered failed:', e)
+          }
+        }
+
       setShowCreateLessonPlanModal(false)
       setCreateLpSlotId(null)
       setSelectedLpObjectiveCodes([])
@@ -1539,6 +1609,18 @@ export default function Planning() {
     try {
       setLoading(true)
       await api.updateLessonPlan(selectedLessonPlan.id, selectedLessonPlan)
+      if (selectedLessonPlan.objectives && selectedLessonPlan.objectives.length > 0) {
+        try {
+          await api.markWorkPlanObjectivesCovered(
+            selectedLessonPlan.class_id,
+            selectedLessonPlan.subject_id,
+            selectedLessonPlan.objectives.map((o) => o.code_snapshot),
+            selectedLessonPlan.lesson_date
+          )
+        } catch (e) {
+          console.warn('Auto-marking workplan objectives covered failed:', e)
+        }
+      }
       setSuccess('Lesson Plan saved successfully.')
       await loadAllPlanningData()
       const refreshed = await api.getLessonPlan(selectedLessonPlan.id)
@@ -1724,7 +1806,7 @@ export default function Planning() {
     setParsingTimetable(true)
     setError(null)
     try {
-      const parsed = await parseTeacherTimetablePdf(file, classes, subjects)
+      const parsed = await parseTeacherTimetablePdf(file, classes, subjects, profile?.full_name)
       setParsedTimetablePreview(parsed.slots as any)
       setShowUploadTimetableModal(true)
       if (parsed.warnings.length > 0) {

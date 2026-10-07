@@ -2898,7 +2898,7 @@ export const supabaseApi: Api = {
     subtopic_title?: string
     lessons_per_week: number
     remarks?: string
-    objectives?: Array<{ objective_id?: string; code_snapshot: string; text_snapshot: string; is_met?: boolean }>
+    objectives?: Array<{ objective_id?: string; code_snapshot: string; text_snapshot: string; is_met?: boolean; met_at?: string | null }>
   }>): Promise<void> {
     try {
       // 1. Purge stale weeks for this work plan that are not in the new weeks list
@@ -2917,6 +2917,18 @@ export const supabaseApi: Api = {
         }
       }
 
+      const sanitizeDate = (dStr?: string | null): string | null => {
+        if (!dStr) return null
+        const m = dStr.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+        if (!m) return null
+        const y = parseInt(m[1], 10), mo = parseInt(m[2], 10), d = parseInt(m[3], 10)
+        const dt = new Date(y, mo - 1, d)
+        if (dt.getFullYear() === y && dt.getMonth() === mo - 1 && dt.getDate() === d) {
+          return dStr
+        }
+        return null
+      }
+
       for (const w of weeks) {
         let weekId = w.id
         const weekPayload = {
@@ -2924,8 +2936,8 @@ export const supabaseApi: Api = {
           sequence: w.sequence,
           week_label: w.week_label,
           month_label: w.month_label || '',
-          start_date: w.start_date || null,
-          end_date: w.end_date || null,
+          start_date: sanitizeDate(w.start_date),
+          end_date: sanitizeDate(w.end_date),
           is_instructional: w.is_instructional,
           event_label: w.event_label || '',
           topic_id: w.topic_id || null,
@@ -2937,13 +2949,26 @@ export const supabaseApi: Api = {
         }
 
         if (weekId && !weekId.startsWith('week-')) {
-          await db().from('work_plan_weeks').update(weekPayload).eq('id', weekId)
+          const { error: upErr } = await db().from('work_plan_weeks').update(weekPayload).eq('id', weekId)
+          if (upErr && (weekPayload.start_date || weekPayload.end_date)) {
+            await db().from('work_plan_weeks').update({ ...weekPayload, start_date: null, end_date: null }).eq('id', weekId)
+          }
         } else {
-          const { data: insWeek } = await db()
+          const res = await db()
             .from('work_plan_weeks')
             .upsert(weekPayload, { onConflict: 'work_plan_id,sequence' })
             .select()
             .single()
+          let insWeek = res.data
+          if (res.error && (weekPayload.start_date || weekPayload.end_date)) {
+            console.warn('Retrying upsert week without dates due to db error:', res.error)
+            const retryRes = await db()
+              .from('work_plan_weeks')
+              .upsert({ ...weekPayload, start_date: null, end_date: null }, { onConflict: 'work_plan_id,sequence' })
+              .select()
+              .single()
+            insWeek = retryRes.data
+          }
           if (insWeek) weekId = insWeek.id
         }
 
@@ -2969,7 +2994,8 @@ export const supabaseApi: Api = {
                 objective_id: o.objective_id || null,
                 code_snapshot: uniqueCode,
                 text_snapshot: rawText || uniqueCode,
-                is_met: !!o.is_met
+                is_met: !!o.is_met,
+                met_at: o.is_met ? (o.met_at || new Date().toISOString()) : null
               })
             }
             if (objRows.length > 0) {
@@ -3390,7 +3416,19 @@ export const supabaseApi: Api = {
   ): Promise<void> {
     if (!objectiveCodes || objectiveCodes.length === 0) return
     const metTimestamp = lessonDate ? new Date(lessonDate).toISOString() : new Date().toISOString()
-    const allVariants = Array.from(new Set(objectiveCodes.flatMap((c) => [c, c.trim(), c.toUpperCase(), c.toLowerCase()]).filter(Boolean)))
+    const allVariants = Array.from(new Set(
+      objectiveCodes.flatMap((c) => {
+        const clean = (c || '').trim()
+        return [
+          clean,
+          clean.toUpperCase(),
+          clean.toLowerCase(),
+          `${clean} (1)`,
+          `${clean} (2)`,
+          `${clean} (3)`
+        ]
+      }).filter(Boolean)
+    ))
 
     try {
       // 1. Find matching work plan(s) for this class and subject
@@ -3417,6 +3455,30 @@ export const supabaseApi: Api = {
             })
             .in('work_plan_week_id', weekIds)
             .in('code_snapshot', allVariants)
+
+          // Check if all objectives for any of these weeks are now met, and update week remarks
+          const { data: weekObjs } = await db()
+            .from('work_plan_week_objectives')
+            .select('work_plan_week_id, is_met')
+            .in('work_plan_week_id', weekIds)
+
+          if (weekObjs && weekObjs.length > 0) {
+            const statsMap = new Map<string, { total: number; met: number }>()
+            for (const row of weekObjs) {
+              const cur = statsMap.get(row.work_plan_week_id) || { total: 0, met: 0 }
+              cur.total++
+              if (row.is_met) cur.met++
+              statsMap.set(row.work_plan_week_id, cur)
+            }
+            for (const [wId, stats] of statsMap.entries()) {
+              if (stats.total > 0 && stats.met === stats.total) {
+                await db()
+                  .from('work_plan_weeks')
+                  .update({ remarks: 'Covered', is_commed: true })
+                  .eq('id', wId)
+              }
+            }
+          }
         }
       }
     } catch (e) {
@@ -3431,8 +3493,14 @@ export const supabaseApi: Api = {
         if (wp.class_id === classId && wp.subject_id === subjectId) {
           wp.weeks?.forEach((w) => {
             w.objectives?.forEach((obj) => {
-              const code = obj.code_snapshot || ''
-              if (allVariants.includes(code) || allVariants.includes(code.trim().toLowerCase())) {
+              const code = (obj.code_snapshot || '').trim()
+              const baseCode = code.replace(/\s*\(\d+\)$/, '').trim()
+              if (
+                allVariants.includes(code) ||
+                allVariants.includes(code.toLowerCase()) ||
+                allVariants.includes(baseCode) ||
+                allVariants.includes(baseCode.toLowerCase())
+              ) {
                 obj.is_met = true
                 obj.met_at = metTimestamp
                 changed = true
@@ -3440,6 +3508,10 @@ export const supabaseApi: Api = {
             })
             if (w.objectives && w.objectives.length > 0 && w.objectives.every((o) => o.is_met)) {
               w.is_commed = true
+              if (!w.remarks || /not covered/i.test(w.remarks)) {
+                w.remarks = 'Covered'
+                changed = true
+              }
             }
           })
         }

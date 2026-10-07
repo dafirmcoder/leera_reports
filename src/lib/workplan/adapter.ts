@@ -143,19 +143,52 @@ function parseIsoDateRange(
     }
   }
 
-  if (startMonthNum && endMonthNum === startMonthNum && startDay > endDay) {
-    endMonthNum = (startMonthNum % 12) + 1
-    if (endMonthNum === 1) year += 1
+  function isValidDate(y: number, m: number, d: number): boolean {
+    if (m < 1 || m > 12 || d < 1 || d > 31) return false
+    const dt = new Date(y, m - 1, d)
+    return dt.getFullYear() === y && dt.getMonth() === m - 1 && dt.getDate() === d
   }
 
-  if (startMonthNum > 0 && startDay >= 1 && startDay <= 31) {
+  let startYear = year
+  let endYear = year
+
+  if (startMonthNum && startDay > endDay) {
+    // Week crosses month boundary.
+    // Check if startDay is invalid in startMonthNum (e.g. 31 in September)
+    if (!isValidDate(startYear, startMonthNum, startDay)) {
+      const prevMonth = startMonthNum - 1 <= 0 ? 12 : startMonthNum - 1
+      const prevYear = startMonthNum - 1 <= 0 ? startYear - 1 : startYear
+      if (isValidDate(prevYear, prevMonth, startDay)) {
+        endMonthNum = startMonthNum
+        startMonthNum = prevMonth
+        startYear = prevYear
+      }
+    } else if (startDay >= 20 && endDay <= 10) {
+      // In school work plans, the month column often names the month in which the week ends
+      const prevMonth = startMonthNum - 1 <= 0 ? 12 : startMonthNum - 1
+      const prevYear = startMonthNum - 1 <= 0 ? startYear - 1 : startYear
+      if (isValidDate(prevYear, prevMonth, startDay)) {
+        endMonthNum = startMonthNum
+        startMonthNum = prevMonth
+        startYear = prevYear
+      } else {
+        endMonthNum = (startMonthNum % 12) + 1
+        if (endMonthNum === 1) endYear += 1
+      }
+    } else {
+      endMonthNum = (startMonthNum % 12) + 1
+      if (endMonthNum === 1) endYear += 1
+    }
+  }
+
+  if (isValidDate(startYear, startMonthNum, startDay) && isValidDate(endYear, endMonthNum, endDay)) {
     const sMonthPad = String(startMonthNum).padStart(2, '0')
     const sDayPad = String(startDay).padStart(2, '0')
     const eMonthPad = String(endMonthNum || startMonthNum).padStart(2, '0')
     const eDayPad = String(endDay).padStart(2, '0')
     return {
-      startDate: `${year}-${sMonthPad}-${sDayPad}`,
-      endDate: `${year}-${eMonthPad}-${eDayPad}`
+      startDate: `${startYear}-${sMonthPad}-${sDayPad}`,
+      endDate: `${endYear}-${eMonthPad}-${eDayPad}`
     }
   }
 

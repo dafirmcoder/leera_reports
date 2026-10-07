@@ -70,6 +70,34 @@ export function workPlanToParsedWorkplan(
       }
     }
 
+    const objectives = (w.objectives || []).map((o) => ({
+      kind: 'objective' as const,
+      code: o.code_snapshot || null,
+      strandCode: o.code_snapshot ? o.code_snapshot.split('.')[0] : null,
+      text: o.text_snapshot,
+      raw: `${o.code_snapshot ? o.code_snapshot + ' ' : ''}${o.text_snapshot}`,
+      unit: w.topic_title || null,
+      page: 1,
+      is_met: Boolean(o.is_met)
+    }))
+
+    const allMet = objectives.length > 0 && objectives.every((o) => o.is_met)
+    const someMet = objectives.some((o) => o.is_met)
+    const metCount = objectives.filter((o) => o.is_met).length
+
+    let remarksVal = (w.remarks || '').trim()
+    if (allMet) {
+      if (!remarksVal || /not covered/i.test(remarksVal)) {
+        remarksVal = 'Covered'
+      } else if (!/covered/i.test(remarksVal)) {
+        remarksVal = `Covered\n${remarksVal}`
+      }
+    } else if (someMet) {
+      if (!remarksVal || /not covered/i.test(remarksVal)) {
+        remarksVal = `Partially covered (${metCount}/${objectives.length})`
+      }
+    }
+
     return {
       week: w.sequence ?? (i + 1),
       label: w.week_label || String(w.sequence ?? (i + 1)),
@@ -78,19 +106,11 @@ export function workPlanToParsedWorkplan(
       unit: w.topic_title || null,
       units: w.topic_title ? [w.topic_title] : [],
       topics: [w.topic_title, w.subtopic_title].filter(Boolean) as string[],
-      objectives: (w.objectives || []).map((o) => ({
-        kind: 'objective' as const,
-        code: o.code_snapshot || null,
-        strandCode: o.code_snapshot ? o.code_snapshot.split('.')[0] : null,
-        text: o.text_snapshot,
-        raw: `${o.code_snapshot ? o.code_snapshot + ' ' : ''}${o.text_snapshot}`,
-        unit: w.topic_title || null,
-        page: 1
-      })),
+      objectives,
       lessons: [],
       assessments: !w.is_instructional && w.event_label ? [w.event_label] : [],
-      remarks: w.remarks || null,
-      remarksNote: w.remarks || null,
+      remarks: remarksVal || null,
+      remarksNote: remarksVal || null,
       remarkCodes: [],
       items: [],
       pages: [1],

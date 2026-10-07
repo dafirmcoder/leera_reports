@@ -200,7 +200,10 @@ function layoutWeek(
   };
 
   for (const o of week.objectives) {
-    const lead = o.code ? `${o.code} ${o.text.includes(':') ? '' : ''}` : '';
+    const isMet = Boolean(o.is_met);
+    const statusTag = isMet ? '[Covered]' : '';
+    const codePart = o.code ? o.code : '';
+    const lead = codePart ? `${codePart}${statusTag ? ' ' + statusTag : ''}` : statusTag;
     const indentWidth = bulletWidth() + (lead ? leadWidthOf(`${lead} `) : 0);
     const body = measure(pdf, o.text, Math.max(40, topicWidth - indentWidth), size, false, m.lineHeight);
     body.forEach((l, i) =>

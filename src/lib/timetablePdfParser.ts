@@ -1,10 +1,12 @@
 import * as pdfjsLib from 'pdfjs-dist'
 import type { TeacherScheduleSlot } from './types'
 
-try {
-  pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`
-} catch {
-  // worker fallback
+if (typeof window !== 'undefined') {
+  try {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`
+  } catch {
+    // worker fallback
+  }
 }
 
 const DAYS_MAP: Record<string, number> = {
@@ -26,9 +28,44 @@ const DAYS_MAP: Record<string, number> = {
   sun: 6
 }
 
-const TIME_RANGE_REGEX = /(?:^|\s)(0?[7-9]|1[0-9])[:.]([0-5][0-9])\s*(?:am|pm)?\s*(?:-|–|to)\s*(0?[7-9]|1[0-9])[:.]([0-5][0-9])\s*(?:am|pm)?/i
+const TIME_RANGE_REGEX = /(?:^|\s)(0?[7-9]|1[0-9])[:.]([0-5][0-9])\s*(?:am|pm)?\s*(?:-|–|—|to)\s*(0?[7-9]|1[0-9])[:.]([0-5][0-9])\s*(?:am|pm)?/i
 
-// Common non-lesson keywords to filter out
+function parseTimeRange(str: string): { startTime: string; endTime: string } | null {
+  const m = str.match(TIME_RANGE_REGEX)
+  if (!m) return null
+  const startH = m[1].padStart(2, '0')
+  const startM = m[2]
+  const endH = m[3].padStart(2, '0')
+  const endM = m[4]
+  return {
+    startTime: `${startH}:${startM}`,
+    endTime: `${endH}:${endM}`
+  }
+}
+
+// Assemble split time tokens on the same horizontal line (e.g. "8:00" + "-" + "8:40")
+function assembleSplitTokens(items: PdfPositionedItem[]): PdfPositionedItem[] {
+  const result = [...items]
+  const sorted = [...items].sort((a, b) => Math.abs(b.y - a.y) > 3 ? b.y - a.y : a.x - b.x)
+  for (let i = 0; i < sorted.length - 2; i++) {
+    const a = sorted[i], b = sorted[i + 1], c = sorted[i + 2]
+    if (Math.abs(a.y - b.y) <= 3 && Math.abs(b.y - c.y) <= 3) {
+      if (/^\d{1,2}:\d{2}$/.test(a.str) && /^[-–—]$/.test(b.str) && /^\d{1,2}:\d{2}$/.test(c.str)) {
+        const assembledStr = `${a.str} - ${c.str}`
+        result.push({
+          str: assembledStr,
+          x: a.x,
+          y: a.y,
+          w: (c.x + c.w) - a.x,
+          h: a.h,
+          page: a.page
+        })
+      }
+    }
+  }
+  return result
+}
+
 const NON_LESSON_KEYWORDS = [
   'break',
   'lunch',
@@ -36,7 +73,6 @@ const NON_LESSON_KEYWORDS = [
   'breakfast',
   'assembly',
   'morning assembly',
-  'morning',
   'duty',
   'homeroom',
   'free',
@@ -45,9 +81,26 @@ const NON_LESSON_KEYWORDS = [
   'registration',
   'clubs',
   'lessons/week',
+  'lessons / week',
   'asc timetables',
-  'timetable generated'
+  'timetable generated',
+  'count',
+  'total',
+  'short',
+  'primary:',
+  'secondary:',
+  'total:'
 ]
+
+function isNonLesson(str: string): boolean {
+  const s = str.toLowerCase().trim()
+  if (NON_LESSON_KEYWORDS.some((kw) => s.includes(kw))) return true
+  if (/^—+\s*(break)?\s*—*$/i.test(s)) return true
+  if (/^\d+\s*lessons?(\s*\/\s*week)?$/i.test(s)) return true
+  if (/\(\d+\s*lessons?\)/i.test(s)) return true
+  if (/^[-–—]$/.test(s)) return true
+  return false
+}
 
 // Common subject abbreviations and aliases in school timetables
 const SUBJECT_ALIASES: Array<{ match: RegExp; canonical: string; alternate?: string }> = [
@@ -90,20 +143,6 @@ interface PdfPositionedItem {
   w: number
   h: number
   page: number
-}
-
-interface PdfVectorLine {
-  x1: number
-  y1: number
-  x2: number
-  y2: number
-}
-
-function applyTransform(p: [number, number], m: number[]): [number, number] {
-  return [
-    p[0] * m[0] + p[1] * m[2] + m[4],
-    p[0] * m[1] + p[1] * m[3] + m[5]
-  ]
 }
 
 /**
@@ -194,32 +233,36 @@ function resolveClass(
 }
 
 /**
- * Extracts rich positioned text items and vector lines from PDF.
+ * Extracts positioned text items and per-page content from PDF.
  */
-async function extractPositionedItems(file: File): Promise<{
-  items: PdfPositionedItem[]
-  vectorLines: PdfVectorLine[]
-  fullText: string
-  lines: string[]
+async function extractPositionedItems(
+  file: File,
+  targetTeacherName?: string
+): Promise<{
+  targetItems: PdfPositionedItem[]
+  allLines: string[]
+  pageCount: number
+  selectedPage: number
 }> {
   const arrayBuffer = await file.arrayBuffer()
   const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) })
   const pdf = await loadingTask.promise
 
-  const items: PdfPositionedItem[] = []
-  const vectorLines: PdfVectorLine[] = []
-  const pageStrings: string[] = []
+  const pagesMap: Map<number, PdfPositionedItem[]> = new Map()
+  const allLines: string[] = []
+
+  let matchedPage = 1
 
   for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
     const page = await pdf.getPage(pageNum)
     const content = await page.getTextContent()
+    const pageItems: PdfPositionedItem[] = []
 
-    const pageLines: string[] = []
     for (const rawItem of content.items as any[]) {
       const str = (rawItem.str || '').trim()
       if (!str) continue
 
-      items.push({
+      pageItems.push({
         str,
         x: Math.round(rawItem.transform[4] * 10) / 10,
         y: Math.round(rawItem.transform[5] * 10) / 10,
@@ -227,321 +270,196 @@ async function extractPositionedItems(file: File): Promise<{
         h: Math.round((rawItem.height || 0) * 10) / 10,
         page: pageNum
       })
-      pageLines.push(str)
+      allLines.push(str)
     }
-    pageStrings.push(pageLines.join('\n'))
+    pagesMap.set(pageNum, pageItems)
 
-    // Extract vector line paths on page 1
-    if (pageNum === 1) {
-      try {
-        const opList = await page.getOperatorList()
-        const matrixStack: number[][] = [[1, 0, 0, 1, 0, 0]]
-        let currentMatrix = [1, 0, 0, 1, 0, 0]
+    // Check if this page matches target teacher's name
+    if (targetTeacherName && pdf.numPages > 1) {
+      const pageFullText = pageItems.map((i) => i.str.toLowerCase()).join(' ')
+      const teacherTokens = targetTeacherName
+        .toLowerCase()
+        .split(/\s+/)
+        .filter((t) => t.length > 2 && !['mr.', 'ms.', 'mrs.', 'dr.', 'teacher'].includes(t))
 
-        for (let i = 0; i < opList.fnArray.length; i++) {
-          const fn = opList.fnArray[i]
-          const args = opList.argsArray[i]
-
-          if (fn === pdfjsLib.OPS.save) {
-            matrixStack.push([...currentMatrix])
-          } else if (fn === pdfjsLib.OPS.restore) {
-            currentMatrix = matrixStack.pop() || [1, 0, 0, 1, 0, 0]
-          } else if (fn === pdfjsLib.OPS.transform) {
-            const [a1, b1, c1, d1, e1, f1] = currentMatrix
-            const [a2, b2, c2, d2, e2, f2] = args
-            currentMatrix = [
-              a1 * a2 + c1 * b2,
-              b1 * a2 + d1 * b2,
-              a1 * c2 + c1 * d2,
-              b1 * c2 + d1 * d2,
-              a1 * e2 + c1 * f2 + e1,
-              b1 * e2 + d1 * f2 + f1
-            ]
-          } else if (fn === pdfjsLib.OPS.constructPath) {
-            const ops = args[0]
-            const coords = args[1]
-            let cIdx = 0
-            let curPt: [number, number] = [0, 0]
-            for (const op of ops) {
-              if (op === 13) { // moveTo
-                curPt = applyTransform([coords[cIdx++], coords[cIdx++]], currentMatrix)
-              } else if (op === 14) { // lineTo
-                const nextPt = applyTransform([coords[cIdx++], coords[cIdx++]], currentMatrix)
-                vectorLines.push({
-                  x1: Math.round(curPt[0] * 10) / 10,
-                  y1: Math.round(curPt[1] * 10) / 10,
-                  x2: Math.round(nextPt[0] * 10) / 10,
-                  y2: Math.round(nextPt[1] * 10) / 10
-                })
-                curPt = nextPt
-              }
-            }
-          }
-        }
-      } catch (err) {
-        console.warn('Vector line extraction skipped:', err)
+      const matches = teacherTokens.some((token) => pageFullText.includes(token))
+      if (matches) {
+        matchedPage = pageNum
       }
     }
   }
 
-  const fullText = pageStrings.join('\n\n')
-  const lines = fullText.split('\n').map((l) => l.trim()).filter(Boolean)
+  const targetItems = pagesMap.get(matchedPage) || pagesMap.get(1) || []
 
-  return { items, vectorLines, fullText, lines }
+  return {
+    targetItems,
+    allLines,
+    pageCount: pdf.numPages,
+    selectedPage: matchedPage
+  }
 }
 
 /**
- * High-precision 2D Grid Timetable parser with double-period detection.
+ * STRATEGY 1: Days in Columns Layout
+ * Examples: Combined Teacher Timetable (Mr. Samson, Mr. Daniel)
+ * - Header has Day names across top (MONDAY, TUESDAY, WEDNESDAY...)
+ * - Left column has Period numbers and Time ranges
  */
-function tryParse2DGrid(
-  items: PdfPositionedItem[],
-  vectorLines: PdfVectorLine[],
+function tryParseDaysInColumns(
+  rawItems: PdfPositionedItem[],
   knownClasses: Array<{ id: string; name: string }>,
   knownSubjects: Array<{ id: string; name: string }>
 ): Array<Omit<TeacherScheduleSlot, 'id' | 'timetable_id' | 'teacher_id'>> | null {
-  const p1Items = items.filter((it) => it.page === 1)
-  if (p1Items.length === 0) return null
+  const items = assembleSplitTokens(rawItems)
 
-  // 1. Detect Day Labels on the left (x < 150)
-  const dayItems = p1Items
-    .filter((it) => {
-      if (it.x > 150) return false
-      const lower = it.str.toLowerCase()
-      return DAYS_MAP[lower] !== undefined
-    })
-    .sort((a, b) => b.y - a.y)
-
-  if (dayItems.length < 3) return null
-
-  const numDays = dayItems.length
-
-  // 2. Extract Declared Legend Subjects (typically on the right x >= 550)
-  const legendSubjects: string[] = []
-  const rightItems = p1Items.filter((it) => it.x >= 550 && it.y > 350).sort((a, b) => b.y - a.y)
-  for (const it of rightItems) {
+  const dayCandidates = items.filter((it) => {
+    if (it.x < 120) return false
     const low = it.str.toLowerCase()
-    if (!['subjects', 'count', 'lessons/week', 'total'].includes(low) && !/^\d+$/.test(it.str)) {
-      legendSubjects.push(it.str)
+    return DAYS_MAP[low] !== undefined
+  })
+
+  if (dayCandidates.length < 3) return null
+
+  // Group by Y to find the main day header row
+  const yGroups = new Map<number, PdfPositionedItem[]>()
+  for (const d of dayCandidates) {
+    const groupY = Array.from(yGroups.keys()).find((gy) => Math.abs(gy - d.y) < 8)
+    if (groupY !== undefined) {
+      yGroups.get(groupY)!.push(d)
+    } else {
+      yGroups.set(d.y, [d])
     }
   }
 
-  // 3. Detect Period Columns from header row
-  const headerItems = p1Items.filter((it) => it.y > dayItems[0].y + 10 && it.x < 570)
-  const timeHeaderItems = headerItems.filter((it) => TIME_RANGE_REGEX.test(it.str)).sort((a, b) => a.x - b.x)
-  if (timeHeaderItems.length === 0) return null
+  let headerDays: PdfPositionedItem[] = []
+  let headerY = 0
+  for (const [y, list] of yGroups.entries()) {
+    if (list.length > headerDays.length) {
+      headerDays = list
+      headerY = y
+    }
+  }
 
-  const headerBottom = Math.min(...timeHeaderItems.map((t) => t.y))
+  if (headerDays.length < 3) return null
+  headerDays.sort((a, b) => a.x - b.x)
 
-  const footerItems = p1Items.filter(
-    (it) =>
-      it.str.toLowerCase().includes('asc timetables') ||
-      it.str.toLowerCase().includes('timetable generated') ||
-      it.str.toLowerCase().includes('page ')
-  )
-  const footerTop = footerItems.length > 0 ? Math.max(...footerItems.map((f) => f.y)) + 5 : 25
-
-  const totalGridHeight = headerBottom - footerTop
-  const rowHeight = totalGridHeight / numDays
-
-  const dayRows = dayItems.map((cur, i) => {
-    const yMax = headerBottom - i * rowHeight
-    const yMin = headerBottom - (i + 1) * rowHeight
+  // Compute column horizontal boundaries for each day
+  const dayCols = headerDays.map((d, i) => {
+    const prev = headerDays[i - 1]
+    const next = headerDays[i + 1]
+    const xMin = prev ? (prev.x + d.x) / 2 : d.x - 50
+    const xMax = next ? (d.x + next.x) / 2 : d.x + 65
     return {
-      dayName: cur.str,
-      dayIndex: DAYS_MAP[cur.str.toLowerCase()],
-      yMin,
-      yMax
+      dayIndex: DAYS_MAP[d.str.toLowerCase()],
+      dayName: d.str,
+      x: d.x,
+      xMin,
+      xMax
     }
   })
 
-  // Detect Period Columns
-  const periodNumberItems = headerItems.filter((it) => /^[1-9]$/.test(it.str)).sort((a, b) => a.x - b.x)
+  // Detect Period rows from the left side (x < 130, y < headerY - 5)
+  const leftItems = items.filter((it) => it.x < 130 && it.y < headerY - 5)
+  const periodNumItems = leftItems.filter((it) => /^[1-9]$|^10$/.test(it.str)).sort((a, b) => b.y - a.y)
+  const timeItems = leftItems.filter((it) => TIME_RANGE_REGEX.test(it.str)).sort((a, b) => b.y - a.y)
 
-  interface ColDef {
-    period: number
-    x: number
-    xMin: number
-    xMax: number
+  if (periodNumItems.length === 0 && timeItems.length === 0) return null
+
+  const periodRows: Array<{
+    periodNum: number
     startTime: string
     endTime: string
-    dividerX: number
-    nextPeriod: number | null
-  }
-  const periodCols: ColDef[] = []
+    y: number
+    yMin: number
+    yMax: number
+  }> = []
 
-  if (periodNumberItems.length >= 3) {
-    for (let pIdx = 0; pIdx < periodNumberItems.length; pIdx++) {
-      const pItem = periodNumberItems[pIdx]
-      const periodNum = parseInt(pItem.str, 10)
-      const closestTime = [...timeHeaderItems].sort(
-        (a, b) => Math.abs(a.x - pItem.x) - Math.abs(b.x - pItem.x)
-      )[0]
-      const match = closestTime?.str.match(TIME_RANGE_REGEX)
-      const startH = match ? match[1].padStart(2, '0') : '08'
-      const startM = match ? match[2] : '00'
-      const endH = match ? match[3].padStart(2, '0') : '08'
-      const endM = match ? match[4] : '45'
+  for (let i = 0; i < periodNumItems.length; i++) {
+    const pItem = periodNumItems[i]
+    const pNum = parseInt(pItem.str, 10)
+    const closestTime = [...timeItems].sort((a, b) => Math.abs(a.y - pItem.y) - Math.abs(b.y - pItem.y))[0]
+    const tr = closestTime ? parseTimeRange(closestTime.str) : null
+    const startTime = tr ? tr.startTime : '08:00'
+    const endTime = tr ? tr.endTime : '08:40'
 
-      const nextPItem = periodNumberItems[pIdx + 1]
-      const nextPeriodNum = nextPItem ? parseInt(nextPItem.str, 10) : null
+    const prevP = periodNumItems[i - 1]
+    const nextP = periodNumItems[i + 1]
+    const yMax = prevP ? (prevP.y + pItem.y) / 2 : pItem.y + 12
+    const yMin = nextP ? (pItem.y + nextP.y) / 2 : pItem.y - 12
 
-      periodCols.push({
-        period: periodNum,
-        x: pItem.x,
-        xMin: pItem.x - 22,
-        xMax: pItem.x + 22,
-        startTime: `${startH}:${startM}`,
-        endTime: `${endH}:${endM}`,
-        dividerX: nextPItem ? (pItem.x + nextPItem.x) / 2 : pItem.x + 25,
-        nextPeriod: nextPeriodNum
-      })
-    }
-  } else {
-    let pCount = 1
-    for (let tIdx = 0; tIdx < timeHeaderItems.length; tIdx++) {
-      const tItem = timeHeaderItems[tIdx]
-      const match = tItem.str.match(TIME_RANGE_REGEX)
-      if (!match) continue
-      const startH = match[1].padStart(2, '0')
-      const startM = match[2]
-      const endH = match[3].padStart(2, '0')
-      const endM = match[4]
-
-      const nextTItem = timeHeaderItems[tIdx + 1]
-
-      periodCols.push({
-        period: pCount,
-        x: tItem.x,
-        xMin: tItem.x - 22,
-        xMax: tItem.x + 22,
-        startTime: `${startH}:${startM}`,
-        endTime: `${endH}:${endM}`,
-        dividerX: nextTItem ? (tItem.x + nextTItem.x) / 2 : tItem.x + 25,
-        nextPeriod: nextTItem ? pCount + 1 : null
-      })
-      pCount++
-    }
+    periodRows.push({
+      periodNum: pNum,
+      startTime,
+      endTime,
+      y: pItem.y,
+      yMin,
+      yMax
+    })
   }
 
-  if (periodCols.length === 0) return null
-
-  // Refine column boundaries
-  for (let i = 0; i < periodCols.length; i++) {
-    const cur = periodCols[i]
-    const prev = periodCols[i - 1]
-    const next = periodCols[i + 1]
-    cur.xMin = prev ? (prev.x + cur.x) / 2 : cur.x - 25
-    cur.xMax = next ? (cur.x + next.x) / 2 : cur.x + 25
-    cur.dividerX = cur.xMax
-  }
-
-  // 4. Extract Lesson Cells with Double Period Detection
   const slots: Array<Omit<TeacherScheduleSlot, 'id' | 'timetable_id' | 'teacher_id'>> = []
+  const lessonItems = items.filter((it) => it.x >= 120 && it.y < headerY - 5 && !isNonLesson(it.str))
 
-  for (const dRow of dayRows) {
-    // Find vertical divider lines in this day's row
-    const dayLines = vectorLines.filter(
-      (l) =>
-        Math.abs(l.x1 - l.x2) < 2 &&
-        Math.min(l.y1, l.y2) <= dRow.yMin + 10 &&
-        Math.max(l.y1, l.y2) >= dRow.yMax - 10
-    )
-    const dayDividerXs = dayLines.map((l) => l.x1)
+  for (const dCol of dayCols) {
+    const colItems = lessonItems.filter((it) => it.x >= dCol.xMin && it.x < dCol.xMax)
+    const visitedRowIndices = new Set<number>()
 
-    const rowItems = p1Items.filter(
-      (it) =>
-        it.y >= dRow.yMin &&
-        it.y < dRow.yMax &&
-        it.x >= 75 &&
-        it.x < 570 &&
-        !NON_LESSON_KEYWORDS.some((kw) => it.str.toLowerCase().includes(kw))
-    )
+    for (let rIdx = 0; rIdx < periodRows.length; rIdx++) {
+      if (visitedRowIndices.has(rIdx)) continue
+      const pRow = periodRows[rIdx]
 
-    const visitedPeriods = new Set<number>()
-
-    for (let cIdx = 0; cIdx < periodCols.length; cIdx++) {
-      const col = periodCols[cIdx]
-      if (visitedPeriods.has(col.period)) continue
-
-      // Check if divider between this period and the next period is missing
-      const nextCol = col.nextPeriod ? periodCols.find((p) => p.period === col.nextPeriod) : null
-      let isDouble = false
-
-      if (nextCol) {
-        // Condition A: If vector divider lines exist and the divider between col and nextCol is missing
-        if (dayDividerXs.length > 0) {
-          const hasDivider = dayDividerXs.some((x) => Math.abs(x - col.dividerX) < 6)
-          if (!hasDivider) {
-            isDouble = true
-          }
-        } else {
-          // Condition B: Fallback heuristic if no vector lines present
-          // Check if next column has no items of its own and cell in this column is wide
-          const nextItems = rowItems.filter((it) => it.x >= nextCol.xMin && it.x < nextCol.xMax)
-          if (nextItems.length === 0) {
-            const thisItems = rowItems.filter((it) => it.x >= col.xMin && it.x < col.xMax)
-            const hasWideText = thisItems.some((it) => it.x + it.w > col.xMax - 5)
-            if (hasWideText) isDouble = true
-          }
-        }
-      }
-
-      const effectiveXMax = isDouble && nextCol ? nextCol.xMax : col.xMax
-      const cellItems = rowItems.filter((it) => it.x >= col.xMin && it.x < effectiveXMax)
+      const cellItems = colItems.filter((it) => it.y >= pRow.yMin - 4 && it.y < pRow.yMax + 4)
       if (cellItems.length === 0) continue
 
-      visitedPeriods.add(col.period)
-      if (isDouble && nextCol) {
-        visitedPeriods.add(nextCol.period)
-      }
-
-      cellItems.sort((a, b) => b.y - a.y)
-
-      let customStart = col.startTime
-      let customEnd = isDouble && nextCol ? nextCol.endTime : col.endTime
-      const textParts: string[] = []
-
-      for (const item of cellItems) {
-        const tm = item.str.match(TIME_RANGE_REGEX)
-        if (tm) {
-          customStart = `${tm[1].padStart(2, '0')}:${tm[2]}`
-          customEnd = `${tm[3].padStart(2, '0')}:${tm[4]}`
-        } else {
-          textParts.push(item.str)
+      let customTime: { startTime: string; endTime: string } | null = null
+      let isDouble = false
+      for (const cit of cellItems) {
+        const tr = parseTimeRange(cit.str)
+        if (tr) {
+          customTime = tr
+          isDouble = true
+          break
         }
       }
+
+      visitedRowIndices.add(rIdx)
+      if (isDouble && rIdx + 1 < periodRows.length) {
+        visitedRowIndices.add(rIdx + 1)
+      }
+
+      const textParts = cellItems
+        .filter((it) => !TIME_RANGE_REGEX.test(it.str) && !isNonLesson(it.str))
+        .sort((a, b) => b.y - a.y)
+        .map((it) => it.str)
 
       if (textParts.length === 0) continue
 
-      const candidateSubjectRaw = textParts[0]
-
-      let candidateRoom = ''
-      let remaining = textParts.slice(1)
+      const subjectRaw = textParts[0]
+      const remaining = textParts.slice(1)
+      let room = ''
+      let classTokens = remaining
       if (remaining.length > 0) {
         const last = remaining[remaining.length - 1]
-        if (
-          ['COMP', 'LAB', 'ROOM', 'HALL'].some((r) => last.toUpperCase().includes(r)) ||
-          /^[A-Z]\d+$/.test(last)
-        ) {
-          candidateRoom = last
-          remaining = remaining.slice(0, -1)
+        if (/(?:lab|room|hall|comp)/i.test(last) || /^[A-Z]\d+$/.test(last)) {
+          room = last
+          classTokens = remaining.slice(0, -1)
         }
       }
+      const classRaw = classTokens.join(' ') || subjectRaw
 
-      const rawClass = remaining.join(' ')
-      const matchedClass = resolveClass(rawClass, knownClasses)
-      const matchedSubject = resolveSubject(candidateSubjectRaw, knownSubjects, legendSubjects)
+      const resolvedSub = resolveSubject(subjectRaw, knownSubjects)
+      const resolvedCls = resolveClass(classRaw, knownClasses)
 
       slots.push({
-        day_of_week: dRow.dayIndex,
-        period_number: col.period,
-        start_time: customStart,
-        end_time: customEnd,
-        class_id: matchedClass.id,
-        class_name: matchedClass.name,
-        subject_id: matchedSubject.id,
-        subject_name: matchedSubject.name,
-        room: candidateRoom
+        day_of_week: dCol.dayIndex,
+        period_number: pRow.periodNum,
+        start_time: customTime ? customTime.startTime : pRow.startTime,
+        end_time: customTime ? customTime.endTime : pRow.endTime,
+        class_id: resolvedCls.id,
+        class_name: resolvedCls.name,
+        subject_id: resolvedSub.id,
+        subject_name: resolvedSub.name,
+        room
       })
     }
   }
@@ -550,46 +468,212 @@ function tryParse2DGrid(
 }
 
 /**
- * Main timetable PDF parser supporting both 2D tabular timetables (aSc Timetables) and linear schedules.
+ * STRATEGY 2: Days in Rows Layout
+ * Examples: Standard aSc Timetable (Teachers-Timetable-secondary.pdf, Mr. Erick)
+ * - Days are arranged vertically down the left (Monday, Tuesday...)
+ * - Periods and Times are columns across the top (supports single grid or side-by-side split grids)
  */
-export async function parseTeacherTimetablePdf(
-  file: File,
+function tryParseDaysInRows(
+  rawItems: PdfPositionedItem[],
   knownClasses: Array<{ id: string; name: string }>,
   knownSubjects: Array<{ id: string; name: string }>
-): Promise<ParsedTimetableResult> {
-  const { items, vectorLines, lines } = await extractPositionedItems(file)
-  const warnings: string[] = []
+): Array<Omit<TeacherScheduleSlot, 'id' | 'timetable_id' | 'teacher_id'>> | null {
+  const items = assembleSplitTokens(rawItems)
 
-  // Strategy 1: Try high-precision 2D Grid extraction with double periods support
-  const gridSlots = tryParse2DGrid(items, vectorLines, knownClasses, knownSubjects)
-  if (gridSlots && gridSlots.length > 0) {
-    return {
-      slots: gridSlots,
-      rawPreview: lines.slice(0, 40).join('\n'),
-      warnings
+  const dayItems = items
+    .filter((it) => {
+      if (it.x > 150) return false
+      const low = it.str.toLowerCase()
+      return DAYS_MAP[low] !== undefined
+    })
+    .sort((a, b) => b.y - a.y)
+
+  if (dayItems.length < 3) return null
+
+  // Header cutoff is above the first day label
+  const headerCutoff = dayItems[0].y + 40
+  const topItems = items.filter(
+    (it) =>
+      it.y >= headerCutoff &&
+      !isNonLesson(it.str) &&
+      !/primary|secondary|years|timetable|schools|combined/i.test(it.str)
+  )
+
+  const rawPNumItems = topItems.filter((it) => /^[1-9]$|^10$/.test(it.str)).sort((a, b) => a.x - b.x)
+  const rawTimeItems = topItems
+    .filter((it) => {
+      const tr = parseTimeRange(it.str)
+      if (!tr) return false
+      const [sh, sm] = tr.startTime.split(':').map(Number)
+      const [eh, em] = tr.endTime.split(':').map(Number)
+      const dur = eh * 60 + em - (sh * 60 + sm)
+      return dur >= 20 && dur <= 150
+    })
+    .sort((a, b) => a.x - b.x)
+
+  if (rawPNumItems.length < 3 && rawTimeItems.length < 3) return null
+
+  // Support side-by-side section grids (e.g. Primary on left, Secondary on right where period 1 resets)
+  const sections: PdfPositionedItem[][] = []
+  let curSection: PdfPositionedItem[] = []
+  for (let i = 0; i < rawPNumItems.length; i++) {
+    const it = rawPNumItems[i]
+    const num = parseInt(it.str, 10)
+    const prev = rawPNumItems[i - 1]
+    const prevNum = prev ? parseInt(prev.str, 10) : 0
+    if (num <= prevNum && curSection.length >= 3) {
+      sections.push(curSection)
+      curSection = []
+    }
+    curSection.push(it)
+  }
+  if (curSection.length > 0) sections.push(curSection)
+
+  const periodCols: Array<{
+    periodNum: number
+    startTime: string
+    endTime: string
+    x: number
+    xMin: number
+    xMax: number
+  }> = []
+
+  for (const pList of sections) {
+    for (let i = 0; i < pList.length; i++) {
+      const pIt = pList[i]
+      const pNum = parseInt(pIt.str, 10)
+      const closestTime = [...rawTimeItems].sort((a, b) => Math.abs(a.x - pIt.x) - Math.abs(b.x - pIt.x))[0]
+      const tr = closestTime ? parseTimeRange(closestTime.str) : null
+      const startTime = tr ? tr.startTime : '08:00'
+      const endTime = tr ? tr.endTime : '08:40'
+
+      const prev = pList[i - 1]
+      const next = pList[i + 1]
+      const xMin = prev ? (prev.x + pIt.x) / 2 : pIt.x - 20
+      const xMax = next ? (pIt.x + next.x) / 2 : pIt.x + 20
+
+      periodCols.push({
+        periodNum: pNum,
+        startTime,
+        endTime,
+        x: pIt.x,
+        xMin,
+        xMax
+      })
     }
   }
 
-  // Strategy 2: Sequential line-by-line fallback
+  const headerBottom = Math.min(...[...rawPNumItems, ...rawTimeItems].map((it) => it.y)) - 3
+  const footerItems = items.filter(
+    (it) =>
+      it.y < dayItems[dayItems.length - 1].y &&
+      (it.str.includes('Timetable') || it.str.includes('generated') || it.str.includes('Lessons'))
+  )
+  const gridBottom = footerItems.length > 0 ? Math.max(...footerItems.map((f) => f.y)) + 5 : 25
+  const totalHeight = headerBottom - gridBottom
+  const rowHeight = totalHeight / dayItems.length
+
+  const dayRows = dayItems.map((d, i) => {
+    const yMax = headerBottom - i * rowHeight
+    const yMin = headerBottom - (i + 1) * rowHeight
+    return {
+      dayIndex: DAYS_MAP[d.str.toLowerCase()],
+      dayName: d.str,
+      y: d.y,
+      yMin,
+      yMax
+    }
+  })
+
+  const slots: Array<Omit<TeacherScheduleSlot, 'id' | 'timetable_id' | 'teacher_id'>> = []
+  const lessonItems = items.filter((it) => it.x >= 75 && it.y < headerBottom && !isNonLesson(it.str))
+
+  for (const dRow of dayRows) {
+    const rowItems = lessonItems.filter((it) => it.y >= dRow.yMin && it.y < dRow.yMax)
+    const visitedCols = new Set<number>()
+
+    for (let cIdx = 0; cIdx < periodCols.length; cIdx++) {
+      if (visitedCols.has(cIdx)) continue
+      const pCol = periodCols[cIdx]
+
+      const cellItems = rowItems.filter((it) => it.x >= pCol.xMin && it.x < pCol.xMax)
+      if (cellItems.length === 0) continue
+
+      let customTime: { startTime: string; endTime: string } | null = null
+      let isDouble = false
+      for (const cit of cellItems) {
+        const tr = parseTimeRange(cit.str)
+        if (tr) {
+          customTime = tr
+          isDouble = true
+          break
+        }
+      }
+
+      visitedCols.add(cIdx)
+      if (isDouble && cIdx + 1 < periodCols.length) {
+        visitedCols.add(cIdx + 1)
+      }
+
+      const textParts = cellItems
+        .filter((it) => !TIME_RANGE_REGEX.test(it.str) && !isNonLesson(it.str))
+        .sort((a, b) => b.y - a.y)
+        .map((it) => it.str)
+
+      if (textParts.length === 0) continue
+
+      const subjectRaw = textParts[0]
+      if (/^[-–—]$/.test(subjectRaw) || isNonLesson(subjectRaw)) continue
+
+      const remaining = textParts.slice(1)
+      let room = ''
+      let classTokens = remaining
+      if (remaining.length > 0) {
+        const last = remaining[remaining.length - 1]
+        if (/(?:lab|room|hall|comp)/i.test(last) || /^[A-Z]\d+$/.test(last)) {
+          room = last
+          classTokens = remaining.slice(0, -1)
+        }
+      }
+      const classRaw = classTokens.join(' ') || subjectRaw
+      if (isNonLesson(classRaw)) continue
+
+      const resolvedSub = resolveSubject(subjectRaw, knownSubjects)
+      const resolvedCls = resolveClass(classRaw, knownClasses)
+
+      slots.push({
+        day_of_week: dRow.dayIndex,
+        period_number: pCol.periodNum,
+        start_time: customTime ? customTime.startTime : pCol.startTime,
+        end_time: customTime ? customTime.endTime : pCol.endTime,
+        class_id: resolvedCls.id,
+        class_name: resolvedCls.name,
+        subject_id: resolvedSub.id,
+        subject_name: resolvedSub.name,
+        room
+      })
+    }
+  }
+
+  return slots.length > 0 ? slots : null
+}
+
+/**
+ * STRATEGY 3: Linear Sequential Fallback
+ */
+function tryParseLinear(
+  items: PdfPositionedItem[],
+  lines: string[],
+  knownClasses: Array<{ id: string; name: string }>,
+  knownSubjects: Array<{ id: string; name: string }>
+): Array<Omit<TeacherScheduleSlot, 'id' | 'timetable_id' | 'teacher_id'>> {
   const slots: Array<Omit<TeacherScheduleSlot, 'id' | 'timetable_id' | 'teacher_id'>> = []
   let currentDay = 0
   let periodCounter = 1
 
-  const legendSubjects: string[] = []
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i].toLowerCase() === 'subjects') {
-      for (let j = i + 1; j < Math.min(lines.length, i + 15); j++) {
-        if (!/^\d+$/.test(lines[j]) && !NON_LESSON_KEYWORDS.some((kw) => lines[j].toLowerCase().includes(kw))) {
-          legendSubjects.push(lines[j])
-        }
-      }
-      break
-    }
-  }
-
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
-    const lower = line.toLowerCase()
+    const lower = line.toLowerCase().trim()
 
     for (const [dayKey, dayIndex] of Object.entries(DAYS_MAP)) {
       if (lower === dayKey || lower.startsWith(dayKey + ' ') || lower.endsWith(' ' + dayKey)) {
@@ -599,18 +683,12 @@ export async function parseTeacherTimetablePdf(
       }
     }
 
-    if (NON_LESSON_KEYWORDS.some((kw) => lower.includes(kw))) {
-      continue
-    }
+    if (isNonLesson(lower)) continue
 
     const timeMatch = line.match(TIME_RANGE_REGEX)
     if (timeMatch) {
-      const startH = timeMatch[1].padStart(2, '0')
-      const startM = timeMatch[2]
-      const endH = timeMatch[3].padStart(2, '0')
-      const endM = timeMatch[4]
-      const startTime = `${startH}:${startM}`
-      const endTime = `${endH}:${endM}`
+      const tr = parseTimeRange(line)
+      if (!tr) continue
 
       let candidateSubjectRaw = ''
       let candidateClassRaw = ''
@@ -618,16 +696,12 @@ export async function parseTeacherTimetablePdf(
 
       const contextLines = lines.slice(Math.max(0, i - 2), Math.min(lines.length, i + 4))
       for (const cl of contextLines) {
-        if (TIME_RANGE_REGEX.test(cl) || NON_LESSON_KEYWORDS.some((kw) => cl.toLowerCase().includes(kw))) {
-          continue
-        }
+        if (TIME_RANGE_REGEX.test(cl) || isNonLesson(cl)) continue
 
         const roomMatch = cl.match(/\b(Lab\s*\d*|Room\s*\d+|Hall|[A-Z]\d{2}|COMP)\b/i)
-        if (roomMatch && !candidateRoom) {
-          candidateRoom = roomMatch[0]
-        }
+        if (roomMatch && !candidateRoom) candidateRoom = roomMatch[0]
 
-        const resolved = resolveSubject(cl, knownSubjects, legendSubjects)
+        const resolved = resolveSubject(cl, knownSubjects)
         if (resolved.id || (resolved.name !== 'General' && !candidateSubjectRaw)) {
           candidateSubjectRaw = cl
         }
@@ -638,14 +712,14 @@ export async function parseTeacherTimetablePdf(
         }
       }
 
-      const finalSubject = resolveSubject(candidateSubjectRaw || 'General', knownSubjects, legendSubjects)
+      const finalSubject = resolveSubject(candidateSubjectRaw || 'General', knownSubjects)
       const finalClass = resolveClass(candidateClassRaw || 'All', knownClasses)
 
       slots.push({
         day_of_week: currentDay,
         period_number: periodCounter++,
-        start_time: startTime,
-        end_time: endTime,
+        start_time: tr.startTime,
+        end_time: tr.endTime,
         class_id: finalClass.id,
         subject_id: finalSubject.id,
         class_name: finalClass.name,
@@ -655,38 +729,87 @@ export async function parseTeacherTimetablePdf(
     }
   }
 
-  if (slots.length === 0) {
-    warnings.push('Could not detect exact schedule periods. Please review the generated default periods.')
-    const defaultPeriods = [
-      { p: 1, start: '08:00', end: '08:45' },
-      { p: 2, start: '08:50', end: '09:35' },
-      { p: 3, start: '10:00', end: '10:45' },
-      { p: 4, start: '10:50', end: '11:35' },
-      { p: 5, start: '12:20', end: '13:05' }
-    ]
+  return slots
+}
 
-    for (let day = 0; day < 5; day++) {
-      for (const dp of defaultPeriods) {
-        const cls = knownClasses[day % (knownClasses.length || 1)]?.name || 'Class 1'
-        const sbj = knownSubjects[dp.p % (knownSubjects.length || 1)]?.name || 'Subject'
-        slots.push({
-          day_of_week: day,
-          period_number: dp.p,
-          start_time: dp.start,
-          end_time: dp.end,
-          class_id: knownClasses.find((c) => c.name === cls)?.id || null,
-          subject_id: knownSubjects.find((s) => s.name === sbj)?.id || null,
-          class_name: cls,
-          subject_name: sbj,
-          room: ''
-        })
-      }
+/**
+ * Main timetable PDF parser supporting 2D tabular timetables (aSc Timetables, combined primary/secondary grids)
+ * and linear schedules. Automatically extracts the exact period numbers and times.
+ */
+export async function parseTeacherTimetablePdf(
+  file: File,
+  knownClasses: Array<{ id: string; name: string }>,
+  knownSubjects: Array<{ id: string; name: string }>,
+  targetTeacherName?: string
+): Promise<ParsedTimetableResult> {
+  const { targetItems, allLines, pageCount, selectedPage } = await extractPositionedItems(file, targetTeacherName)
+  const warnings: string[] = []
+
+  if (pageCount > 1 && targetTeacherName) {
+    warnings.push(`Selected page ${selectedPage} of ${pageCount} matching teacher: ${targetTeacherName}`)
+  }
+
+  // Strategy 1: Days in Columns Layout (Combined primary/secondary timetables)
+  const colSlots = tryParseDaysInColumns(targetItems, knownClasses, knownSubjects)
+  if (colSlots && colSlots.length > 0) {
+    return {
+      slots: colSlots,
+      rawPreview: allLines.slice(0, 40).join('\n'),
+      warnings
+    }
+  }
+
+  // Strategy 2: Days in Rows Layout (Standard aSc Timetable Grid)
+  const rowSlots = tryParseDaysInRows(targetItems, knownClasses, knownSubjects)
+  if (rowSlots && rowSlots.length > 0) {
+    return {
+      slots: rowSlots,
+      rawPreview: allLines.slice(0, 40).join('\n'),
+      warnings
+    }
+  }
+
+  // Strategy 3: Sequential Line Fallback
+  const linearSlots = tryParseLinear(targetItems, allLines, knownClasses, knownSubjects)
+  if (linearSlots.length > 0) {
+    return {
+      slots: linearSlots,
+      rawPreview: allLines.slice(0, 40).join('\n'),
+      warnings
+    }
+  }
+
+  warnings.push('Could not detect exact schedule periods. Please review the generated default periods.')
+  const defaultPeriods = [
+    { p: 1, start: '08:00', end: '08:45' },
+    { p: 2, start: '08:50', end: '09:35' },
+    { p: 3, start: '10:00', end: '10:45' },
+    { p: 4, start: '10:50', end: '11:35' },
+    { p: 5, start: '12:20', end: '13:05' }
+  ]
+
+  const fallbackSlots: Array<Omit<TeacherScheduleSlot, 'id' | 'timetable_id' | 'teacher_id'>> = []
+  for (let day = 0; day < 5; day++) {
+    for (const dp of defaultPeriods) {
+      const cls = knownClasses[day % (knownClasses.length || 1)]?.name || 'Class 1'
+      const sbj = knownSubjects[dp.p % (knownSubjects.length || 1)]?.name || 'Subject'
+      fallbackSlots.push({
+        day_of_week: day,
+        period_number: dp.p,
+        start_time: dp.start,
+        end_time: dp.end,
+        class_id: knownClasses.find((c) => c.name === cls)?.id || null,
+        subject_id: knownSubjects.find((s) => s.name === sbj)?.id || null,
+        class_name: cls,
+        subject_name: sbj,
+        room: ''
+      })
     }
   }
 
   return {
-    slots,
-    rawPreview: lines.slice(0, 40).join('\n'),
+    slots: fallbackSlots,
+    rawPreview: allLines.slice(0, 40).join('\n'),
     warnings
   }
 }

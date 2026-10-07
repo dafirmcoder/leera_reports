@@ -25,6 +25,8 @@ export interface WorkplanContentItem {
   unit: string | null;
   /** 1-based page number the line was found on. */
   page: number;
+  /** Whether this objective is marked as covered */
+  is_met?: boolean;
 }
 
 export interface WorkplanWeek {
