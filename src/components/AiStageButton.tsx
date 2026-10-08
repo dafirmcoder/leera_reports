@@ -40,14 +40,19 @@ export const AiStageButton: React.FC<AiStageButtonProps> = ({
       const generated = await generateStageContent(stage, context)
       onGenerated(generated)
     } catch (err: any) {
-      if (err?.message === 'MISSING_API_KEY') {
+      if (
+        err?.message === 'MISSING_API_KEY' ||
+        err?.message?.includes('Authentication Error') ||
+        err?.message?.includes('INVALID_API_KEY') ||
+        err?.message?.includes('invalid authentication credentials')
+      ) {
         onPromptApiKey?.()
       } else {
         const message = err?.message || 'Failed to generate stage activity with Gemini AI.'
         if (onError) {
           onError(message)
         } else {
-          alert(`Gemini AI Error: ${message}`)
+          alert(`Gemini AI: ${message}`)
         }
       }
     } finally {

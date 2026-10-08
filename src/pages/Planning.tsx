@@ -33,6 +33,7 @@ import { GeminiApiKeyModal } from '../components/GeminiApiKeyModal'
 import { WorkplanPdfModal } from '../react'
 import {
   generateAllStages,
+  generateOfflineStages,
   hasGeminiApiKey,
   type LessonContext
 } from '../lib/gemini'
@@ -1686,9 +1687,47 @@ export default function Planning() {
     }
   }
 
+  // Generate using offline Cambridge template engine for selected lesson plan
+  const handleGenerateTemplatesForSelectedLp = () => {
+    if (!selectedLessonPlan) return
+    const context = getContextForSelectedLp()
+    const all = generateOfflineStages(context)
+    const combined = formatActivityStages({
+      starter: all.starter,
+      exposition: all.exposition,
+      learnersActivity: all.learnersActivity,
+      plenary: all.plenary
+    })
+    setSelectedLessonPlan({
+      ...selectedLessonPlan,
+      main_teaching_activity: combined,
+      assessment_ideas: all.assessmentIdeas || selectedLessonPlan.assessment_ideas
+    })
+    setSuccess('Generated teaching stages and assessment ideas with Cambridge Curriculum templates.')
+  }
+
+  // Generate using offline Cambridge template engine for create modal
+  const handleGenerateTemplatesForCreateLp = () => {
+    const context = getContextForCreateLp()
+    const all = generateOfflineStages(context)
+    setCreateLpStarter(all.starter)
+    setCreateLpExposition(all.exposition)
+    setCreateLpLearners(all.learnersActivity)
+    setCreateLpPlenary(all.plenary)
+    if (all.assessmentIdeas) {
+      setCreateLpAssessmentIdeas(all.assessmentIdeas)
+    }
+    setSuccess('Generated teaching stages and assessment ideas with Cambridge Curriculum templates.')
+  }
+
   // Generate all 4 instructional stages and assessment ideas for the selected lesson plan
   const handleGenerateAllForSelectedLp = async () => {
     if (!selectedLessonPlan) return
+
+    if (!hasGeminiApiKey()) {
+      setShowGeminiApiKeyModal(true)
+      return
+    }
 
     try {
       setGeneratingAllStages(true)
@@ -1707,7 +1746,17 @@ export default function Planning() {
       })
       setSuccess('Generated all teaching stages and assessment ideas.')
     } catch (err: any) {
-      setError(err?.message || 'Failed to generate teaching stages.')
+      if (
+        err?.message === 'MISSING_API_KEY' ||
+        err?.message?.includes('Authentication Error') ||
+        err?.message?.includes('INVALID_API_KEY') ||
+        err?.message?.includes('invalid authentication credentials')
+      ) {
+        setShowGeminiApiKeyModal(true)
+        setError('Gemini API key is missing or invalid. Please configure a valid key from Google AI Studio, or use Cambridge Templates.')
+      } else {
+        setError(err?.message || 'Failed to generate teaching stages.')
+      }
     } finally {
       setGeneratingAllStages(false)
     }
@@ -1715,6 +1764,11 @@ export default function Planning() {
 
   // Generate all 4 instructional stages and assessment ideas for the new lesson plan modal
   const handleGenerateAllForCreateLp = async () => {
+    if (!hasGeminiApiKey()) {
+      setShowGeminiApiKeyModal(true)
+      return
+    }
+
     try {
       setGeneratingAllStages(true)
       const context = getContextForCreateLp()
@@ -1728,7 +1782,17 @@ export default function Planning() {
       }
       setSuccess('Generated all teaching stages and assessment ideas.')
     } catch (err: any) {
-      setError(err?.message || 'Failed to generate teaching stages.')
+      if (
+        err?.message === 'MISSING_API_KEY' ||
+        err?.message?.includes('Authentication Error') ||
+        err?.message?.includes('INVALID_API_KEY') ||
+        err?.message?.includes('invalid authentication credentials')
+      ) {
+        setShowGeminiApiKeyModal(true)
+        setError('Gemini API key is missing or invalid. Please configure a valid key from Google AI Studio, or use Cambridge Templates.')
+      } else {
+        setError(err?.message || 'Failed to generate teaching stages.')
+      }
     } finally {
       setGeneratingAllStages(false)
     }
@@ -5646,6 +5710,13 @@ export default function Planning() {
       <GeminiApiKeyModal
         isOpen={showGeminiApiKeyModal}
         onClose={() => setShowGeminiApiKeyModal(false)}
+        onUseTemplates={() => {
+          if (showCreateLessonPlanModal) {
+            handleGenerateTemplatesForCreateLp()
+          } else if (selectedLessonPlan) {
+            handleGenerateTemplatesForSelectedLp()
+          }
+        }}
       />
     </div>
   )

@@ -88,27 +88,42 @@ export const INSTRUCTIONAL_STAGES: Record<InstructionalStage, StageDefinition> =
   }
 }
 
-export const DEFAULT_GEMINI_API_KEY = 'AQ.Ab8RN6KN4Ep78gte0_Jqp7vVfl3Fzjv5NkajGAZ-KHjaN1oRkw'
+export const DEFAULT_GEMINI_API_KEY = ''
 
 /**
- * Retrieves the Gemini API key from environment variables, localStorage, or built-in default key.
+ * Checks whether an API key appears to be a known invalid placeholder or invalid format.
+ */
+export function isKnownInvalidKey(key: string): boolean {
+  if (!key) return true
+  const trimmed = key.trim()
+  if (trimmed.startsWith('AQ.')) return true
+  if (trimmed.toLowerCase().includes('placeholder')) return true
+  if (trimmed.length < 15) return true
+  return false
+}
+
+/**
+ * Retrieves the Gemini API key from localStorage or environment variables.
+ * LocalStorage takes first priority so user keys entered in the UI modal take immediate effect.
  */
 export function getGeminiApiKey(): string {
-  const envKey = (import.meta as any).env?.VITE_GEMINI_API_KEY || ''
-  if (typeof envKey === 'string' && envKey.trim()) {
-    return envKey.trim()
-  }
-
+  // 1. User configured key in localStorage
   try {
     const local = localStorage.getItem(STORAGE_KEY) || localStorage.getItem(FALLBACK_STORAGE_KEY)
-    if (local && local.trim()) {
+    if (local && local.trim() && !isKnownInvalidKey(local.trim())) {
       return local.trim()
     }
   } catch {
     // Ignore localStorage access restrictions
   }
 
-  return DEFAULT_GEMINI_API_KEY
+  // 2. Environment variable
+  const envKey = (import.meta as any).env?.VITE_GEMINI_API_KEY || ''
+  if (typeof envKey === 'string' && envKey.trim() && !isKnownInvalidKey(envKey.trim())) {
+    return envKey.trim()
+  }
+
+  return ''
 }
 
 /**
@@ -117,7 +132,7 @@ export function getGeminiApiKey(): string {
 export function setGeminiApiKey(key: string): void {
   try {
     const cleaned = key.trim()
-    if (cleaned) {
+    if (cleaned && !isKnownInvalidKey(cleaned)) {
       localStorage.setItem(STORAGE_KEY, cleaned)
     } else {
       localStorage.removeItem(STORAGE_KEY)
@@ -141,10 +156,11 @@ export function clearGeminiApiKey(): void {
 }
 
 /**
- * Checks if a Gemini API key is available.
+ * Checks if a valid Gemini API key is available.
  */
 export function hasGeminiApiKey(): boolean {
-  return Boolean(getGeminiApiKey())
+  const key = getGeminiApiKey()
+  return Boolean(key && !isKnownInvalidKey(key))
 }
 
 export interface LessonContext {
@@ -164,27 +180,97 @@ export interface LessonContext {
   }
 }
 
+// Officially supported Google Gemini models in v1beta order of priority
 const CANDIDATE_MODELS = [
-  'gemini-flash-lite-latest',
-  'gemini-3.5-flash-lite',
-  'gemini-3.1-flash-lite',
-  'gemini-3.5-flash',
-  'gemini-3-flash-preview',
-  'gemini-flash-latest',
-  'gemini-3.8-flash'
+  'gemini-2.0-flash',
+  'gemini-1.5-flash',
+  'gemini-2.0-flash-lite',
+  'gemini-2.5-flash',
+  'gemini-1.5-flash-8b',
+  'gemini-1.5-pro'
 ]
+
+/**
+ * Tests whether an API key is valid and can connect to Google Gemini API.
+ */
+export async function testGeminiApiKey(apiKey: string): Promise<{ success: boolean; message: string }> {
+  const cleaned = apiKey.trim()
+  if (!cleaned) {
+    return { success: false, message: 'Please provide a Gemini API key.' }
+  }
+  if (isKnownInvalidKey(cleaned)) {
+    return {
+      success: false,
+      message: 'Invalid key format. Gemini API keys from Google AI Studio begin with "AIzaSy" and are ~39 characters.'
+    }
+  }
+
+  try {
+    const testModels = ['gemini-2.0-flash', 'gemini-1.5-flash']
+    let lastErr = ''
+
+    for (const model of testModels) {
+      try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(cleaned)}`
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), 12000)
+
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ role: 'user', parts: [{ text: 'Respond with OK' }] }],
+            generationConfig: { maxOutputTokens: 10 }
+          }),
+          signal: controller.signal
+        })
+        clearTimeout(timeoutId)
+
+        if (response.ok) {
+          return { success: true, message: `Connected successfully with ${model}! Your Gemini API key is valid.` }
+        }
+
+        const errData = await response.json().catch(() => null)
+        const errMsg = errData?.error?.message || `HTTP ${response.status} ${response.statusText}`
+        if (response.status === 400 || response.status === 401 || response.status === 403) {
+          return { success: false, message: `Authentication Error (${response.status}): ${errMsg}` }
+        }
+        lastErr = errMsg
+      } catch (e: any) {
+        lastErr = e?.message || 'Connection failed'
+      }
+    }
+
+    return { success: false, message: lastErr || 'Failed to connect to Google Gemini API.' }
+  } catch (err: any) {
+    return { success: false, message: err?.message || 'Connection failed.' }
+  }
+}
 
 /**
  * Calls Gemini REST API using preferred models with fallback.
  */
-async function callGeminiApi(prompt: string, apiKey: string): Promise<string> {
+async function callGeminiApi(
+  prompt: string,
+  apiKey: string,
+  options?: { maxTokens?: number; jsonMode?: boolean }
+): Promise<string> {
   let lastError: Error | null = null
+  const maxOutputTokens = options?.maxTokens || 850
 
   for (const model of CANDIDATE_MODELS) {
     try {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`
       const controller = new AbortController()
-      const timeoutId = setTimeout(() => controller.abort(), 25000)
+      const timeoutId = setTimeout(() => controller.abort(), 30000)
+
+      const generationConfig: Record<string, any> = {
+        temperature: 0.7,
+        maxOutputTokens
+      }
+      if (options?.jsonMode) {
+        generationConfig.responseMimeType = 'application/json'
+      }
 
       const response = await fetch(url, {
         method: 'POST',
@@ -198,10 +284,7 @@ async function callGeminiApi(prompt: string, apiKey: string): Promise<string> {
               parts: [{ text: prompt }]
             }
           ],
-          generationConfig: {
-            temperature: 0.7,
-            maxOutputTokens: 750
-          }
+          generationConfig
         }),
         signal: controller.signal
       })
@@ -220,7 +303,7 @@ async function callGeminiApi(prompt: string, apiKey: string): Promise<string> {
 
         // If auth error, throw immediately with clear message
         if (response.status === 400 || response.status === 401 || response.status === 403) {
-          throw new Error(`Gemini API Error: ${errMsg}`)
+          throw new Error(`Gemini API Authentication Error (${response.status}): ${errMsg}`)
         }
 
         lastError = new Error(`Gemini API returned error: ${errMsg}`)
@@ -236,7 +319,7 @@ async function callGeminiApi(prompt: string, apiKey: string): Promise<string> {
       lastError = new Error('No generated text received in Gemini response.')
     } catch (err: any) {
       if (err.name === 'AbortError') {
-        lastError = new Error('Gemini API request timed out (25 seconds).')
+        lastError = new Error('Gemini API request timed out (30 seconds).')
       } else {
         lastError = err
       }
@@ -394,6 +477,48 @@ GENERAL CONSTRAINTS:
 }
 
 /**
+ * Generates pedagogically structured Cambridge International stages without requiring an external API.
+ * Uses syllabus context (topic, challenge question, grade level, and learning objectives).
+ */
+export function generateOfflineStages(context: LessonContext): Record<InstructionalStage, string> {
+  const topic = context.topic?.trim() || 'Unit Inquiry'
+  const challenge = context.challenge?.trim() || `How do the core principles of ${topic} apply in real-world scenarios?`
+  const grade = context.className?.trim() || 'Secondary'
+  
+  // Format objectives
+  const objs = (context.objectives || [])
+    .map((o) => (typeof o === 'string' ? o : `${o.code ? `[${o.code}] ` : ''}${o.text || ''}`))
+    .filter(Boolean)
+  const mainObj = objs.length > 0 ? objs[0] : topic
+
+  // 1. Starter (10 min)
+  const starter = `Diagnostic hook & inquiry question: Display "${challenge}" on the board with a visual prompt. Learners work in pairs for 3 minutes on mini-whiteboards to record their prior knowledge and predict solutions, followed by rapid whole-class sharing to activate key prerequisite concepts for ${topic}.`
+
+  // 2. Exposition (15 min) - Must start with imperative verb, no quotes
+  const exposition = `Explain core concepts and terminology of ${topic} with structured board diagrams and annotated models, demonstrate step-by-step worked examples directly addressing ${mainObj}, model common misconceptions and how to identify them, and check understanding with a quick diagnostic hinge question before transitioning to independent practice.`
+
+  // 3. Learners Activity (35 min) - Differentiated Support / Core / Extension
+  const learnersActivity = `Differentiated practical inquiry for ${grade} learners:
+• Support: Provide scaffolded guidance cards with sentence stems, visual glossaries, and step-by-step problem templates for ${topic}.
+• Core: Collaborative paired investigation applying key principles to solve structured problem sets and complete investigation sheets aligned with ${mainObj}.
+• Extension: Independent higher-order challenge requiring students to analyze edge cases, evaluate real-world trade-offs, and justify their reasoning in writing.`
+
+  // 4. Plenary (10 min)
+  const plenary = `Synthesis & Exit Ticket: Conduct a rapid 3-2-1 reflection (3 key terms learned, 2 questions explored, 1 real-world connection made). Learners submit a 2-question exit ticket evaluating mastery against "${challenge}" and preview the upcoming session.`
+
+  // 5. Assessment Ideas
+  const assessmentIdeas = `• Marked student investigation sheet evaluating accuracy, working steps, and conceptual understanding of ${topic}.\n• 2-question exit ticket measuring individual student mastery against ${mainObj}.\n• Formative hinge check with mini-whiteboards during exposition to diagnose readiness before independent work.`
+
+  return {
+    starter,
+    exposition,
+    learnersActivity,
+    plenary,
+    assessmentIdeas
+  }
+}
+
+/**
  * Generates content for a single instructional stage using Gemini AI.
  */
 export async function generateStageContent(
@@ -407,8 +532,17 @@ export async function generateStageContent(
   }
 
   const prompt = buildStagePrompt(stage, context)
-  const result = await callGeminiApi(prompt, apiKey)
-  return stage === 'exposition' ? cleanExpositionText(result) : cleanGeneratedText(result)
+  try {
+    const result = await callGeminiApi(prompt, apiKey, { maxTokens: 850 })
+    return stage === 'exposition' ? cleanExpositionText(result) : cleanGeneratedText(result)
+  } catch (err: any) {
+    if (err?.message?.includes('Authentication Error') || err?.message?.includes('INVALID_API_KEY')) {
+      throw err
+    }
+    console.warn(`Stage ${stage} AI generation failed; falling back to offline template:`, err)
+    const offline = generateOfflineStages(context)
+    return offline[stage] || ''
+  }
 }
 
 /**
@@ -469,8 +603,8 @@ Output must be in JSON format matching exactly this schema:
 Do NOT wrap with markdown other than \`\`\`json. Return only the valid JSON object.
 `
 
-  const rawJson = await callGeminiApi(prompt, apiKey)
   try {
+    const rawJson = await callGeminiApi(prompt, apiKey, { maxTokens: 2048, jsonMode: true })
     let jsonStr = rawJson.trim()
     const jsonMatch = jsonStr.match(/\{[\s\S]*\}/)
     if (jsonMatch) {
@@ -484,15 +618,12 @@ Do NOT wrap with markdown other than \`\`\`json. Return only the valid JSON obje
       plenary: cleanGeneratedText(parsed.plenary || ''),
       assessmentIdeas: cleanGeneratedText(parsed.assessmentIdeas || parsed.assessment_ideas || '')
     }
-  } catch {
-    // If JSON parsing fails, generate each stage individually
-    const [starter, exposition, learnersActivity, plenary, assessmentIdeas] = await Promise.all([
-      generateStageContent('starter', context, apiKey),
-      generateStageContent('exposition', context, apiKey),
-      generateStageContent('learnersActivity', context, apiKey),
-      generateStageContent('plenary', context, apiKey),
-      generateStageContent('assessmentIdeas', context, apiKey)
-    ])
-    return { starter, exposition, learnersActivity, plenary, assessmentIdeas }
+  } catch (err: any) {
+    if (err?.message?.includes('Authentication Error') || err?.message?.includes('INVALID_API_KEY')) {
+      throw err
+    }
+    console.warn('AI generation failed or could not be parsed; falling back to offline template engine:', err)
+    return generateOfflineStages(context)
   }
 }
+

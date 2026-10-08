@@ -1,39 +1,86 @@
 import React, { useState, useEffect } from 'react'
-import { getGeminiApiKey, setGeminiApiKey, clearGeminiApiKey } from '../lib/gemini'
+import { getGeminiApiKey, setGeminiApiKey, clearGeminiApiKey, testGeminiApiKey, isKnownInvalidKey } from '../lib/gemini'
 
 interface GeminiApiKeyModalProps {
   isOpen: boolean
   onClose: () => void
   onSaved?: (apiKey: string) => void
+  onUseTemplates?: () => void
 }
 
-export const GeminiApiKeyModal: React.FC<GeminiApiKeyModalProps> = ({ isOpen, onClose, onSaved }) => {
+export const GeminiApiKeyModal: React.FC<GeminiApiKeyModalProps> = ({
+  isOpen,
+  onClose,
+  onSaved,
+  onUseTemplates
+}) => {
   const [apiKey, setApiKeyInput] = useState('')
   const [showKey, setShowKey] = useState(false)
-  const [statusMsg, setStatusMsg] = useState<string | null>(null)
+  const [statusMsg, setStatusMsg] = useState<{ text: string; isError?: boolean; isSuccess?: boolean } | null>(null)
+  const [testing, setTesting] = useState(false)
 
   useEffect(() => {
     if (isOpen) {
       const existing = getGeminiApiKey()
       setApiKeyInput(existing)
       setStatusMsg(null)
+      setTesting(false)
     }
   }, [isOpen])
 
   if (!isOpen) return null
 
+  const handleTestConnection = async () => {
+    const trimmed = apiKey.trim()
+    if (!trimmed) {
+      setStatusMsg({ text: 'Please enter a Gemini API key first.', isError: true })
+      return
+    }
+
+    if (isKnownInvalidKey(trimmed)) {
+      setStatusMsg({
+        text: 'The key format is invalid. Google Gemini API keys from Google AI Studio begin with "AIzaSy" and are ~39 characters long.',
+        isError: true
+      })
+      return
+    }
+
+    setTesting(true)
+    setStatusMsg({ text: 'Testing connection to Google Gemini API...' })
+    try {
+      const res = await testGeminiApiKey(trimmed)
+      if (res.success) {
+        setStatusMsg({ text: res.message, isSuccess: true })
+      } else {
+        setStatusMsg({ text: res.message, isError: true })
+      }
+    } catch (err: any) {
+      setStatusMsg({ text: err?.message || 'Connection test failed.', isError: true })
+    } finally {
+      setTesting(false)
+    }
+  }
+
   const handleSave = () => {
     const trimmed = apiKey.trim()
     if (!trimmed) {
       clearGeminiApiKey()
-      setStatusMsg('API key cleared.')
+      setStatusMsg({ text: 'API key cleared.', isSuccess: true })
       onSaved?.('')
       setTimeout(() => onClose(), 600)
       return
     }
 
+    if (isKnownInvalidKey(trimmed)) {
+      setStatusMsg({
+        text: 'Warning: This does not look like a valid Gemini API key. Gemini API keys begin with "AIzaSy".',
+        isError: true
+      })
+      return
+    }
+
     setGeminiApiKey(trimmed)
-    setStatusMsg('API key saved successfully!')
+    setStatusMsg({ text: 'API key saved successfully!', isSuccess: true })
     onSaved?.(trimmed)
     setTimeout(() => onClose(), 600)
   }
@@ -41,8 +88,13 @@ export const GeminiApiKeyModal: React.FC<GeminiApiKeyModalProps> = ({ isOpen, on
   const handleClear = () => {
     clearGeminiApiKey()
     setApiKeyInput('')
-    setStatusMsg('API key removed.')
+    setStatusMsg({ text: 'API key removed.', isSuccess: true })
     onSaved?.('')
+  }
+
+  const handleTriggerTemplates = () => {
+    onClose()
+    onUseTemplates?.()
   }
 
   return (
@@ -69,7 +121,7 @@ export const GeminiApiKeyModal: React.FC<GeminiApiKeyModalProps> = ({ isOpen, on
           backgroundColor: '#ffffff',
           borderRadius: 12,
           boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.2), 0 10px 10px -5px rgba(0, 0, 0, 0.1)',
-          maxWidth: 500,
+          maxWidth: 520,
           width: '100%',
           overflow: 'hidden',
           border: '1px solid #e2e8f0'
@@ -90,7 +142,7 @@ export const GeminiApiKeyModal: React.FC<GeminiApiKeyModalProps> = ({ isOpen, on
             <span style={{ fontSize: 22 }}>✨</span>
             <div>
               <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#ffffff' }}>
-                Google Gemini API Key
+                Google Gemini AI Configuration
               </h3>
               <p style={{ margin: 0, fontSize: 12, opacity: 0.85 }}>
                 Powering AI generation for Lesson Plan activities
@@ -117,7 +169,7 @@ export const GeminiApiKeyModal: React.FC<GeminiApiKeyModalProps> = ({ isOpen, on
         {/* Body */}
         <div style={{ padding: 20 }}>
           <p style={{ fontSize: 13, color: '#475569', marginTop: 0, marginBottom: 16, lineHeight: 1.5 }}>
-            Provide your Google Gemini API key to automatically generate <strong>Starter</strong>, <strong>Exposition Methods</strong>, <strong>Learners Activity</strong>, and <strong>Plenary</strong> stages directly aligned with your Cambridge syllabus.
+            Provide your Google Gemini API key to automatically generate <strong>Starter</strong>, <strong>Exposition Methods</strong>, <strong>Learners Activity</strong>, <strong>Plenary</strong>, and <strong>Assessment Ideas</strong> directly aligned with your Cambridge syllabus.
           </p>
 
           <div style={{ marginBottom: 16 }}>
@@ -152,6 +204,15 @@ export const GeminiApiKeyModal: React.FC<GeminiApiKeyModalProps> = ({ isOpen, on
               >
                 {showKey ? 'Hide' : 'Show'}
               </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                style={{ padding: '7px 12px', fontSize: 12, fontWeight: 600, color: '#4C2570' }}
+                disabled={testing || !apiKey.trim()}
+                onClick={handleTestConnection}
+              >
+                {testing ? 'Testing...' : 'Test'}
+              </button>
             </div>
           </div>
 
@@ -159,15 +220,18 @@ export const GeminiApiKeyModal: React.FC<GeminiApiKeyModalProps> = ({ isOpen, on
             <div
               style={{
                 fontSize: 12,
-                padding: '8px 12px',
+                padding: '10px 12px',
                 borderRadius: 6,
-                backgroundColor: statusMsg.includes('success') ? '#dcfce7' : '#f1f5f9',
-                color: statusMsg.includes('success') ? '#166534' : '#475569',
+                backgroundColor: statusMsg.isSuccess ? '#dcfce7' : statusMsg.isError ? '#fee2e2' : '#f1f5f9',
+                color: statusMsg.isSuccess ? '#166534' : statusMsg.isError ? '#991b1b' : '#334155',
+                border: `1px solid ${statusMsg.isSuccess ? '#bbf7d0' : statusMsg.isError ? '#fecaca' : '#e2e8f0'}`,
                 marginBottom: 16,
-                fontWeight: 600
+                fontWeight: 600,
+                lineHeight: 1.4
               }}
             >
-              {statusMsg}
+              {statusMsg.isSuccess ? '✓ ' : statusMsg.isError ? '⚠️ ' : 'ℹ️ '}
+              {statusMsg.text}
             </div>
           )}
 
@@ -180,11 +244,11 @@ export const GeminiApiKeyModal: React.FC<GeminiApiKeyModalProps> = ({ isOpen, on
               fontSize: 11.5,
               color: '#64748b',
               lineHeight: 1.5,
-              marginBottom: 20
+              marginBottom: 18
             }}
           >
             <div style={{ fontWeight: 700, color: '#334155', marginBottom: 4 }}>
-              💡 Don't have an API key yet?
+              💡 Don't have a Gemini API key yet?
             </div>
             You can generate a free Gemini API key in seconds from Google AI Studio:{' '}
             <a
@@ -196,22 +260,36 @@ export const GeminiApiKeyModal: React.FC<GeminiApiKeyModalProps> = ({ isOpen, on
               Get Free Key from Google AI Studio &rarr;
             </a>
             <div style={{ marginTop: 6 }}>
-              Key is stored locally in your browser. Alternatively, configure <code>VITE_GEMINI_API_KEY</code> in your <code>.env</code> file.
+              Keys start with <code>AIzaSy...</code> and are stored securely in your browser's local storage.
             </div>
           </div>
 
           {/* Action buttons */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            {getGeminiApiKey() ? (
-              <button
-                type="button"
-                className="btn btn-danger"
-                style={{ fontSize: 12, padding: '6px 12px' }}
-                onClick={handleClear}
-              >
-                Remove Key
-              </button>
-            ) : <div />}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              {getGeminiApiKey() ? (
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  style={{ fontSize: 12, padding: '6px 12px' }}
+                  onClick={handleClear}
+                >
+                  Remove Key
+                </button>
+              ) : null}
+
+              {onUseTemplates && (
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  style={{ fontSize: 12, padding: '6px 12px', background: '#f8fafc', borderColor: '#cbd5e1', color: '#0f766e', fontWeight: 600 }}
+                  onClick={handleTriggerTemplates}
+                  title="Generate structured Cambridge lesson plan activities immediately without calling external AI"
+                >
+                  ⚡ Use Cambridge Templates
+                </button>
+              )}
+            </div>
 
             <div style={{ display: 'flex', gap: 8 }}>
               <button
@@ -242,3 +320,4 @@ export const GeminiApiKeyModal: React.FC<GeminiApiKeyModalProps> = ({ isOpen, on
     </div>
   )
 }
+
