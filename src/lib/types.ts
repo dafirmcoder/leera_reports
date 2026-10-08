@@ -68,6 +68,14 @@ export interface Student {
   gender: string
 }
 
+export interface StudentSubjectAllocation {
+  id?: string
+  school_id?: string | null
+  class_id: string
+  student_id: string
+  subject_id: string
+}
+
 export type AttendanceStatus = 'P' | 'A' | 'E'
 
 export interface AttendanceRow {
@@ -424,6 +432,10 @@ export interface Api {
   updateStudent(s: Student): Promise<void>
   reallocateStudent(studentId: string, targetClassId: string): Promise<void>
   deleteStudent(id: string): Promise<void>
+
+  // student subject allocations (Year 10+)
+  getStudentSubjectAllocations(classId: string): Promise<Record<string, string[]>>
+  saveStudentSubjectAllocations(classId: string, allocations: Record<string, string[]>): Promise<void>
 
   // population summary (for Directors & leadership)
   getPopulationSummary(): Promise<SchoolPopulationSummary>

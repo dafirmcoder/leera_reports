@@ -26,6 +26,7 @@ export interface MarksheetExportData {
     classOverall: number | null
   }
   displayMode: 'pct' | 'raw' | 'both'
+  isStudentEnrolledInSubject?: (studentId: string, subjectId: string) => boolean
 }
 
 function sanitizeSheetName(name: string): string {
@@ -55,7 +56,8 @@ export async function downloadMarksheetExcel(data: MarksheetExportData): Promise
     scoresMap,
     studentMetrics,
     classAverages,
-    displayMode
+    displayMode,
+    isStudentEnrolledInSubject
   } = data
 
   const wb = new ExcelJS.Workbook()
@@ -232,6 +234,35 @@ export async function downloadMarksheetExcel(data: MarksheetExportData): Promise
     const metrics = studentMetrics.get(st.id)
 
     subjectsWithTests.forEach((sub) => {
+      const isEnrolled = isStudentEnrolledInSubject ? isStudentEnrolledInSubject(st.id, sub.subject_id) : true
+
+      if (!isEnrolled) {
+        if (sub.tests.length === 0) {
+          const cell = ws.getCell(rowIdx, cIdx)
+          cell.value = 'N/A'
+          cell.alignment = { vertical: 'middle', horizontal: 'center' }
+          cell.font = { color: { argb: '94A3B8' } }
+          cell.border = borderThin
+          cIdx++
+        } else {
+          sub.tests.forEach(() => {
+            const cell = ws.getCell(rowIdx, cIdx)
+            cell.value = 'N/A'
+            cell.alignment = { vertical: 'middle', horizontal: 'center' }
+            cell.font = { color: { argb: '94A3B8' } }
+            cell.border = borderThin
+            cIdx++
+          })
+          const avgCell = ws.getCell(rowIdx, cIdx)
+          avgCell.value = 'N/A'
+          avgCell.font = { color: { argb: '94A3B8' } }
+          avgCell.alignment = { vertical: 'middle', horizontal: 'center' }
+          avgCell.border = borderThin
+          cIdx++
+        }
+        return
+      }
+
       if (sub.tests.length === 0) {
         const cell = ws.getCell(rowIdx, cIdx)
         cell.value = '—'
@@ -395,7 +426,8 @@ export function downloadMarksheetCsv(data: MarksheetExportData): void {
     scoresMap,
     studentMetrics,
     classAverages,
-    displayMode
+    displayMode,
+    isStudentEnrolledInSubject
   } = data
 
   const rows: string[][] = []
@@ -441,6 +473,17 @@ export function downloadMarksheetCsv(data: MarksheetExportData): void {
     const metrics = studentMetrics.get(st.id)
 
     subjectsWithTests.forEach((sub) => {
+      const isEnrolled = isStudentEnrolledInSubject ? isStudentEnrolledInSubject(st.id, sub.subject_id) : true
+      if (!isEnrolled) {
+        if (sub.tests.length === 0) {
+          row.push('N/A')
+        } else {
+          sub.tests.forEach(() => row.push('N/A'))
+          row.push('N/A')
+        }
+        return
+      }
+
       if (sub.tests.length === 0) {
         row.push('—')
       } else {

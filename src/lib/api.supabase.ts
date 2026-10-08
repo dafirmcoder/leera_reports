@@ -1,5 +1,5 @@
 import { getSupabaseConfigError, supabase } from './supabase'
-import { formatAdmissionNo, formatRollNo, formatStudentNo, getYearLevelFromClassName } from './report'
+import { formatAdmissionNo, formatRollNo, formatStudentNo, getYearLevelFromClassName, isYear10OrAbove } from './report'
 import { CAMBRIDGE_PRESEEDED_SCHEMES } from './cambridgeData'
 import { isCoordinatorOrLeadership } from './permissions'
 import {
@@ -588,6 +588,137 @@ export const supabaseApi: Api = {
     if (e2) throw new Error(e2.message)
   },
 
+  async getStudentSubjectAllocations(classId: string): Promise<Record<string, string[]>> {
+    // 1. Try reading from public.student_subject_allocations table
+    try {
+      const { data, error } = await db()
+        .from('student_subject_allocations')
+        .select('student_id, subject_id')
+        .eq('class_id', classId)
+
+      if (!error && data && data.length > 0) {
+        const result: Record<string, string[]> = {}
+        data.forEach((r: any) => {
+          if (!result[r.student_id]) result[r.student_id] = []
+          result[r.student_id].push(r.subject_id)
+        })
+        try {
+          localStorage.setItem(`leera_student_subject_allocations_${classId}`, JSON.stringify(result))
+        } catch {}
+        return result
+      }
+    } catch {
+      // Table may not exist or query failed, fallback below
+    }
+
+    // 2. Fallback: Check curriculum_schemes (__ALLOCATIONS__)
+    try {
+      const { data: schemeData, error: sErr } = await db()
+        .from('curriculum_schemes')
+        .select('title')
+        .eq('framework', 'OTHER')
+        .eq('subject_name', '__ALLOCATIONS__')
+        .eq('subject_code', classId)
+        .maybeSingle()
+
+      if (!sErr && schemeData?.title) {
+        const parsed = JSON.parse(schemeData.title)
+        if (parsed && typeof parsed === 'object') {
+          try {
+            localStorage.setItem(`leera_student_subject_allocations_${classId}`, JSON.stringify(parsed))
+          } catch {}
+          return parsed
+        }
+      }
+    } catch {}
+
+    // 3. Fallback: Check localStorage
+    try {
+      const raw = localStorage.getItem(`leera_student_subject_allocations_${classId}`)
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        if (parsed && typeof parsed === 'object') {
+          return parsed
+        }
+      }
+    } catch {}
+
+    return {}
+  },
+
+  async saveStudentSubjectAllocations(classId: string, allocations: Record<string, string[]>): Promise<void> {
+    const jsonStr = JSON.stringify(allocations)
+
+    // 1. Save to localStorage immediately
+    try {
+      localStorage.setItem(`leera_student_subject_allocations_${classId}`, jsonStr)
+    } catch {}
+
+    // 2. Synchronize via curriculum_schemes (guaranteed present in schema)
+    try {
+      const school = await this.getSchool().catch(() => null)
+      const schoolId = school?.id || null
+
+      const { data: existing } = await db()
+        .from('curriculum_schemes')
+        .select('id')
+        .eq('framework', 'OTHER')
+        .eq('subject_name', '__ALLOCATIONS__')
+        .eq('subject_code', classId)
+        .maybeSingle()
+
+      if (existing?.id) {
+        await db()
+          .from('curriculum_schemes')
+          .update({
+            title: jsonStr,
+            syllabus_years: new Date().toISOString()
+          })
+          .eq('id', existing.id)
+      } else {
+        await db()
+          .from('curriculum_schemes')
+          .insert({
+            school_id: schoolId,
+            framework: 'OTHER',
+            subject_name: '__ALLOCATIONS__',
+            subject_code: classId,
+            year_group: 'YEAR_10_PLUS',
+            title: jsonStr,
+            syllabus_years: new Date().toISOString(),
+            is_active: true
+          })
+      }
+    } catch (err) {
+      console.warn('Fallback sync via curriculum_schemes warning:', err)
+    }
+
+    // 3. Also try saving to public.student_subject_allocations table
+    try {
+      const rowsToInsert: Array<{ class_id: string; student_id: string; subject_id: string }> = []
+      for (const [studentId, subjectIds] of Object.entries(allocations)) {
+        if (Array.isArray(subjectIds)) {
+          subjectIds.forEach((subId) => {
+            rowsToInsert.push({ class_id: classId, student_id: studentId, subject_id: subId })
+          })
+        }
+      }
+
+      await db()
+        .from('student_subject_allocations')
+        .delete()
+        .eq('class_id', classId)
+
+      if (rowsToInsert.length > 0) {
+        await db()
+          .from('student_subject_allocations')
+          .insert(rowsToInsert)
+      }
+    } catch (err) {
+      console.warn('Supabase student_subject_allocations table update warning:', err)
+    }
+  },
+
   async listAttendance(classId: string, date: string): Promise<AttendanceRow[]> {
     const { data, error } = await db()
       .from('attendance')
@@ -779,13 +910,28 @@ export const supabaseApi: Api = {
       }
     }
 
-    const { data: students, error: serr } = await d.from('students').select('id').eq('class_id', classId)
+    const { data: students, error: serr } = await d.from('students').select('id, classes(name)').eq('class_id', classId)
     if (serr) throw new Error(serr.message)
     if (students && students.length > 0) {
-      const { error: ierr } = await d.from('scores').insert(
-        students.map((st: any) => ({ unit_test_id: testId, student_id: st.id, score: null }))
-      )
-      if (ierr) throw new Error(ierr.message)
+      let targetStudentIds = students.map((st: any) => st.id)
+      const className = (students[0] as any)?.classes?.name
+      if (isYear10OrAbove(className)) {
+        const allocs = await this.getStudentSubjectAllocations(classId)
+        const hasConfigured = Object.values(allocs).some((arr) => Array.isArray(arr) && arr.length > 0)
+        if (hasConfigured) {
+          targetStudentIds = targetStudentIds.filter((stId: string) => {
+            const arr = allocs[stId]
+            return Array.isArray(arr) && arr.includes(testData.subject_id)
+          })
+        }
+      }
+
+      if (targetStudentIds.length > 0) {
+        const { error: ierr } = await d.from('scores').insert(
+          targetStudentIds.map((stId: string) => ({ unit_test_id: testId, student_id: stId, score: null }))
+        )
+        if (ierr) throw new Error(ierr.message)
+      }
     }
     invalidateTeacherDashboardCache()
     return testId
@@ -892,17 +1038,41 @@ export const supabaseApi: Api = {
   },
 
   async listScoresForTest(testId: string): Promise<ScoreRow[]> {
+    const { data: testData } = await db()
+      .from('unit_tests')
+      .select('id, class_id, subject_id, classes(name)')
+      .eq('id', testId)
+      .maybeSingle()
+
     const { data, error } = await db()
       .from('scores')
       .select('id, unit_test_id, student_id, score, students(full_name, student_no)')
       .eq('unit_test_id', testId)
       .order('student_no', { foreignTable: 'students', ascending: true })
     if (error) throw new Error(error.message)
-    return (data ?? []).map((r: any) => ({
+
+    let rows: ScoreRow[] = (data ?? []).map((r: any) => ({
       id: r.id, unit_test_id: r.unit_test_id, student_id: r.student_id,
       student_name: r.students?.full_name ?? '—', student_no: r.students?.student_no ?? '',
       score: r.score === null || r.score === undefined ? null : Number(r.score)
     }))
+
+    const className = (testData as any)?.classes?.name
+    if (testData?.class_id && isYear10OrAbove(className)) {
+      const allocs = await this.getStudentSubjectAllocations(testData.class_id)
+      const hasConfigured = Object.values(allocs).some((arr) => Array.isArray(arr) && arr.length > 0)
+      if (hasConfigured) {
+        rows = rows.filter((r) => {
+          const studentAllocs = allocs[r.student_id]
+          if (Array.isArray(studentAllocs) && studentAllocs.length > 0) {
+            return studentAllocs.includes(testData.subject_id)
+          }
+          return false
+        })
+      }
+    }
+
+    return rows
   },
 
   async listScoresForTests(testIds: string[]): Promise<ScoreRow[]> {
@@ -1088,10 +1258,10 @@ export const supabaseApi: Api = {
   },
 
   async getStudentReport(studentId: string): Promise<StudentReportRow[]> {
-    // 1. Fetch student's class_id
+    // 1. Fetch student's class_id and class name
     const { data: st, error: stErr } = await db()
       .from('students')
-      .select('id, class_id')
+      .select('id, class_id, classes(name)')
       .eq('id', studentId)
       .maybeSingle()
     if (stErr) throw new Error(stErr.message)
@@ -1101,7 +1271,7 @@ export const supabaseApi: Api = {
     if (st?.class_id) {
       const { data: tests, error: tErr } = await db()
         .from('unit_tests')
-        .select('id, title, test_date, created_at, max_mark, subjects!inner(name)')
+        .select('id, title, test_date, created_at, max_mark, subject_id, subjects!inner(id, name)')
         .eq('class_id', st.class_id)
         .order('test_date', { ascending: false })
       if (tErr) throw new Error(tErr.message)
@@ -1111,7 +1281,7 @@ export const supabaseApi: Api = {
     // 3. Fetch all scores recorded for this student
     const { data: scoresData, error: sErr } = await db()
       .from('scores')
-      .select('score, unit_test_id, unit_tests!inner(id, title, test_date, created_at, max_mark, subjects!inner(name))')
+      .select('score, unit_test_id, unit_tests!inner(id, title, test_date, created_at, max_mark, subject_id, subjects!inner(id, name))')
       .eq('student_id', studentId)
     if (sErr) throw new Error(sErr.message)
 
@@ -1126,7 +1296,22 @@ export const supabaseApi: Api = {
       }
     }
 
-    const allTests = [...classTests, ...extraTests]
+    let allTests = [...classTests, ...extraTests]
+
+    // 4. For Year 10 and above: Filter by student subject allocations if configured
+    const className = (st as any)?.classes?.name
+    if (st?.class_id && isYear10OrAbove(className)) {
+      const allocs = await this.getStudentSubjectAllocations(st.class_id)
+      const studentAllocs = allocs[studentId]
+      const hasConfigured = Object.values(allocs).some((arr) => Array.isArray(arr) && arr.length > 0)
+      if (hasConfigured) {
+        if (Array.isArray(studentAllocs) && studentAllocs.length > 0) {
+          allTests = allTests.filter((t) => studentAllocs.includes(t.subject_id))
+        } else {
+          allTests = []
+        }
+      }
+    }
 
     return allTests.map((t) => {
       const userScore = scoreMap.has(t.id) ? scoreMap.get(t.id)! : null
@@ -1664,10 +1849,15 @@ export const supabaseApi: Api = {
     const ids = students.map((s) => s.id)
     if (ids.length === 0) return {}
 
+    const { data: clsData } = await db().from('classes').select('name').eq('id', classId).maybeSingle()
+    const isSenior = isYear10OrAbove(clsData?.name)
+    const allocs = isSenior ? await this.getStudentSubjectAllocations(classId) : {}
+    const hasConfigured = Object.values(allocs).some((arr) => Array.isArray(arr) && arr.length > 0)
+
     // 1. Fetch all unit tests for this class
     const { data: tests, error: tErr } = await db()
       .from('unit_tests')
-      .select('id, title, test_date, created_at, max_mark, subjects!inner(name)')
+      .select('id, title, test_date, created_at, max_mark, subject_id, subjects!inner(id, name)')
       .eq('class_id', classId)
       .order('test_date', { ascending: false })
     if (tErr) throw new Error(tErr.message)
@@ -1675,7 +1865,7 @@ export const supabaseApi: Api = {
     // 2. Fetch all scores recorded for these students
     const { data: scoresData, error: sErr } = await db()
       .from('scores')
-      .select('student_id, unit_test_id, score, unit_tests!inner(id, title, test_date, created_at, max_mark, subjects!inner(name))')
+      .select('student_id, unit_test_id, score, unit_tests!inner(id, title, test_date, created_at, max_mark, subject_id, subjects!inner(id, name))')
       .in('student_id', ids)
     if (sErr) throw new Error(sErr.message)
 
@@ -1694,7 +1884,16 @@ export const supabaseApi: Api = {
 
     const out: Record<string, StudentReportRow[]> = {}
     for (const s of students) {
-      const studentTests = [...(tests ?? []), ...(extraTestsByStudent.get(s.id) || [])]
+      let studentTests = [...(tests ?? []), ...(extraTestsByStudent.get(s.id) || [])]
+      if (isSenior && hasConfigured) {
+        const studentAllocs = allocs[s.id]
+        if (Array.isArray(studentAllocs) && studentAllocs.length > 0) {
+          studentTests = studentTests.filter((t: any) => studentAllocs.includes(t.subject_id))
+        } else {
+          studentTests = []
+        }
+      }
+
       out[s.id] = studentTests.map((t: any) => {
         const key = `${s.id}_${t.id}`
         const rawScore = scoreMap.has(key) ? scoreMap.get(key)! : null

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { api } from '../lib/api'
-import { fmtDate } from '../lib/report'
+import { fmtDate, isYear10OrAbove } from '../lib/report'
 import { useAuth } from '../context/AuthContext'
 import { useSchool } from '../context/SchoolContext'
 import { hasRole, isCoordinatorOrLeadership } from '../lib/permissions'
@@ -89,13 +89,26 @@ export default function ScoreEntry() {
     async function loadMarksheet() {
       setLoadingMarksheet(true)
       try {
-        const [allTests, students] = await Promise.all([
+        const [allTests, allStudents, allocs] = await Promise.all([
           api.listUnitTests(classId!),
-          api.listStudents(classId!)
+          api.listStudents(classId!),
+          api.getStudentSubjectAllocations(classId!).catch(() => ({} as Record<string, string[]>))
         ])
         const subjectTests = allTests
           .filter((t) => t.subject_id === test!.subject_id)
           .sort((a, b) => a.test_date.localeCompare(b.test_date) || a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' }))
+
+        const currentCls = classes.find((c) => c.id === classId)
+        const isSenior = isYear10OrAbove(currentCls?.name)
+        const hasConfigured = Object.values(allocs).some((arr) => Array.isArray(arr) && arr.length > 0)
+
+        let students = allStudents
+        if (isSenior && hasConfigured && test?.subject_id) {
+          students = allStudents.filter((st) => {
+            const arr = allocs[st.id]
+            return Array.isArray(arr) && arr.includes(test.subject_id)
+          })
+        }
 
         const scoresPerTest = await Promise.all(
           subjectTests.map((t) => api.listScoresForTest(t.id).catch(() => []))
@@ -175,10 +188,23 @@ export default function ScoreEntry() {
         return
       }
 
-      const students = await api.listStudents(classId)
+      let students = await api.listStudents(classId)
       if (students.length === 0) {
         setError('No students found in this class.')
         return
+      }
+
+      const cls = classes.find((c) => c.id === classId)
+      const className = cls?.name || 'Class'
+      if (isYear10OrAbove(className)) {
+        const allocs = await api.getStudentSubjectAllocations(classId).catch(() => ({} as Record<string, string[]>))
+        const hasConfigured = Object.values(allocs).some((arr) => Array.isArray(arr) && arr.length > 0)
+        if (hasConfigured && test.subject_id) {
+          students = students.filter((st) => {
+            const arr = allocs[st.id]
+            return Array.isArray(arr) && arr.includes(test.subject_id)
+          })
+        }
       }
 
       const scoresPerTest = await Promise.all(
@@ -193,8 +219,6 @@ export default function ScoreEntry() {
         })
       })
 
-      const cls = classes.find((c) => c.id === classId)
-      const className = cls?.name || 'Class'
       const assignments = await api.listAssignments(classId).catch(() => [])
       const assignment = assignments.find((a) => a.subject_id === test.subject_id)
       const teacherName = assignment?.teacher_name || profile?.full_name || ''

@@ -56,6 +56,32 @@ function getRowDate(r: StudentReportRow): string {
 }
 
 /**
+ * Determines whether a class is Year 10 or above (elective subject stage),
+ * e.g. Year 10, Year 11, Year 12, Year 13, IGCSE, AS/A-Level, Grade 10-12, etc.
+ */
+export function isYear10OrAbove(className: string | undefined | null): boolean {
+  if (!className) return false
+  const trimmed = className.trim()
+  // Match Year / Yr / Grade / Form followed by number >= 10
+  const match = trimmed.match(/(?:year|yr|grade|form)\s*(\d+)/i)
+  if (match) {
+    const num = parseInt(match[1], 10)
+    if (!isNaN(num) && num >= 10) return true
+  }
+  // Match standalone number 10-13 at word boundaries (e.g. "10A", "11B", "12 Science")
+  const standaloneMatch = trimmed.match(/\b(1[0-9])\s*[a-z]?\b/i)
+  if (standaloneMatch) {
+    const num = parseInt(standaloneMatch[1], 10)
+    if (num >= 10 && num <= 13) return true
+  }
+  // Match senior secondary / post-16 Cambridge frameworks
+  if (/\b(igcse|a\s*level|a-level|alevel|as\s*level|as|a2|advanced|sixth\s*form)\b/i.test(trimmed)) {
+    return true
+  }
+  return false
+}
+
+/**
  * Build the report for End of Unit Tests:
  *  - subjects arranged by test date with the newest date first
  *  - individual tests within each subject arranged with the newest date first
@@ -64,18 +90,24 @@ function getRowDate(r: StudentReportRow): string {
  *  - overall average = mean of the subject averages
  */
 export function buildReport(rows: StudentReportRow[]): ReportData {
-  const map = new Map<string, { rows: StudentReportRow[]; totalScore: number; totalMax: number }>()
+  const map = new Map<string, { rows: StudentReportRow[]; totalScore: number; totalMax: number; scoredCount: number }>()
 
   for (const r of rows) {
     const key = r.subject.toLowerCase()
     let entry = map.get(key)
     if (!entry) {
-      entry = { rows: [], totalScore: 0, totalMax: 0 }
+      entry = { rows: [], totalScore: 0, totalMax: 0, scoredCount: 0 }
       map.set(key, entry)
     }
     entry.rows.push(r)
-    entry.totalScore += (r.score ?? 0)
-    entry.totalMax += r.max_mark
+    // Only accumulate totalScore and totalMax for tests that have been scored!
+    // Tests without score (score is null/undefined) must NOT be counted as 0 out of max_mark,
+    // which unfairly penalizes students or pulls down averages.
+    if (r.score !== null && r.score !== undefined) {
+      entry.totalScore += Number(r.score)
+      entry.totalMax += Number(r.max_mark)
+      entry.scoredCount += 1
+    }
   }
 
   // Sort tests within each subject by test date descending (newest date first)
@@ -93,14 +125,17 @@ export function buildReport(rows: StudentReportRow[]): ReportData {
 
   // Arrange subjects by date with newest date first (using the subject's latest test date)
   const subjects: ReportSubject[] = [...map.values()]
-    .map((e) => ({
-      name: e.rows[0].subject,
-      rows: e.rows,
-      count: e.rows.length,
-      totalScore: e.totalScore,
-      totalMax: e.totalMax,
-      average: pct(e.totalScore, e.totalMax)
-    }))
+    .map((e) => {
+      const hasScores = e.scoredCount > 0 && e.totalMax > 0
+      return {
+        name: e.rows[0].subject,
+        rows: e.rows,
+        count: e.rows.length,
+        totalScore: e.totalScore,
+        totalMax: e.totalMax,
+        average: hasScores ? pct(e.totalScore, e.totalMax) : 0
+      }
+    })
     .sort((a, b) => {
       const dateA = a.rows.length > 0 ? getRowDate(a.rows[0]) : ''
       const dateB = b.rows.length > 0 ? getRowDate(b.rows[0]) : ''
@@ -111,9 +146,16 @@ export function buildReport(rows: StudentReportRow[]): ReportData {
       return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
     })
 
+  // In overall average: calculate mean of subject averages for subjects that actually have scored tests!
+  // Subjects with 0 scored tests should not drag down the student's overall average to 0.
+  const scoredSubjects = subjects.filter((s) => {
+    const entry = map.get(s.name.toLowerCase())
+    return entry && entry.scoredCount > 0 && entry.totalMax > 0
+  })
+
   const overall =
-    subjects.length > 0
-      ? subjects.reduce((acc, s) => acc + s.average, 0) / subjects.length
+    scoredSubjects.length > 0
+      ? scoredSubjects.reduce((acc, s) => acc + s.average, 0) / scoredSubjects.length
       : 0
 
   return { subjects, overall }

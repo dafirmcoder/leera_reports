@@ -6,6 +6,8 @@ import { useAuth } from '../context/AuthContext'
 import { can, getTeacherHomeroomClasses, isCoordinatorOrLeadership, isHomeroomTeacher } from '../lib/permissions'
 import LeeraLoader from '../components/LeeraLoader'
 import { downloadMarksheetExcel, downloadMarksheetCsv } from '../lib/marksheetExport'
+import { isYear10OrAbove } from '../lib/report'
+import SubjectAllocationModal from '../components/SubjectAllocationModal'
 import type { Assignment, ClassMarksLock, Student, UnitTest } from '../lib/types'
 
 export default function ClassMarksheetPage() {
@@ -64,24 +66,29 @@ export default function ClassMarksheetPage() {
   const [assignments, setAssignments] = useState<Assignment[]>([])
   const [lockInfo, setLockInfo] = useState<ClassMarksLock | null>(null)
   const [scoresMap, setScoresMap] = useState<Record<string, Record<string, number | null>>>({})
+  const [allocations, setAllocations] = useState<Record<string, string[]>>({})
+  const [showAllocationModal, setShowAllocationModal] = useState(false)
   const [studentSearch, setStudentSearch] = useState('')
   const [displayMode, setDisplayMode] = useState<'pct' | 'raw' | 'both'>('pct')
   const [exporting, setExporting] = useState<'excel' | 'csv' | null>(null)
 
   const isDirector = profile?.role === 'director'
+  const isSenior = isYear10OrAbove(currentClass?.name)
 
   const loadClassData = async () => {
     if (!currentClassId) return
     setLoading(true)
     setError('')
     try {
-      const [studentsData, testsData, assignmentsData, lockData] = await Promise.all([
+      const [studentsData, testsData, assignmentsData, lockData, allocsData] = await Promise.all([
         api.listStudents(currentClassId),
         api.listUnitTests(currentClassId),
         api.listAssignments(currentClassId).catch(() => [] as Assignment[]),
-        api.getClassMarksLock(currentClassId).catch(() => null)
+        api.getClassMarksLock(currentClassId).catch(() => null),
+        api.getStudentSubjectAllocations(currentClassId).catch(() => ({} as Record<string, string[]>))
       ])
       setLockInfo(lockData)
+      setAllocations(allocsData || {})
 
       // Sort tests chronologically
       const sortedTests = [...testsData].sort((a, b) =>
@@ -182,6 +189,21 @@ export default function ClassMarksheetPage() {
     )
   }, [students, studentSearch])
 
+  const hasAllocationsConfigured = useMemo(() => {
+    return Object.values(allocations).some((arr) => Array.isArray(arr) && arr.length > 0)
+  }, [allocations])
+
+  const isStudentEnrolledInSubject = useMemo(() => {
+    return (studentId: string, subjectId: string): boolean => {
+      if (!isSenior) return true
+      const studentAllocs = allocations[studentId]
+      if (hasAllocationsConfigured && studentAllocs && studentAllocs.length > 0) {
+        return studentAllocs.includes(subjectId)
+      }
+      return !hasAllocationsConfigured
+    }
+  }, [isSenior, allocations, hasAllocationsConfigured])
+
   // Compute student scores, subject averages, and aggregate
   const studentMetrics = useMemo(() => {
     const map = new Map<string, {
@@ -194,6 +216,12 @@ export default function ClassMarksheetPage() {
       const validSubjectAverages: number[] = []
 
       subjectsWithTests.forEach((sub) => {
+        const isEnrolled = isStudentEnrolledInSubject(st.id, sub.subject_id)
+        if (!isEnrolled) {
+          subjectAverages[sub.subject_id] = null
+          return // Excluded from student's overall aggregate!
+        }
+
         const testPcts: number[] = []
         sub.tests.forEach((t) => {
           const raw = scoresMap[t.id]?.[st.id]
@@ -220,7 +248,7 @@ export default function ClassMarksheetPage() {
     })
 
     return map
-  }, [students, subjectsWithTests, scoresMap])
+  }, [students, subjectsWithTests, scoresMap, isStudentEnrolledInSubject])
 
   // Class unit test averages and overall subject averages
   const classAverages = useMemo(() => {
@@ -231,6 +259,7 @@ export default function ClassMarksheetPage() {
     tests.forEach((t) => {
       const pcts: number[] = []
       students.forEach((st) => {
+        if (!isStudentEnrolledInSubject(st.id, t.subject_id)) return
         const raw = scoresMap[t.id]?.[st.id]
         if (raw !== undefined && raw !== null && t.max_mark > 0) {
           pcts.push((raw / t.max_mark) * 100)
@@ -244,6 +273,7 @@ export default function ClassMarksheetPage() {
     subjectsWithTests.forEach((sub) => {
       const avgs: number[] = []
       students.forEach((st) => {
+        if (!isStudentEnrolledInSubject(st.id, sub.subject_id)) return
         const avg = studentMetrics.get(st.id)?.subjectAverages[sub.subject_id]
         if (avg !== undefined && avg !== null) avgs.push(avg)
       })
@@ -262,7 +292,7 @@ export default function ClassMarksheetPage() {
       : null
 
     return { unitAverages, subjectAverages, classOverall }
-  }, [tests, students, subjectsWithTests, scoresMap, studentMetrics])
+  }, [tests, students, subjectsWithTests, scoresMap, studentMetrics, isStudentEnrolledInSubject])
 
   const handleExportExcel = async () => {
     try {
@@ -277,7 +307,8 @@ export default function ClassMarksheetPage() {
         scoresMap,
         studentMetrics,
         classAverages,
-        displayMode
+        displayMode,
+        isStudentEnrolledInSubject
       })
     } catch (err: any) {
       console.error('Failed to export Excel marksheet:', err)
@@ -300,7 +331,8 @@ export default function ClassMarksheetPage() {
         scoresMap,
         studentMetrics,
         classAverages,
-        displayMode
+        displayMode,
+        isStudentEnrolledInSubject
       })
     } catch (err: any) {
       console.error('Failed to export CSV marksheet:', err)
@@ -407,6 +439,40 @@ export default function ClassMarksheetPage() {
               <span>Class: {currentClass?.name || 'My Class'}</span>
             </div>
           )}
+
+          {/* Subject Allocations Button */}
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            onClick={() => setShowAllocationModal(true)}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              background: isSenior ? '#eff6ff' : '#ffffff',
+              color: isSenior ? '#1d4ed8' : '#334155',
+              borderColor: isSenior ? '#bfdbfe' : '#cbd5e1',
+              fontWeight: 600
+            }}
+            title="Configure elective/selective subject allocations for learners in this class"
+          >
+            <span>🎯</span>
+            <span>Subject Allocations</span>
+            {isSenior && (
+              <span
+                style={{
+                  fontSize: '10px',
+                  background: hasAllocationsConfigured ? '#dcfce7' : '#fee2e2',
+                  color: hasAllocationsConfigured ? '#15803d' : '#b91c1c',
+                  padding: '1px 6px',
+                  borderRadius: '10px',
+                  fontWeight: 700
+                }}
+              >
+                {hasAllocationsConfigured ? 'Active' : 'Year 10+'}
+              </span>
+            )}
+          </button>
 
           {/* Export to Excel */}
           <button
@@ -867,7 +933,60 @@ export default function ClassMarksheetPage() {
 
                         {/* Subjects Columns & Unit Count Sub-columns */}
                         {subjectsWithTests.map((sub) => {
+                          const isEnrolled = isStudentEnrolledInSubject(st.id, sub.subject_id)
                           const subAvg = metrics?.subjectAverages[sub.subject_id] ?? null
+
+                          if (!isEnrolled) {
+                            return (
+                              <React.Fragment key={sub.subject_id}>
+                                {sub.tests.length === 0 ? (
+                                  <td
+                                    key={`${st.id}_${sub.subject_id}_none`}
+                                    style={{
+                                      padding: '6px 4px',
+                                      color: '#94a3b8',
+                                      fontSize: '11px',
+                                      background: '#f8fafc',
+                                      borderRight: '1px solid #f1f5f9'
+                                    }}
+                                    title="Not enrolled in this subject"
+                                  >
+                                    N/A
+                                  </td>
+                                ) : (
+                                  sub.tests.map((t) => (
+                                    <td
+                                      key={`${st.id}_${t.id}`}
+                                      style={{
+                                        padding: '6px 4px',
+                                        fontSize: '11px',
+                                        color: '#94a3b8',
+                                        background: '#f8fafc',
+                                        borderRight: '1px solid #f1f5f9'
+                                      }}
+                                      title="Not enrolled in this elective subject"
+                                    >
+                                      N/A
+                                    </td>
+                                  ))
+                                )}
+                                <td
+                                  key={`${st.id}_${sub.subject_id}_avg`}
+                                  style={{
+                                    padding: '6px 6px',
+                                    fontSize: '11px',
+                                    fontWeight: 600,
+                                    color: '#94a3b8',
+                                    background: '#f8fafc',
+                                    borderRight: '2px solid #94a3b8'
+                                  }}
+                                  title="Not enrolled in this elective subject"
+                                >
+                                  N/A
+                                </td>
+                              </React.Fragment>
+                            )
+                          }
 
                           return (
                             <React.Fragment key={sub.subject_id}>
@@ -1060,6 +1179,17 @@ export default function ClassMarksheetPage() {
             </table>
           </div>
         </div>
+      )}
+
+      {/* Subject Allocations Modal */}
+      {showAllocationModal && currentClass && (
+        <SubjectAllocationModal
+          classId={currentClass.id}
+          className={currentClass.name}
+          students={students}
+          onClose={() => setShowAllocationModal(false)}
+          onSaved={loadClassData}
+        />
       )}
     </div>
   )

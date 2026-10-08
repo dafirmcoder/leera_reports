@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Navigate } from 'react-router-dom'
 import { api } from '../lib/api'
-import { buildRollNo, formatRollNo, formatStudentNo, nextStudentNo } from '../lib/report'
+import { buildRollNo, formatRollNo, formatStudentNo, isYear10OrAbove, nextStudentNo } from '../lib/report'
 import { useSchool } from '../context/SchoolContext'
 import { useAuth } from '../context/AuthContext'
 import { can, hasRole, isHomeroomTeacher } from '../lib/permissions'
 import ClassPicker from '../components/ClassPicker'
+import SubjectAllocationModal from '../components/SubjectAllocationModal'
 import type { Student } from '../lib/types'
 
 const empty = { class_id: '', student_no: '', roll_no: '', full_name: '', gender: '' }
@@ -19,6 +20,8 @@ export default function Students() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [allocations, setAllocations] = useState<Record<string, string[]>>({})
+  const [showAllocationModal, setShowAllocationModal] = useState(false)
 
   const isHos = hasRole(profile?.role, 'head_of_school', profile?.additional_roles)
   const isCoordinator = hasRole(profile?.role, 'curriculum_coordinator', profile?.additional_roles)
@@ -57,6 +60,7 @@ export default function Students() {
 
   const activeClass = classes.find((c) => c.id === activeClassId)
   const className = activeClass?.name ?? ''
+  const isSenior = isYear10OrAbove(className)
 
   // Sync selectedClassId with homeroom class strictly for pure homeroom teachers
   useEffect(() => {
@@ -73,6 +77,7 @@ export default function Students() {
   const reload = () => {
     if (!activeClassId) return
     api.listStudents(activeClassId).then(setStudents).catch((e) => setError(e.message))
+    api.getStudentSubjectAllocations(activeClassId).then(setAllocations).catch(() => ({} as Record<string, string[]>))
   }
 
   useEffect(reload, [activeClassId])
@@ -265,21 +270,56 @@ export default function Students() {
               : 'Your homeroom class roster. Add and manage students here.'}
           </p>
         </div>
-        {isLeadership ? (
-          <ClassPicker />
-        ) : isHomeroom && myHomeroomClasses.length > 1 ? (
-          <label className="field inline classpicker">
-            <span>Class</span>
-            <select
-              value={activeClassId ?? ''}
-              onChange={(e) => setSelectedClassId(e.target.value)}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          {isSenior && (canAdd || canReallocate) && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => setShowAllocationModal(true)}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                background: '#eff6ff',
+                color: '#1d4ed8',
+                borderColor: '#bfdbfe',
+                fontWeight: 600,
+                fontSize: '13px'
+              }}
+              title="Allocate elective/selective subjects for students in Year 10 and above"
             >
-              {myHomeroomClasses.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </select>
-          </label>
-        ) : null}
+              <span>🎯</span>
+              <span>Subject Allocations</span>
+              <span
+                style={{
+                  fontSize: '10px',
+                  background: Object.keys(allocations).length > 0 ? '#dcfce7' : '#fee2e2',
+                  color: Object.keys(allocations).length > 0 ? '#15803d' : '#b91c1c',
+                  padding: '1px 6px',
+                  borderRadius: '10px',
+                  fontWeight: 700
+                }}
+              >
+                {Object.keys(allocations).length > 0 ? 'Configured' : 'Year 10+'}
+              </span>
+            </button>
+          )}
+          {isLeadership ? (
+            <ClassPicker />
+          ) : isHomeroom && myHomeroomClasses.length > 1 ? (
+            <label className="field inline classpicker">
+              <span>Class</span>
+              <select
+                value={activeClassId ?? ''}
+                onChange={(e) => setSelectedClassId(e.target.value)}
+              >
+                {myHomeroomClasses.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+        </div>
       </div>
 
       {reallocateSuccess && (
@@ -400,12 +440,13 @@ export default function Students() {
               <th>Roll No.</th>
               <th>Full name</th>
               <th>Gender</th>
+              {isSenior && <th>Electives / Subjects</th>}
               {(canAdd || canReallocate) && <th className="right">Actions</th>}
             </tr>
           </thead>
           <tbody>
             {students.length === 0 && (
-              <tr><td colSpan={5} className="muted center">No students in this class yet.</td></tr>
+              <tr><td colSpan={isSenior ? 6 : 5} className="muted center">No students in this class yet.</td></tr>
             )}
             {students.map((s) => (
               <tr key={s.id}>
@@ -413,8 +454,70 @@ export default function Students() {
                 <td className="mono">{formatRollNo(s.roll_no || s.admission_no)}</td>
                 <td>{s.full_name}</td>
                 <td>{s.gender || '—'}</td>
+                {isSenior && (
+                  <td>
+                    {allocations[s.id] && allocations[s.id].length > 0 ? (
+                      <span
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          background: '#dcfce7',
+                          color: '#15803d',
+                          fontWeight: 600,
+                          fontSize: '11.5px',
+                          padding: '2px 8px',
+                          borderRadius: '10px',
+                          cursor: canAdd || canReallocate ? 'pointer' : 'default'
+                        }}
+                        onClick={() => {
+                          if (canAdd || canReallocate) setShowAllocationModal(true)
+                        }}
+                        title="Click to manage elective subjects"
+                      >
+                        <span>✓</span> {allocations[s.id].length} subjects
+                      </span>
+                    ) : (
+                      <span
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          background: '#f1f5f9',
+                          color: '#64748b',
+                          fontSize: '11.5px',
+                          padding: '2px 8px',
+                          borderRadius: '10px',
+                          cursor: canAdd || canReallocate ? 'pointer' : 'default'
+                        }}
+                        onClick={() => {
+                          if (canAdd || canReallocate) setShowAllocationModal(true)
+                        }}
+                        title="Click to configure elective subjects"
+                      >
+                        All subjects (Default)
+                      </span>
+                    )}
+                  </td>
+                )}
                 {(canAdd || canReallocate) && (
                   <td className="right" style={{ whiteSpace: 'nowrap' }}>
+                    {isSenior && (
+                      <button
+                        type="button"
+                        className="btn btn-small"
+                        style={{
+                          background: '#f8fafc',
+                          color: '#334155',
+                          borderColor: '#cbd5e1',
+                          marginRight: '6px'
+                        }}
+                        onClick={() => setShowAllocationModal(true)}
+                        title="Manage subject allocations for Year 10+"
+                      >
+                        🎯 Electives
+                      </button>
+                    )}
                     {canReallocate && (
                       <button
                         type="button"
@@ -604,6 +707,17 @@ export default function Students() {
             </form>
           </div>
         </div>
+      )}
+
+      {/* Subject Allocations Modal */}
+      {showAllocationModal && activeClassId && (
+        <SubjectAllocationModal
+          classId={activeClassId}
+          className={className}
+          students={students}
+          onClose={() => setShowAllocationModal(false)}
+          onSaved={reload}
+        />
       )}
     </div>
   )
