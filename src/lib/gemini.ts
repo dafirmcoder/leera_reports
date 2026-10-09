@@ -96,7 +96,6 @@ export const DEFAULT_GEMINI_API_KEY = ''
 export function isKnownInvalidKey(key: string): boolean {
   if (!key) return true
   const trimmed = key.trim()
-  if (trimmed.startsWith('AQ.')) return true
   if (trimmed.toLowerCase().includes('placeholder')) return true
   if (trimmed.length < 15) return true
   return false
@@ -107,7 +106,7 @@ export function isKnownInvalidKey(key: string): boolean {
  * LocalStorage takes first priority so user keys entered in the UI modal take immediate effect.
  */
 export function getGeminiApiKey(): string {
-  // 1. User configured key in localStorage
+  // 1. User configured or database cached key in localStorage
   try {
     const local = localStorage.getItem(STORAGE_KEY) || localStorage.getItem(FALLBACK_STORAGE_KEY)
     if (local && local.trim() && !isKnownInvalidKey(local.trim())) {
@@ -123,6 +122,33 @@ export function getGeminiApiKey(): string {
     return envKey.trim()
   }
 
+  return ''
+}
+
+/**
+ * Asynchronously ensures a Gemini API key is available.
+ * If not already in localStorage, it fetches the shared key from the Supabase database.
+ */
+export async function ensureGeminiApiKey(customApiKey?: string): Promise<string> {
+  if (customApiKey && !isKnownInvalidKey(customApiKey)) {
+    return customApiKey.trim()
+  }
+  const cached = getGeminiApiKey()
+  if (cached && !isKnownInvalidKey(cached)) {
+    return cached
+  }
+  try {
+    const { api } = await import('./api')
+    if (api && typeof api.getGeminiApiKey === 'function') {
+      const dbKey = await api.getGeminiApiKey()
+      if (dbKey && !isKnownInvalidKey(dbKey)) {
+        setGeminiApiKey(dbKey)
+        return dbKey
+      }
+    }
+  } catch {
+    // Database lookup failed or table not migrated yet
+  }
   return ''
 }
 
@@ -182,12 +208,12 @@ export interface LessonContext {
 
 // Officially supported Google Gemini models in v1beta order of priority
 const CANDIDATE_MODELS = [
-  'gemini-2.0-flash',
-  'gemini-1.5-flash',
-  'gemini-2.0-flash-lite',
-  'gemini-2.5-flash',
-  'gemini-1.5-flash-8b',
-  'gemini-1.5-pro'
+  'gemini-flash-latest',
+  'gemini-3.8-flash',
+  'gemini-3.5-flash',
+  'gemini-flash-lite-latest',
+  'gemini-3.5-flash-lite',
+  'gemini-2.5-flash-lite'
 ]
 
 /**
@@ -201,12 +227,12 @@ export async function testGeminiApiKey(apiKey: string): Promise<{ success: boole
   if (isKnownInvalidKey(cleaned)) {
     return {
       success: false,
-      message: 'Invalid key format. Gemini API keys from Google AI Studio begin with "AIzaSy" and are ~39 characters.'
+      message: 'Invalid key format. Gemini API keys are ~39-53 characters.'
     }
   }
 
   try {
-    const testModels = ['gemini-2.0-flash', 'gemini-1.5-flash']
+    const testModels = ['gemini-flash-latest', 'gemini-3.8-flash']
     let lastErr = ''
 
     for (const model of testModels) {
@@ -526,7 +552,7 @@ export async function generateStageContent(
   context: LessonContext,
   customApiKey?: string
 ): Promise<string> {
-  const apiKey = customApiKey || getGeminiApiKey()
+  const apiKey = await ensureGeminiApiKey(customApiKey)
   if (!apiKey) {
     throw new Error('MISSING_API_KEY')
   }
@@ -552,7 +578,7 @@ export async function generateAllStages(
   context: LessonContext,
   customApiKey?: string
 ): Promise<Record<InstructionalStage, string>> {
-  const apiKey = customApiKey || getGeminiApiKey()
+  const apiKey = await ensureGeminiApiKey(customApiKey)
   if (!apiKey) {
     throw new Error('MISSING_API_KEY')
   }

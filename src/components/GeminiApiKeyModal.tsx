@@ -1,5 +1,12 @@
 import React, { useState, useEffect } from 'react'
-import { getGeminiApiKey, setGeminiApiKey, clearGeminiApiKey, testGeminiApiKey, isKnownInvalidKey } from '../lib/gemini'
+import {
+  getGeminiApiKey,
+  setGeminiApiKey,
+  clearGeminiApiKey,
+  testGeminiApiKey,
+  isKnownInvalidKey,
+  ensureGeminiApiKey
+} from '../lib/gemini'
 
 interface GeminiApiKeyModalProps {
   isOpen: boolean
@@ -22,7 +29,13 @@ export const GeminiApiKeyModal: React.FC<GeminiApiKeyModalProps> = ({
   useEffect(() => {
     if (isOpen) {
       const existing = getGeminiApiKey()
-      setApiKeyInput(existing)
+      if (existing) {
+        setApiKeyInput(existing)
+      } else {
+        ensureGeminiApiKey().then((k) => {
+          if (k) setApiKeyInput(k)
+        }).catch(() => {})
+      }
       setStatusMsg(null)
       setTesting(false)
     }
@@ -39,7 +52,7 @@ export const GeminiApiKeyModal: React.FC<GeminiApiKeyModalProps> = ({
 
     if (isKnownInvalidKey(trimmed)) {
       setStatusMsg({
-        text: 'The key format is invalid. Google Gemini API keys from Google AI Studio begin with "AIzaSy" and are ~39 characters long.',
+        text: 'Please enter a valid Gemini API key.',
         isError: true
       })
       return
@@ -65,6 +78,9 @@ export const GeminiApiKeyModal: React.FC<GeminiApiKeyModalProps> = ({
     const trimmed = apiKey.trim()
     if (!trimmed) {
       clearGeminiApiKey()
+      import('../lib/api').then(({ api }) => {
+        api.saveGeminiApiKey('').catch(() => {})
+      })
       setStatusMsg({ text: 'API key cleared.', isSuccess: true })
       onSaved?.('')
       setTimeout(() => onClose(), 600)
@@ -73,20 +89,26 @@ export const GeminiApiKeyModal: React.FC<GeminiApiKeyModalProps> = ({
 
     if (isKnownInvalidKey(trimmed)) {
       setStatusMsg({
-        text: 'Warning: This does not look like a valid Gemini API key. Gemini API keys begin with "AIzaSy".',
+        text: 'Warning: Please enter a valid Gemini API key.',
         isError: true
       })
       return
     }
 
     setGeminiApiKey(trimmed)
-    setStatusMsg({ text: 'API key saved successfully!', isSuccess: true })
+    import('../lib/api').then(({ api }) => {
+      api.saveGeminiApiKey(trimmed).catch(() => {})
+    })
+    setStatusMsg({ text: 'API key saved to system and database successfully!', isSuccess: true })
     onSaved?.(trimmed)
     setTimeout(() => onClose(), 600)
   }
 
   const handleClear = () => {
     clearGeminiApiKey()
+    import('../lib/api').then(({ api }) => {
+      api.saveGeminiApiKey('').catch(() => {})
+    })
     setApiKeyInput('')
     setStatusMsg({ text: 'API key removed.', isSuccess: true })
     onSaved?.('')

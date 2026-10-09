@@ -247,8 +247,19 @@ export default function ScoreEntry() {
     <div className="page">
       <div className="page-head">
         <div>
-          <h2>{test ? `${test.subject_name} — ${test.title}` : 'Score sheet'}</h2>
-          <p className="muted">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <h2 style={{ margin: 0 }}>{test ? `${test.subject_name} — ${test.title}` : 'Score sheet'}</h2>
+            {test?.assessment_type === 'midterm' ? (
+              <span style={{ fontSize: 12, padding: '2px 10px', borderRadius: 6, background: '#fef3c7', color: '#92400e', border: '1px solid #fde68a', fontWeight: 700 }}>
+                📑 Midterm Exam
+              </span>
+            ) : test ? (
+              <span style={{ fontSize: 12, padding: '2px 10px', borderRadius: 6, background: '#e0f2fe', color: '#0369a1', border: '1px solid #bae6fd', fontWeight: 600 }}>
+                📘 End of Unit Test
+              </span>
+            ) : null}
+          </div>
+          <p className="muted" style={{ marginTop: 4 }}>
             {test && `${fmtDate(test.test_date)} · Max ${maxMark} · ${entered}/${rows.length} entered`}
           </p>
         </div>
@@ -276,7 +287,7 @@ export default function ScoreEntry() {
             to={isDirector || viewParam === 'marksheet' ? '/dashboard/marks' : `/marks?classId=${classId}&subjectId=${test?.subject_id || ''}`}
             className="btn btn-ghost"
           >
-            ← Back to {isDirector || viewParam === 'marksheet' ? 'Marks Summaries' : 'Tests'}
+            ← Back to {isDirector || viewParam === 'marksheet' ? 'Marks Summaries' : 'Assessments'}
           </Link>
         </div>
       </div>

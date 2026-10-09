@@ -25,6 +25,11 @@ export default function ReportView() {
     if (m === 'all' || m === 'custom' || m === 'since_date') return m
     return 'since_date'
   })
+  const [assessmentType, setAssessmentType] = useState<'all' | 'unit_test' | 'midterm'>(() => {
+    const t = searchParams.get('type')
+    if (t === 'unit_test' || t === 'midterm' || t === 'all') return t
+    return 'all'
+  })
   const [startDate, setStartDate] = useState<string>(() => {
     return searchParams.get('since') || DEFAULT_REPORT_START_DATE
   })
@@ -34,14 +39,16 @@ export default function ReportView() {
   })
 
   // Keep URL parameters in sync
-  const updateFilter = (newMode: 'since_date' | 'all' | 'custom', newDate: string, newTests = selectedTestIds) => {
+  const updateFilter = (newMode: 'since_date' | 'all' | 'custom', newDate: string, newTests = selectedTestIds, newType = assessmentType) => {
     setFilterMode(newMode)
     setStartDate(newDate)
     setSelectedTestIds(newTests)
+    setAssessmentType(newType)
     const nextParams = new URLSearchParams()
     nextParams.set('mode', newMode)
     if (newDate) nextParams.set('since', newDate)
     if (newMode === 'custom' && newTests.length > 0) nextParams.set('tests', newTests.join(','))
+    if (newType !== 'all') nextParams.set('type', newType)
     setSearchParams(nextParams, { replace: true })
   }
 
@@ -60,22 +67,31 @@ export default function ReportView() {
   const currentFilter: ReportFilter = useMemo(() => ({
     mode: filterMode,
     startDate,
-    selectedTestIds
-  }), [filterMode, startDate, selectedTestIds])
+    selectedTestIds,
+    assessmentType
+  }), [filterMode, startDate, selectedTestIds, assessmentType])
 
   const filteredRows = useMemo(() => {
     return filterReportRows(rows, currentFilter)
   }, [rows, currentFilter])
 
+  const reportTitle = useMemo(() => {
+    if (assessmentType === 'midterm') return 'MIDTERM EXAM REPORT'
+    if (assessmentType === 'unit_test') return 'END OF UNIT TEST REPORT'
+    if (filteredRows.length > 0 && filteredRows.every((r) => r.assessment_type === 'midterm')) return 'MIDTERM EXAM REPORT'
+    return undefined
+  }, [assessmentType, filteredRows])
+
   const filterNotice = useMemo(() => {
+    const typeLabel = assessmentType === 'midterm' ? 'Midterm exams' : assessmentType === 'unit_test' ? 'Unit tests' : ''
     if (filterMode === 'since_date') {
-      return `Tests created on or after ${fmtDate(startDate)}`
+      return `${typeLabel ? typeLabel + ' ' : ''}created on or after ${fmtDate(startDate)}`
     }
     if (filterMode === 'custom') {
-      return `${selectedTestIds.length} tests selected`
+      return `${selectedTestIds.length} tests selected${typeLabel ? ` (${typeLabel})` : ''}`
     }
-    return undefined
-  }, [filterMode, startDate, selectedTestIds])
+    return typeLabel || undefined
+  }, [filterMode, startDate, selectedTestIds, assessmentType])
 
   const downloadPdf = async () => {
     if (!student || !school) return
@@ -90,6 +106,7 @@ export default function ReportView() {
         className: cls?.name ?? '',
         teacherName: cls?.homeroom_teacher_name ?? '',
         filterNotice,
+        reportTitle,
         rows: filteredRows
       })
 
@@ -192,6 +209,42 @@ export default function ReportView() {
             >
               <button
                 type="button"
+                className={`btn btn-sm ${assessmentType === 'all' ? 'btn-primary' : 'btn-ghost'}`}
+                style={{ fontSize: '11.5px', padding: '3px 8px', borderRadius: '4px', fontWeight: 600 }}
+                onClick={() => updateFilter(filterMode, startDate, selectedTestIds, 'all')}
+              >
+                All
+              </button>
+              <button
+                type="button"
+                className={`btn btn-sm ${assessmentType === 'unit_test' ? 'btn-primary' : 'btn-ghost'}`}
+                style={{ fontSize: '11.5px', padding: '3px 8px', borderRadius: '4px', fontWeight: 600 }}
+                onClick={() => updateFilter(filterMode, startDate, selectedTestIds, 'unit_test')}
+              >
+                📘 Unit Tests
+              </button>
+              <button
+                type="button"
+                className={`btn btn-sm ${assessmentType === 'midterm' ? 'btn-primary' : 'btn-ghost'}`}
+                style={{ fontSize: '11.5px', padding: '3px 8px', borderRadius: '4px', fontWeight: 600 }}
+                onClick={() => updateFilter(filterMode, startDate, selectedTestIds, 'midterm')}
+              >
+                📑 Midterm
+              </button>
+            </div>
+
+            <div
+              className="btn-group"
+              style={{
+                display: 'inline-flex',
+                background: '#ffffff',
+                padding: '2px',
+                borderRadius: '6px',
+                border: '1px solid #cbd5e1'
+              }}
+            >
+              <button
+                type="button"
                 className={`btn btn-sm ${filterMode === 'since_date' ? 'btn-primary' : 'btn-ghost'}`}
                 style={{ fontSize: '11.5px', padding: '3px 10px', borderRadius: '4px', fontWeight: 600 }}
                 onClick={() => updateFilter('since_date', startDate)}
@@ -263,6 +316,7 @@ export default function ReportView() {
         teacherName={cls?.homeroom_teacher_name ?? ''}
         rows={filteredRows}
         filterNotice={filterNotice}
+        reportTitle={reportTitle}
       />
     </div>
   )

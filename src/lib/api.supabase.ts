@@ -2,6 +2,7 @@ import { getSupabaseConfigError, supabase } from './supabase'
 import { formatAdmissionNo, formatRollNo, formatStudentNo, getYearLevelFromClassName, isYear10OrAbove } from './report'
 import { CAMBRIDGE_PRESEEDED_SCHEMES } from './cambridgeData'
 import { isCoordinatorOrLeadership } from './permissions'
+import { getGeminiApiKey as getLocalGeminiApiKey, setGeminiApiKey as setLocalGeminiApiKey } from './gemini'
 import {
   isLessonTimeInPast,
   type AdminClassAttendanceSummary, type AdminDashboardData, type Api, type Assignment, type AttendanceAggregatedSummary, type AttendanceRow, type AttendanceStatus, type AttendanceSummary,
@@ -9,9 +10,20 @@ import {
   type EndOfUnitTestOverview, type Profile, type Role, type School,
   type SchoolPopulationSummary, type ScoreRow, type Student, type StudentReportRow, type Subject,
   type SubjectTestSummary, type TeacherAssignmentOverview, type TeacherDashboardData, type TeacherTestSummary, type UnitTest, type UnitTestSummaryItem, type UpdateUnitTestInput,
+  type AssessmentType,
   type CurriculumScheme, type CurriculumTopic, type CurriculumObjective, type TeacherTimetable, type TeacherScheduleSlot, type WorkPlan, type WorkPlanWeek, type WorkPlanWeekObjective, type LessonPlan,
   type ImportWorkPlanInput, type ImportWorkPlanResult, type ParsedWorkPlanWeek, type WorkPlanIngestProgressCallback
 } from './types'
+
+export function deriveAssessmentType(record: any): AssessmentType {
+  if (record?.assessment_type === 'midterm' || record?.assessment_type === 'unit_test') {
+    return record.assessment_type
+  }
+  if (record?.title && /(?:^|\s|\[)(?:mid-?term)(?:\]|\s|$)/i.test(record.title)) {
+    return 'midterm'
+  }
+  return 'unit_test'
+}
 
 function db() {
   const configError = getSupabaseConfigError()
@@ -838,15 +850,32 @@ export const supabaseApi: Api = {
   },
 
   async listUnitTests(classId: string): Promise<UnitTest[]> {
-    const { data, error } = await db()
+    let data: any = null
+    let error: any = null
+
+    const res = await db()
       .from('unit_tests')
-      .select('id, class_id, subject_id, title, test_date, max_mark, created_by, created_at, exam_paper_url, exam_paper_path, exam_paper_name, subjects(name)')
+      .select('id, class_id, subject_id, title, test_date, max_mark, assessment_type, created_by, created_at, exam_paper_url, exam_paper_path, exam_paper_name, subjects(name)')
       .eq('class_id', classId)
+
+    if (res.error && (res.error.code === '42703' || res.error.message?.includes('assessment_type'))) {
+      const fallback = await db()
+        .from('unit_tests')
+        .select('id, class_id, subject_id, title, test_date, max_mark, created_by, created_at, exam_paper_url, exam_paper_path, exam_paper_name, subjects(name)')
+        .eq('class_id', classId)
+      data = fallback.data
+      error = fallback.error
+    } else {
+      data = res.data
+      error = res.error
+    }
+
     if (error) throw new Error(error.message)
-    const list = (data ?? []).map((r: any) => ({
+    const list: UnitTest[] = (data ?? []).map((r: any): UnitTest => ({
       id: r.id, class_id: r.class_id, subject_id: r.subject_id,
       subject_name: r.subjects?.name ?? '—', title: r.title,
       test_date: r.test_date, max_mark: Number(r.max_mark),
+      assessment_type: deriveAssessmentType(r),
       created_by: r.created_by ?? null,
       created_at: r.created_at ?? undefined,
       exam_paper_url: r.exam_paper_url ?? null,
@@ -863,21 +892,36 @@ export const supabaseApi: Api = {
 
   async createUnitTest(
     classId: string,
-    input: { subject_id: string; title: string; test_date: string; max_mark: number; examPaperFile?: File | null }
+    input: { subject_id: string; title: string; test_date: string; max_mark: number; assessment_type?: AssessmentType; examPaperFile?: File | null }
   ): Promise<string> {
     const d = db()
-    const { examPaperFile, ...testData } = input
+    const { examPaperFile, assessment_type, ...testData } = input
+    const chosenType: AssessmentType = assessment_type || 'unit_test'
     let exam_paper_url: string | null = null
     let exam_paper_path: string | null = null
     let exam_paper_name: string | null = null
 
-    const { data, error } = await d.from('unit_tests').insert({
+    let insertPayload: any = {
       class_id: classId,
       created_at: new Date().toISOString(),
+      assessment_type: chosenType,
       ...testData
-    }).select().single()
-    if (error) throw new Error(error.message)
-    const testId = data.id as string
+    }
+
+    let insertRes = await d.from('unit_tests').insert(insertPayload).select().single()
+    if (insertRes.error && (insertRes.error.code === '42703' || insertRes.error.message?.includes('assessment_type'))) {
+      const fallbackTitle = chosenType === 'midterm' && !/(?:^|\s|\[)(?:mid-?term)(?:\]|\s|$)/i.test(testData.title)
+        ? `[Midterm] ${testData.title}`
+        : testData.title
+      const { assessment_type: _, ...rest } = insertPayload
+      insertRes = await d.from('unit_tests').insert({
+        ...rest,
+        title: fallbackTitle
+      }).select().single()
+    }
+
+    if (insertRes.error) throw new Error(insertRes.error.message)
+    const testId = insertRes.data.id as string
 
     if (examPaperFile) {
       try {
@@ -963,6 +1007,7 @@ export const supabaseApi: Api = {
     if (input.title !== undefined) updatePayload.title = input.title.trim()
     if (input.test_date !== undefined) updatePayload.test_date = input.test_date
     if (input.max_mark !== undefined) updatePayload.max_mark = Number(input.max_mark)
+    if (input.assessment_type !== undefined) updatePayload.assessment_type = input.assessment_type
 
     if (input.examPaperFile) {
       const sanitizedName = input.examPaperFile.name.replace(/[^a-zA-Z0-9._-]/g, '_')
@@ -992,7 +1037,17 @@ export const supabaseApi: Api = {
 
     if (Object.keys(updatePayload).length > 0) {
       const { error: updateErr } = await d.from('unit_tests').update(updatePayload).eq('id', id)
-      if (updateErr) throw new Error(updateErr.message)
+      if (updateErr) {
+        if ((updateErr.code === '42703' || updateErr.message?.includes('assessment_type')) && updatePayload.assessment_type) {
+          const { assessment_type: _, ...fallbackPayload } = updatePayload
+          if (Object.keys(fallbackPayload).length > 0) {
+            const { error: fErr } = await d.from('unit_tests').update(fallbackPayload).eq('id', id)
+            if (fErr) throw new Error(fErr.message)
+          }
+        } else {
+          throw new Error(updateErr.message)
+        }
+      }
       invalidateTeacherDashboardCache()
     }
   },
@@ -1269,21 +1324,46 @@ export const supabaseApi: Api = {
     // 2. Fetch all unit tests created for this student's class
     let classTests: any[] = []
     if (st?.class_id) {
-      const { data: tests, error: tErr } = await db()
+      const res = await db()
         .from('unit_tests')
-        .select('id, title, test_date, created_at, max_mark, subject_id, subjects!inner(id, name)')
+        .select('id, title, test_date, created_at, max_mark, assessment_type, subject_id, subjects!inner(id, name)')
         .eq('class_id', st.class_id)
         .order('test_date', { ascending: false })
-      if (tErr) throw new Error(tErr.message)
-      classTests = tests ?? []
+
+      if (res.error && (res.error.code === '42703' || res.error.message?.includes('assessment_type'))) {
+        const fallback = await db()
+          .from('unit_tests')
+          .select('id, title, test_date, created_at, max_mark, subject_id, subjects!inner(id, name)')
+          .eq('class_id', st.class_id)
+          .order('test_date', { ascending: false })
+        if (fallback.error) throw new Error(fallback.error.message)
+        classTests = fallback.data ?? []
+      } else if (res.error) {
+        throw new Error(res.error.message)
+      } else {
+        classTests = res.data ?? []
+      }
     }
 
     // 3. Fetch all scores recorded for this student
-    const { data: scoresData, error: sErr } = await db()
+    const sRes = await db()
       .from('scores')
-      .select('score, unit_test_id, unit_tests!inner(id, title, test_date, created_at, max_mark, subject_id, subjects!inner(id, name))')
+      .select('score, unit_test_id, unit_tests!inner(id, title, test_date, created_at, max_mark, assessment_type, subject_id, subjects!inner(id, name))')
       .eq('student_id', studentId)
-    if (sErr) throw new Error(sErr.message)
+
+    let scoresData: any[] = []
+    if (sRes.error && (sRes.error.code === '42703' || sRes.error.message?.includes('assessment_type'))) {
+      const fallback = await db()
+        .from('scores')
+        .select('score, unit_test_id, unit_tests!inner(id, title, test_date, created_at, max_mark, subject_id, subjects!inner(id, name))')
+        .eq('student_id', studentId)
+      if (fallback.error) throw new Error(fallback.error.message)
+      scoresData = fallback.data ?? []
+    } else if (sRes.error) {
+      throw new Error(sRes.error.message)
+    } else {
+      scoresData = sRes.data ?? []
+    }
 
     const scoreMap = new Map<string, number | null>()
     const extraTests: any[] = []
@@ -1318,11 +1398,12 @@ export const supabaseApi: Api = {
       return {
         test_id: t.id,
         created_at: t.created_at,
-        subject: t.subjects.name,
+        subject: t.subjects?.name ?? '—',
         title: t.title,
         test_date: t.test_date,
         score: userScore,
-        max_mark: Number(t.max_mark)
+        max_mark: Number(t.max_mark),
+        assessment_type: deriveAssessmentType(t)
       }
     })
   },
@@ -1585,7 +1666,13 @@ export const supabaseApi: Api = {
       this.listSubjects(),
       this.listProfiles().catch(() => [] as Profile[]),
       db().from('class_subject_teachers').select('id, class_id, subject_id, teacher_id, profiles!class_subject_teachers_teacher_id_fkey(id, full_name)'),
-      db().from('unit_tests').select('id, class_id, subject_id, created_by, title, test_date, max_mark, exam_paper_url, exam_paper_path, exam_paper_name, subjects(name), classes(name)'),
+      (async () => {
+        const res = await db().from('unit_tests').select('id, class_id, subject_id, created_by, title, test_date, max_mark, assessment_type, exam_paper_url, exam_paper_path, exam_paper_name, subjects(name), classes(name)')
+        if (res.error && (res.error.code === '42703' || res.error.message?.includes('assessment_type'))) {
+          return db().from('unit_tests').select('id, class_id, subject_id, created_by, title, test_date, max_mark, exam_paper_url, exam_paper_path, exam_paper_name, subjects(name), classes(name)')
+        }
+        return res
+      })(),
       db().from('scores').select('unit_test_id, student_id, score'),
       db().from('students').select('id, class_id')
     ])
@@ -1673,7 +1760,8 @@ export const supabaseApi: Api = {
         highest_score: highest,
         lowest_score: lowest,
         exam_paper_url: t.exam_paper_url ?? null,
-        exam_paper_name: t.exam_paper_name ?? null
+        exam_paper_name: t.exam_paper_name ?? null,
+        assessment_type: deriveAssessmentType(t)
       }
     })
 
@@ -1855,19 +1943,46 @@ export const supabaseApi: Api = {
     const hasConfigured = Object.values(allocs).some((arr) => Array.isArray(arr) && arr.length > 0)
 
     // 1. Fetch all unit tests for this class
-    const { data: tests, error: tErr } = await db()
+    let tests: any[] = []
+    const tRes = await db()
       .from('unit_tests')
-      .select('id, title, test_date, created_at, max_mark, subject_id, subjects!inner(id, name)')
+      .select('id, title, test_date, created_at, max_mark, assessment_type, subject_id, subjects!inner(id, name)')
       .eq('class_id', classId)
       .order('test_date', { ascending: false })
-    if (tErr) throw new Error(tErr.message)
+
+    if (tRes.error && (tRes.error.code === '42703' || tRes.error.message?.includes('assessment_type'))) {
+      const fallback = await db()
+        .from('unit_tests')
+        .select('id, title, test_date, created_at, max_mark, subject_id, subjects!inner(id, name)')
+        .eq('class_id', classId)
+        .order('test_date', { ascending: false })
+      if (fallback.error) throw new Error(fallback.error.message)
+      tests = fallback.data ?? []
+    } else if (tRes.error) {
+      throw new Error(tRes.error.message)
+    } else {
+      tests = tRes.data ?? []
+    }
 
     // 2. Fetch all scores recorded for these students
-    const { data: scoresData, error: sErr } = await db()
+    let scoresData: any[] = []
+    const sRes = await db()
       .from('scores')
-      .select('student_id, unit_test_id, score, unit_tests!inner(id, title, test_date, created_at, max_mark, subject_id, subjects!inner(id, name))')
+      .select('student_id, unit_test_id, score, unit_tests!inner(id, title, test_date, created_at, max_mark, assessment_type, subject_id, subjects!inner(id, name))')
       .in('student_id', ids)
-    if (sErr) throw new Error(sErr.message)
+
+    if (sRes.error && (sRes.error.code === '42703' || sRes.error.message?.includes('assessment_type'))) {
+      const fallback = await db()
+        .from('scores')
+        .select('student_id, unit_test_id, score, unit_tests!inner(id, title, test_date, created_at, max_mark, subject_id, subjects!inner(id, name))')
+        .in('student_id', ids)
+      if (fallback.error) throw new Error(fallback.error.message)
+      scoresData = fallback.data ?? []
+    } else if (sRes.error) {
+      throw new Error(sRes.error.message)
+    } else {
+      scoresData = sRes.data ?? []
+    }
 
     const scoreMap = new Map<string, number | null>()
     const extraTestsByStudent = new Map<string, any[]>()
@@ -1900,11 +2015,12 @@ export const supabaseApi: Api = {
         return {
           test_id: t.id,
           created_at: t.created_at,
-          subject: t.subjects.name,
+          subject: t.subjects?.name ?? '—',
           title: t.title,
           test_date: t.test_date,
           score: rawScore,
-          max_mark: Number(t.max_mark)
+          max_mark: Number(t.max_mark),
+          assessment_type: deriveAssessmentType(t)
         }
       })
     }
@@ -4110,6 +4226,41 @@ export const supabaseApi: Api = {
     const localPlans: LessonPlan[] = JSON.parse(localStorage.getItem('leera_lesson_plans') || '[]')
     const filtered = localPlans.filter((p) => p.id !== id)
     localStorage.setItem('leera_lesson_plans', JSON.stringify(filtered))
+  },
+
+  async getGeminiApiKey(): Promise<string> {
+    try {
+      const { data, error } = await db()
+        .from('app_settings')
+        .select('value')
+        .eq('key', 'gemini_api_key')
+        .maybeSingle()
+
+      if (!error && data?.value && typeof data.value === 'string' && data.value.trim()) {
+        const val = data.value.trim()
+        setLocalGeminiApiKey(val)
+        return val
+      }
+    } catch {
+      // app_settings table might not be created yet, fallback below
+    }
+
+    return getLocalGeminiApiKey()
+  },
+
+  async saveGeminiApiKey(key: string): Promise<void> {
+    const trimmed = key.trim()
+    setLocalGeminiApiKey(trimmed)
+
+    try {
+      await db().from('app_settings').upsert({
+        key: 'gemini_api_key',
+        value: trimmed,
+        updated_at: new Date().toISOString()
+      })
+    } catch (err) {
+      console.warn('Could not save gemini_api_key to app_settings table in database:', err)
+    }
   }
 }
 

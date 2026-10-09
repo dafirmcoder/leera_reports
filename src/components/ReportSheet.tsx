@@ -9,11 +9,14 @@ interface Props {
   teacherName: string
   rows: StudentReportRow[]
   filterNotice?: string
+  reportTitle?: string
 }
 
-export default function ReportSheet({ student, school, className, teacherName, rows, filterNotice }: Props) {
+export default function ReportSheet({ student, school, className, teacherName, rows, filterNotice, reportTitle }: Props) {
   const report = buildReport(rows)
   const printedDate = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })
+  const isAllMidterm = rows.length > 0 && rows.every((r) => r.assessment_type === 'midterm')
+  const titleText = reportTitle || (isAllMidterm ? 'MIDTERM EXAM REPORT' : 'END OF UNIT TEST REPORT')
 
   return (
     <div className="report-sheet">
@@ -26,7 +29,7 @@ export default function ReportSheet({ student, school, className, teacherName, r
         </div>
       </div>
 
-      <div className="report-band">END OF UNIT TEST REPORT</div>
+      <div className="report-band">{titleText}</div>
 
       <div className="report-info">
         <div><span className="lbl">Student:</span> {student.full_name}</div>

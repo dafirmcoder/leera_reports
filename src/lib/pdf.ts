@@ -44,6 +44,7 @@ export interface PdfContext {
   teacherName: string
   rows: StudentReportRow[]
   filterNotice?: string
+  reportTitle?: string
 }
 
 export async function generateStudentPdf(ctx: PdfContext): Promise<jsPDF> {
@@ -118,7 +119,10 @@ export async function generateStudentPdf(ctx: PdfContext): Promise<jsPDF> {
     headerBottom = Math.max(headerBottom, cambridgeLogoY + cambridgeLogoH)
   }
 
-  // "END OF UNIT TEST REPORT" band — placed strictly below header with 4mm spacing
+  // Title band ("MIDTERM EXAM REPORT" vs "END OF UNIT TEST REPORT")
+  const isAllMidterm = rows.length > 0 && rows.every((r) => r.assessment_type === 'midterm')
+  const titleBandText = ctx.reportTitle || (isAllMidterm ? 'MIDTERM EXAM REPORT' : 'END OF UNIT TEST REPORT')
+
   let y = headerBottom + 4
   const band2H = 7.5
   doc.setFillColor(31, 78, 95) // var(--teal) #1F4E5F
@@ -126,7 +130,7 @@ export async function generateStudentPdf(ctx: PdfContext): Promise<jsPDF> {
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(11)
   doc.setTextColor(255, 255, 255)
-  doc.text('END OF UNIT TEST REPORT', PAGE_W / 2, y + band2H / 2 + 0.3, { align: 'center', baseline: 'middle' })
+  doc.text(titleBandText, PAGE_W / 2, y + band2H / 2 + 0.3, { align: 'center', baseline: 'middle' })
   y += band2H + 4.5
 
   // ---- info block ------------------------------------------------------------
@@ -681,6 +685,7 @@ export interface BulkOptions {
   className: string
   teacherName: string
   filterNotice?: string
+  reportTitle?: string
   onProgress?: (done: number, total: number) => void
 }
 
@@ -696,6 +701,7 @@ export async function downloadClassReportsZip(opts: BulkOptions): Promise<void> 
       className: opts.className,
       teacherName: opts.teacherName,
       filterNotice: opts.filterNotice,
+      reportTitle: opts.reportTitle,
       rows: opts.rowsByStudent[st.id] ?? []
     })
     zip.file(reportFileName({ ...opts, student: st, rows: opts.rowsByStudent[st.id] ?? [] }), doc.output('arraybuffer'))
@@ -719,6 +725,7 @@ export async function saveClassReportsToFolder(opts: BulkOptions): Promise<void>
       className: opts.className,
       teacherName: opts.teacherName,
       filterNotice: opts.filterNotice,
+      reportTitle: opts.reportTitle,
       rows: opts.rowsByStudent[st.id] ?? []
     })
     const blob = doc.output('blob')

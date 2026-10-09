@@ -3,7 +3,8 @@ import {
   InstructionalStage,
   LessonContext,
   generateStageContent,
-  hasGeminiApiKey
+  hasGeminiApiKey,
+  ensureGeminiApiKey
 } from '../lib/gemini'
 
 interface AiStageButtonProps {
@@ -29,13 +30,14 @@ export const AiStageButton: React.FC<AiStageButtonProps> = ({
     e.preventDefault()
     e.stopPropagation()
 
-    if (!hasGeminiApiKey()) {
-      onPromptApiKey?.()
-      return
-    }
-
+    setLoading(true)
     try {
-      setLoading(true)
+      const activeKey = hasGeminiApiKey() ? 'cached' : await ensureGeminiApiKey()
+      if (!activeKey) {
+        onPromptApiKey?.()
+        return
+      }
+
       const context = getContext()
       const generated = await generateStageContent(stage, context)
       onGenerated(generated)

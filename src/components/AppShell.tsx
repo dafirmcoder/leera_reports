@@ -36,6 +36,11 @@ export default function AppShell() {
         // Auto refresh / register push subscription
         registerDevicePushSubscription(profile.id).catch(() => {})
       }
+
+      // Preload shared Gemini API key from database into localStorage cache
+      import('../lib/gemini').then(({ ensureGeminiApiKey }) => {
+        ensureGeminiApiKey().catch(() => {})
+      })
     }
     return () => {
       stopAttendanceReminderWatcher()

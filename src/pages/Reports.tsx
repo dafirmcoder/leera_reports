@@ -26,6 +26,7 @@ export default function Reports() {
   // Report Test Filter State
   // Default mode is 'since_date' starting on 2026-09-20 (or teacher selected start date)
   const [filterMode, setFilterMode] = useState<'since_date' | 'all' | 'custom'>('since_date')
+  const [assessmentType, setAssessmentType] = useState<'all' | 'unit_test' | 'midterm'>('all')
   const [startDate, setStartDate] = useState<string>(DEFAULT_REPORT_START_DATE)
   const [selectedTestIds, setSelectedTestIds] = useState<string[]>([])
   const [showTestChecklist, setShowTestChecklist] = useState(false)
@@ -47,18 +48,22 @@ export default function Reports() {
 
   // Compute tests matching active filter
   const matchingTests = useMemo(() => {
-    if (filterMode === 'all') return unitTests
+    let list = unitTests
+    if (assessmentType !== 'all') {
+      list = list.filter((t) => (t.assessment_type || 'unit_test') === assessmentType)
+    }
+    if (filterMode === 'all') return list
     if (filterMode === 'since_date') {
-      return unitTests.filter((t) => {
+      return list.filter((t) => {
         const cDate = t.created_at ? t.created_at.slice(0, 10) : t.test_date
         return cDate >= startDate
       })
     }
     if (filterMode === 'custom') {
-      return unitTests.filter((t) => selectedTestIds.includes(t.id))
+      return list.filter((t) => selectedTestIds.includes(t.id))
     }
-    return unitTests
-  }, [unitTests, filterMode, startDate, selectedTestIds])
+    return list
+  }, [unitTests, assessmentType, filterMode, startDate, selectedTestIds])
 
   // Group unit tests by subject for checklist view
   const testsBySubject = useMemo(() => {
@@ -75,18 +80,20 @@ export default function Reports() {
   const currentFilter: ReportFilter = useMemo(() => ({
     mode: filterMode,
     startDate,
-    selectedTestIds
-  }), [filterMode, startDate, selectedTestIds])
+    selectedTestIds,
+    assessmentType
+  }), [filterMode, startDate, selectedTestIds, assessmentType])
 
   const filterNotice = useMemo(() => {
+    const typeLabel = assessmentType === 'midterm' ? 'Midterm exams' : assessmentType === 'unit_test' ? 'Unit tests' : ''
     if (filterMode === 'since_date') {
-      return `Tests created on or after ${fmtDate(startDate)}`
+      return `${typeLabel ? typeLabel + ' ' : ''}created on or after ${fmtDate(startDate)}`
     }
     if (filterMode === 'custom') {
-      return `${selectedTestIds.length} selected tests`
+      return `${selectedTestIds.length} selected tests${typeLabel ? ` (${typeLabel})` : ''}`
     }
-    return undefined
-  }, [filterMode, startDate, selectedTestIds])
+    return typeLabel || undefined
+  }, [filterMode, startDate, selectedTestIds, assessmentType])
 
   const runBulk = async (mode: 'zip' | 'folder') => {
     if (!selectedClassId || !school) return
@@ -102,6 +109,12 @@ export default function Reports() {
         rowsByStudent[stId] = filterReportRows(rows, currentFilter)
       }
 
+      const reportTitle = assessmentType === 'midterm'
+        ? 'MIDTERM EXAM REPORT'
+        : assessmentType === 'unit_test'
+        ? 'END OF UNIT TEST REPORT'
+        : undefined
+
       const opts = {
         students,
         rowsByStudent,
@@ -109,6 +122,7 @@ export default function Reports() {
         className: cls?.name ?? 'Class',
         teacherName: cls?.homeroom_teacher_name ?? '',
         filterNotice,
+        reportTitle,
         onProgress: (done: number, total: number) => setProgress(`Building report ${done}/${total}…`)
       }
 
@@ -171,8 +185,11 @@ export default function Reports() {
     if (filterMode === 'custom' && selectedTestIds.length > 0) {
       params.set('tests', selectedTestIds.join(','))
     }
+    if (assessmentType !== 'all') {
+      params.set('type', assessmentType)
+    }
     return params.toString()
-  }, [filterMode, startDate, selectedTestIds])
+  }, [filterMode, startDate, selectedTestIds, assessmentType])
 
   return (
     <div className="page stack" style={{ gap: '20px' }}>
@@ -324,6 +341,46 @@ export default function Reports() {
             Past test results sent before 20/Sep/2026 can be excluded so results are not repeated.
             <strong> Subject and overall averages are dynamically calculated strictly for the shown tests.</strong>
           </p>
+
+          {/* Assessment Type Filter Toggle */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '12px', fontWeight: 700, color: '#334155' }}>Assessment Type:</span>
+            <div
+              className="btn-group"
+              style={{
+                display: 'inline-flex',
+                background: '#ffffff',
+                padding: '2px',
+                borderRadius: '8px',
+                border: '1px solid #cbd5e1'
+              }}
+            >
+              <button
+                type="button"
+                className={`btn btn-sm ${assessmentType === 'all' ? 'btn-primary' : 'btn-ghost'}`}
+                style={{ fontSize: '11.5px', padding: '3px 10px', borderRadius: '6px', fontWeight: 600 }}
+                onClick={() => setAssessmentType('all')}
+              >
+                All Assessments
+              </button>
+              <button
+                type="button"
+                className={`btn btn-sm ${assessmentType === 'unit_test' ? 'btn-primary' : 'btn-ghost'}`}
+                style={{ fontSize: '11.5px', padding: '3px 10px', borderRadius: '6px', fontWeight: 600 }}
+                onClick={() => setAssessmentType('unit_test')}
+              >
+                📘 End of Unit Tests Only
+              </button>
+              <button
+                type="button"
+                className={`btn btn-sm ${assessmentType === 'midterm' ? 'btn-primary' : 'btn-ghost'}`}
+                style={{ fontSize: '11.5px', padding: '3px 10px', borderRadius: '6px', fontWeight: 600 }}
+                onClick={() => setAssessmentType('midterm')}
+              >
+                📑 Midterm Exams Only
+              </button>
+            </div>
+          </div>
 
           {/* Filter Mode Buttons and Start Date Picker */}
           <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>

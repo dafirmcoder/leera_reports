@@ -35,6 +35,7 @@ import {
   generateAllStages,
   generateOfflineStages,
   hasGeminiApiKey,
+  ensureGeminiApiKey,
   type LessonContext
 } from '../lib/gemini'
 
@@ -572,10 +573,11 @@ export default function Planning() {
     try {
       const teacherFilter = hasExecutiveAccess ? undefined : { teacherId: profile?.id }
 
-      // Fetch Work Plans & Lesson Plans
+      // Fetch Work Plans & Lesson Plans & Gemini API Key from database
       const [wps, lps] = await Promise.all([
         api.listWorkPlans(teacherFilter),
-        api.listLessonPlans(teacherFilter)
+        api.listLessonPlans(teacherFilter),
+        api.getGeminiApiKey().catch(() => '')
       ])
 
       // Automatically mark any objective used in a lesson plan as COVERED in the work plan
@@ -1724,13 +1726,15 @@ export default function Planning() {
   const handleGenerateAllForSelectedLp = async () => {
     if (!selectedLessonPlan) return
 
-    if (!hasGeminiApiKey()) {
-      setShowGeminiApiKeyModal(true)
-      return
-    }
-
+    setGeneratingAllStages(true)
     try {
-      setGeneratingAllStages(true)
+      const activeKey = hasGeminiApiKey() ? 'cached' : await ensureGeminiApiKey()
+      if (!activeKey) {
+        setShowGeminiApiKeyModal(true)
+        setGeneratingAllStages(false)
+        return
+      }
+
       const context = getContextForSelectedLp()
       const all = await generateAllStages(context)
       const combined = formatActivityStages({
@@ -1764,13 +1768,15 @@ export default function Planning() {
 
   // Generate all 4 instructional stages and assessment ideas for the new lesson plan modal
   const handleGenerateAllForCreateLp = async () => {
-    if (!hasGeminiApiKey()) {
-      setShowGeminiApiKeyModal(true)
-      return
-    }
-
+    setGeneratingAllStages(true)
     try {
-      setGeneratingAllStages(true)
+      const activeKey = hasGeminiApiKey() ? 'cached' : await ensureGeminiApiKey()
+      if (!activeKey) {
+        setShowGeminiApiKeyModal(true)
+        setGeneratingAllStages(false)
+        return
+      }
+
       const context = getContextForCreateLp()
       const all = await generateAllStages(context)
       setCreateLpStarter(all.starter)
@@ -5710,6 +5716,14 @@ export default function Planning() {
       <GeminiApiKeyModal
         isOpen={showGeminiApiKeyModal}
         onClose={() => setShowGeminiApiKeyModal(false)}
+        onSaved={async (key) => {
+          try {
+            await api.saveGeminiApiKey(key)
+            setSuccess('Gemini AI key saved to database and system configuration.')
+          } catch (e) {
+            console.warn('Could not save gemini key to database:', e)
+          }
+        }}
         onUseTemplates={() => {
           if (showCreateLessonPlanModal) {
             handleGenerateTemplatesForCreateLp()

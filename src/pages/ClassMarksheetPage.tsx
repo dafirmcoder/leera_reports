@@ -70,6 +70,7 @@ export default function ClassMarksheetPage() {
   const [showAllocationModal, setShowAllocationModal] = useState(false)
   const [studentSearch, setStudentSearch] = useState('')
   const [displayMode, setDisplayMode] = useState<'pct' | 'raw' | 'both'>('pct')
+  const [assessmentFilter, setAssessmentFilter] = useState<'all' | 'unit_test' | 'midterm'>('all')
   const [exporting, setExporting] = useState<'excel' | 'csv' | null>(null)
 
   const isDirector = profile?.role === 'director'
@@ -137,6 +138,10 @@ export default function ClassMarksheetPage() {
 
   // Group tests by subject and combine with assignments
   const subjectsWithTests = useMemo(() => {
+    const filteredTests = assessmentFilter === 'all'
+      ? tests
+      : tests.filter((t) => (t.assessment_type || 'unit_test') === assessmentFilter)
+
     // Collect all unique subject IDs from assignments and tests
     const subjectMap = new Map<string, {
       subject_id: string
@@ -157,8 +162,8 @@ export default function ClassMarksheetPage() {
       }
     })
 
-    // Add from tests
-    tests.forEach((t) => {
+    // Add from filtered tests
+    filteredTests.forEach((t) => {
       const existing = subjectMap.get(t.subject_id)
       if (existing) {
         existing.tests.push(t)
@@ -640,6 +645,37 @@ export default function ClassMarksheetPage() {
         />
 
         <div className="row" style={{ alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+          {/* Assessment Type Filter */}
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--muted)' }}>Type:</span>
+            <div className="btn-group" style={{ display: 'inline-flex', background: '#f1f5f9', padding: '2px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+              <button
+                type="button"
+                className={`btn btn-sm ${assessmentFilter === 'all' ? 'btn-primary' : 'btn-ghost'}`}
+                style={{ padding: '3px 9px', fontSize: '11.5px', borderRadius: '6px', fontWeight: 600 }}
+                onClick={() => setAssessmentFilter('all')}
+              >
+                All
+              </button>
+              <button
+                type="button"
+                className={`btn btn-sm ${assessmentFilter === 'unit_test' ? 'btn-primary' : 'btn-ghost'}`}
+                style={{ padding: '3px 9px', fontSize: '11.5px', borderRadius: '6px', fontWeight: 600 }}
+                onClick={() => setAssessmentFilter('unit_test')}
+              >
+                📘 Unit Tests
+              </button>
+              <button
+                type="button"
+                className={`btn btn-sm ${assessmentFilter === 'midterm' ? 'btn-primary' : 'btn-ghost'}`}
+                style={{ padding: '3px 9px', fontSize: '11.5px', borderRadius: '6px', fontWeight: 600 }}
+                onClick={() => setAssessmentFilter('midterm')}
+              >
+                📑 Midterm
+              </button>
+            </div>
+          </div>
+
           {/* Display Mode Toggle */}
           <div className="display-mode-selector" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
             <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--muted)' }}>Marks View:</span>
@@ -820,28 +856,34 @@ export default function ClassMarksheetPage() {
                           No tests
                         </th>
                       ) : (
-                        sub.tests.map((t, idx) => (
-                          <th
-                            key={t.id}
-                            title={`${t.title} (${t.test_date}) • Max: ${t.max_mark}`}
-                            style={{
-                              padding: '6px 4px',
-                              fontSize: '11px',
-                              fontWeight: 700,
-                              minWidth: displayMode === 'both' ? '64px' : displayMode === 'raw' ? '54px' : '46px',
-                              color: '#334155',
-                              borderRight: '1px solid #e2e8f0',
-                              borderBottom: '2px solid #cbd5e1',
-                              background: '#f8fafc',
-                              cursor: 'help'
-                            }}
-                          >
-                            <div>{idx + 1}</div>
-                            {displayMode !== 'pct' && (
-                              <div style={{ fontSize: '9px', fontWeight: 600, color: '#64748b' }}>/{t.max_mark}</div>
-                            )}
-                          </th>
-                        ))
+                        sub.tests.map((t, idx) => {
+                          const isMid = t.assessment_type === 'midterm'
+                          return (
+                            <th
+                              key={t.id}
+                              title={`${isMid ? '[Midterm Exam] ' : '[Unit Test] '}${t.title} (${t.test_date}) • Max: ${t.max_mark}`}
+                              style={{
+                                padding: '6px 4px',
+                                fontSize: '11px',
+                                fontWeight: 700,
+                                minWidth: displayMode === 'both' ? '64px' : displayMode === 'raw' ? '54px' : '46px',
+                                color: isMid ? '#92400e' : '#334155',
+                                borderRight: '1px solid #e2e8f0',
+                                borderBottom: '2px solid #cbd5e1',
+                                background: isMid ? '#fffbeb' : '#f8fafc',
+                                cursor: 'help'
+                              }}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 2 }}>
+                                {isMid ? <span style={{ fontSize: '9px', background: '#fde68a', color: '#92400e', padding: '0 3px', borderRadius: 2, fontWeight: 800 }}>M</span> : null}
+                                <span>{isMid ? 'Mid' : idx + 1}</span>
+                              </div>
+                              {displayMode !== 'pct' && (
+                                <div style={{ fontSize: '9px', fontWeight: 600, color: isMid ? '#b45309' : '#64748b' }}>/{t.max_mark}</div>
+                              )}
+                            </th>
+                          )
+                        })
                       )}
                       {/* Subject Average column per student */}
                       <th

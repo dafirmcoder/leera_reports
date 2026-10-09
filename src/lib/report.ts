@@ -17,13 +17,19 @@ export function filterReportRows(
   rows: StudentReportRow[],
   filter: ReportFilter
 ): StudentReportRow[] {
+  let result = rows
+
+  if (filter.assessmentType && filter.assessmentType !== 'all') {
+    result = result.filter((r) => (r.assessment_type || 'unit_test') === filter.assessmentType)
+  }
+
   if (filter.mode === 'all') {
-    return rows
+    return result
   }
 
   if (filter.mode === 'since_date') {
     const cutoff = filter.startDate || DEFAULT_REPORT_START_DATE
-    return rows.filter((r) => {
+    return result.filter((r) => {
       const createdDate = r.created_at ? r.created_at.slice(0, 10) : r.test_date
       return createdDate >= cutoff
     })
@@ -31,10 +37,10 @@ export function filterReportRows(
 
   if (filter.mode === 'custom' && filter.selectedTestIds) {
     const selectedSet = new Set(filter.selectedTestIds)
-    return rows.filter((r) => r.test_id && selectedSet.has(r.test_id))
+    return result.filter((r) => r.test_id && selectedSet.has(r.test_id))
   }
 
-  return rows
+  return result
 }
 
 /**

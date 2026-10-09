@@ -7,7 +7,7 @@ import { useAuth } from '../context/AuthContext'
 import { can, hasRole, isCoordinatorOrLeadership } from '../lib/permissions'
 import ClassPicker from '../components/ClassPicker'
 import CoordinatorMarksOverview from '../components/CoordinatorMarksOverview'
-import type { Assignment, ClassMarksLock, UnitTest } from '../lib/types'
+import type { Assignment, ClassMarksLock, UnitTest, AssessmentType } from '../lib/types'
 
 export default function Marks() {
   const navigate = useNavigate()
@@ -18,12 +18,24 @@ export default function Marks() {
   const [assignments, setAssignments] = useState<Assignment[]>([])
   const [lockInfo, setLockInfo] = useState<ClassMarksLock | null>(null)
   const [selectedSubjectId, setSelectedSubjectId] = useState<string>('')
+  const [selectedAssessmentType, setSelectedAssessmentType] = useState<'all' | 'unit_test' | 'midterm'>('all')
   const [downloadingSubjectId, setDownloadingSubjectId] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(false)
-  const [form, setForm] = useState({ subject_id: '', title: '', test_date: today(), max_mark: '100' })
+  const [form, setForm] = useState<{ subject_id: string; title: string; test_date: string; max_mark: string; assessment_type: AssessmentType }>({
+    subject_id: '',
+    title: '',
+    test_date: today(),
+    max_mark: '100',
+    assessment_type: 'unit_test'
+  })
   const [examPaperFile, setExamPaperFile] = useState<File | null>(null)
   const [editingTest, setEditingTest] = useState<UnitTest | null>(null)
-  const [editForm, setEditForm] = useState({ title: '', test_date: today(), max_mark: '100' })
+  const [editForm, setEditForm] = useState<{ title: string; test_date: string; max_mark: string; assessment_type: AssessmentType }>({
+    title: '',
+    test_date: today(),
+    max_mark: '100',
+    assessment_type: 'unit_test'
+  })
   const [editExamFile, setEditExamFile] = useState<File | null>(null)
   const [editBusy, setEditBusy] = useState(false)
   const [error, setError] = useState('')
@@ -122,7 +134,8 @@ export default function Marks() {
     setEditForm({
       title: t.title,
       test_date: t.test_date,
-      max_mark: String(t.max_mark)
+      max_mark: String(t.max_mark),
+      assessment_type: t.assessment_type || 'unit_test'
     })
     setEditExamFile(null)
     setError('')
@@ -140,7 +153,7 @@ export default function Marks() {
       return
     }
     if (!editingTest || !editForm.title.trim()) {
-      setError('Unit / Topic name cannot be empty.')
+      setError('Title / Topic name cannot be empty.')
       return
     }
     setError('')
@@ -150,13 +163,14 @@ export default function Marks() {
         title: editForm.title.trim(),
         test_date: editForm.test_date,
         max_mark: Number(editForm.max_mark) || 100,
+        assessment_type: editForm.assessment_type,
         examPaperFile: editExamFile
       })
       setEditingTest(null)
       setEditExamFile(null)
       reload()
     } catch (err: any) {
-      setError(err.message || 'Failed to update unit test.')
+      setError(err.message || 'Failed to update test.')
     } finally {
       setEditBusy(false)
     }
@@ -245,9 +259,10 @@ export default function Marks() {
         title: form.title.trim(),
         test_date: form.test_date,
         max_mark: Number(form.max_mark) || 100,
+        assessment_type: form.assessment_type,
         examPaperFile
       })
-      setForm({ subject_id: '', title: '', test_date: today(), max_mark: '100' })
+      setForm({ subject_id: '', title: '', test_date: today(), max_mark: '100', assessment_type: 'unit_test' })
       setExamPaperFile(null)
       setShowForm(false)
       reload()
@@ -277,10 +292,15 @@ export default function Marks() {
     }
   }
 
-  // Filter tests if a subject is selected
-  const visibleTests = selectedSubjectId
-    ? tests.filter((t) => t.subject_id === selectedSubjectId)
-    : tests
+  const totalUnitTestsCount = tests.filter((t) => (t.assessment_type || 'unit_test') === 'unit_test').length
+  const totalMidtermsCount = tests.filter((t) => t.assessment_type === 'midterm').length
+
+  // Filter tests if a subject and/or assessment type is selected
+  const visibleTests = tests.filter((t) => {
+    if (selectedSubjectId && t.subject_id !== selectedSubjectId) return false
+    if (selectedAssessmentType !== 'all' && (t.assessment_type || 'unit_test') !== selectedAssessmentType) return false
+    return true
+  })
 
   // Group tests by subject, sorted subject-wise then topic-wise
   const subjectGroups = Array.from(new Set(visibleTests.map((t) => t.subject_id))).map((subjId) => {
@@ -472,23 +492,73 @@ export default function Marks() {
       )}
 
       <div className="row" style={{ alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
-        <div className="row" style={{ alignItems: 'center', gap: 8 }}>
-          <label style={{ fontSize: 13, fontWeight: 600 }}>Filter by Subject:</label>
-          <select
-            value={selectedSubjectId}
-            onChange={(e) => setSelectedSubjectId(e.target.value)}
-            style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid var(--line)', background: '#fff' }}
-          >
-            <option value="">All Subjects ({tests.length} tests)</option>
-            {subjects.map((s) => {
-              const count = tests.filter((t) => t.subject_id === s.id).length
-              return (
-                <option key={s.id} value={s.id}>
-                  {s.name} {count > 0 ? `(${count})` : ''}
-                </option>
-              )
-            })}
-          </select>
+        <div className="row" style={{ alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <div style={{ display: 'inline-flex', background: 'var(--bg-subtle, #f1f5f9)', padding: '3px', borderRadius: '8px', border: '1px solid var(--line, #e2e8f0)', gap: '2px' }}>
+            <button
+              type="button"
+              className="btn btn-small"
+              style={{
+                background: selectedAssessmentType === 'all' ? '#ffffff' : 'transparent',
+                color: selectedAssessmentType === 'all' ? 'var(--fg, #0f172a)' : 'var(--muted, #64748b)',
+                boxShadow: selectedAssessmentType === 'all' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                fontWeight: selectedAssessmentType === 'all' ? 700 : 500,
+                border: 'none',
+                cursor: 'pointer'
+              }}
+              onClick={() => setSelectedAssessmentType('all')}
+            >
+              All ({tests.length})
+            </button>
+            <button
+              type="button"
+              className="btn btn-small"
+              style={{
+                background: selectedAssessmentType === 'unit_test' ? '#ffffff' : 'transparent',
+                color: selectedAssessmentType === 'unit_test' ? '#0369a1' : 'var(--muted, #64748b)',
+                boxShadow: selectedAssessmentType === 'unit_test' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                fontWeight: selectedAssessmentType === 'unit_test' ? 700 : 500,
+                border: 'none',
+                cursor: 'pointer'
+              }}
+              onClick={() => setSelectedAssessmentType('unit_test')}
+            >
+              📘 Unit Tests ({totalUnitTestsCount})
+            </button>
+            <button
+              type="button"
+              className="btn btn-small"
+              style={{
+                background: selectedAssessmentType === 'midterm' ? '#ffffff' : 'transparent',
+                color: selectedAssessmentType === 'midterm' ? '#b45309' : 'var(--muted, #64748b)',
+                boxShadow: selectedAssessmentType === 'midterm' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                fontWeight: selectedAssessmentType === 'midterm' ? 700 : 500,
+                border: 'none',
+                cursor: 'pointer'
+              }}
+              onClick={() => setSelectedAssessmentType('midterm')}
+            >
+              📑 Midterm Exams ({totalMidtermsCount})
+            </button>
+          </div>
+
+          <div className="row" style={{ alignItems: 'center', gap: 6 }}>
+            <label style={{ fontSize: 13, fontWeight: 600 }}>Subject:</label>
+            <select
+              value={selectedSubjectId}
+              onChange={(e) => setSelectedSubjectId(e.target.value)}
+              style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid var(--line)', background: '#fff' }}
+            >
+              <option value="">All Subjects ({tests.length} tests)</option>
+              {subjects.map((s) => {
+                const count = tests.filter((t) => t.subject_id === s.id).length
+                return (
+                  <option key={s.id} value={s.id}>
+                    {s.name} {count > 0 ? `(${count})` : ''}
+                  </option>
+                )
+              })}
+            </select>
+          </div>
         </div>
 
         {selectedSubjectId && (
@@ -509,7 +579,59 @@ export default function Marks() {
 
       {showForm && canAdd && (
         <form onSubmit={submit} className="card stack">
-          <h3>New unit test</h3>
+          <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+            <h3 style={{ margin: 0 }}>
+              {form.assessment_type === 'midterm' ? 'New Midterm Exam' : 'New End of Unit Test'}
+            </h3>
+            <span style={{ fontSize: 12, color: 'var(--muted)' }}>Class: <strong>{className}</strong></span>
+          </div>
+
+          <div className="field">
+            <span style={{ fontWeight: 600, fontSize: 13 }}>Assessment Type *</span>
+            <div style={{ display: 'flex', gap: 12, marginTop: 4, flexWrap: 'wrap' }}>
+              <label style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                cursor: 'pointer',
+                padding: '8px 16px',
+                borderRadius: 8,
+                border: form.assessment_type === 'unit_test' ? '2px solid #0284c7' : '1px solid #cbd5e1',
+                background: form.assessment_type === 'unit_test' ? '#f0f9ff' : '#fff',
+                boxShadow: form.assessment_type === 'unit_test' ? '0 1px 3px rgba(2,132,199,0.15)' : 'none'
+              }}>
+                <input
+                  type="radio"
+                  name="create_assessment_type"
+                  value="unit_test"
+                  checked={form.assessment_type === 'unit_test'}
+                  onChange={() => setForm({ ...form, assessment_type: 'unit_test' })}
+                />
+                <span style={{ fontWeight: 600, color: '#0369a1' }}>📘 End of Unit Test</span>
+              </label>
+
+              <label style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                cursor: 'pointer',
+                padding: '8px 16px',
+                borderRadius: 8,
+                border: form.assessment_type === 'midterm' ? '2px solid #d97706' : '1px solid #cbd5e1',
+                background: form.assessment_type === 'midterm' ? '#fffbeb' : '#fff',
+                boxShadow: form.assessment_type === 'midterm' ? '0 1px 3px rgba(217,119,6,0.15)' : 'none'
+              }}>
+                <input
+                  type="radio"
+                  name="create_assessment_type"
+                  value="midterm"
+                  checked={form.assessment_type === 'midterm'}
+                  onChange={() => setForm({ ...form, assessment_type: 'midterm' })}
+                />
+                <span style={{ fontWeight: 700, color: '#92400e' }}>📑 Midterm Exam</span>
+              </label>
+            </div>
+          </div>
           <div className="grid4">
             <label className="field"><span>Subject *</span>
               <select required value={form.subject_id} onChange={(e) => setForm({ ...form, subject_id: e.target.value })}>
@@ -587,6 +709,15 @@ export default function Marks() {
               <div className="list-main">
                 <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
                   <strong>{t.title}</strong>
+                  {t.assessment_type === 'midterm' ? (
+                    <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: '#fef3c7', color: '#92400e', border: '1px solid #fde68a', fontWeight: 700 }}>
+                      📑 Midterm Exam
+                    </span>
+                  ) : (
+                    <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: '#e0f2fe', color: '#0369a1', border: '1px solid #bae6fd', fontWeight: 600 }}>
+                      📘 Unit Test
+                    </span>
+                  )}
                   {isTestLocked(t) ? (
                     <span style={{ fontSize: 11, padding: '1px 6px', borderRadius: 4, background: '#fee2e2', color: '#991b1b', fontWeight: 600 }}>
                       🔒 Locked
@@ -657,17 +788,63 @@ export default function Marks() {
         }}>
           <form onSubmit={submitEdit} className="card stack" style={{ maxWidth: 540, width: '100%', background: '#fff', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)' }}>
             <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-              <h3 style={{ margin: 0 }}>Update Unit Test — {editingTest.subject_name}</h3>
+              <h3 style={{ margin: 0 }}>
+                {editForm.assessment_type === 'midterm' ? 'Update Midterm Exam' : 'Update Unit Test'} — {editingTest.subject_name}
+              </h3>
               <button type="button" className="btn btn-ghost btn-small" onClick={cancelEditing}>✕</button>
             </div>
 
+            <div className="field">
+              <span style={{ fontWeight: 600, fontSize: 13 }}>Assessment Type *</span>
+              <div style={{ display: 'flex', gap: 12, marginTop: 4, flexWrap: 'wrap' }}>
+                <label style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  cursor: 'pointer',
+                  padding: '6px 14px',
+                  borderRadius: 6,
+                  border: editForm.assessment_type === 'unit_test' ? '2px solid #0284c7' : '1px solid #cbd5e1',
+                  background: editForm.assessment_type === 'unit_test' ? '#f0f9ff' : '#fff'
+                }}>
+                  <input
+                    type="radio"
+                    name="edit_assessment_type"
+                    value="unit_test"
+                    checked={editForm.assessment_type === 'unit_test'}
+                    onChange={() => setEditForm({ ...editForm, assessment_type: 'unit_test' })}
+                  />
+                  <span style={{ fontWeight: 600, color: '#0369a1' }}>📘 End of Unit Test</span>
+                </label>
+                <label style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  cursor: 'pointer',
+                  padding: '6px 14px',
+                  borderRadius: 6,
+                  border: editForm.assessment_type === 'midterm' ? '2px solid #d97706' : '1px solid #cbd5e1',
+                  background: editForm.assessment_type === 'midterm' ? '#fffbeb' : '#fff'
+                }}>
+                  <input
+                    type="radio"
+                    name="edit_assessment_type"
+                    value="midterm"
+                    checked={editForm.assessment_type === 'midterm'}
+                    onChange={() => setEditForm({ ...editForm, assessment_type: 'midterm' })}
+                  />
+                  <span style={{ fontWeight: 700, color: '#92400e' }}>📑 Midterm Exam</span>
+                </label>
+              </div>
+            </div>
+
             <label className="field">
-              <span>Unit / Topic Name *</span>
+              <span>{editForm.assessment_type === 'midterm' ? 'Exam Title / Topics *' : 'Unit / Topic Name *'}</span>
               <input
                 required
                 value={editForm.title}
                 onChange={(e) => setEditForm({ ...editForm, title: e.target.value })}
-                placeholder="e.g. Fractions & Decimals"
+                placeholder={editForm.assessment_type === 'midterm' ? 'e.g. Midterm Exam - Semester 1' : 'e.g. Fractions & Decimals'}
               />
             </label>
 

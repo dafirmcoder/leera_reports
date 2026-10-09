@@ -180,6 +180,7 @@ export interface UnitTestSummaryItem {
   lowest_score: number | null
   exam_paper_url?: string | null
   exam_paper_name?: string | null
+  assessment_type?: AssessmentType
 }
 
 export interface SubjectTestSummary {
@@ -294,6 +295,8 @@ export interface AdminDashboardData {
   classes_summary: AdminClassAttendanceSummary[]
 }
 
+export type AssessmentType = 'unit_test' | 'midterm'
+
 export interface UnitTest {
   id: string
   class_id: string
@@ -302,6 +305,7 @@ export interface UnitTest {
   title: string
   test_date: string // ISO yyyy-mm-dd
   max_mark: number
+  assessment_type?: AssessmentType
   exam_paper_url?: string | null
   exam_paper_path?: string | null
   exam_paper_name?: string | null
@@ -313,6 +317,7 @@ export interface UpdateUnitTestInput {
   title?: string
   test_date?: string
   max_mark?: number
+  assessment_type?: AssessmentType
   examPaperFile?: File | null
 }
 
@@ -344,12 +349,14 @@ export interface StudentReportRow {
   test_date: string
   score: number | null
   max_mark: number
+  assessment_type?: AssessmentType
 }
 
 export interface ReportFilter {
   mode: 'since_date' | 'all' | 'custom'
   startDate?: string // ISO 'YYYY-MM-DD', default '2026-09-20'
   selectedTestIds?: string[]
+  assessmentType?: 'all' | 'unit_test' | 'midterm'
 }
 
 export interface ReportSubject {
@@ -450,7 +457,7 @@ export interface Api {
 
   // unit tests
   listUnitTests(classId: string): Promise<UnitTest[]>
-  createUnitTest(classId: string, input: { subject_id: string; title: string; test_date: string; max_mark: number; examPaperFile?: File | null }): Promise<string>
+  createUnitTest(classId: string, input: { subject_id: string; title: string; test_date: string; max_mark: number; assessment_type?: AssessmentType; examPaperFile?: File | null }): Promise<string>
   updateUnitTest(id: string, input: UpdateUnitTestInput): Promise<void>
   deleteUnitTest(id: string): Promise<void>
   getUnitTestOverview(): Promise<EndOfUnitTestOverview>
@@ -553,6 +560,10 @@ export interface Api {
   // dashboard
   getTeacherDashboardData(teacherId: string, homeroomClassId?: string | null): Promise<TeacherDashboardData>
   getAdminDashboardData(): Promise<AdminDashboardData>
+
+  // gemini ai config
+  getGeminiApiKey(): Promise<string>
+  saveGeminiApiKey(key: string): Promise<void>
 }
 
 // ------------------------------------------------------------------
