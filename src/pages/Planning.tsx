@@ -529,6 +529,14 @@ export default function Planning() {
   const [generatingAllStages, setGeneratingAllStages] = useState(false)
   const [syncingAttendance, setSyncingAttendance] = useState(false)
 
+  // Lesson Plan Creation Progress & Loading Time Jar State
+  const [creatingLessonPlan, setCreatingLessonPlan] = useState(false)
+  const [createLpProgress, setCreateLpProgress] = useState<{ step: number; percent: number; text: string }>({
+    step: 0,
+    percent: 0,
+    text: ''
+  })
+
   // Teaching Assignments State
   const [assignments, setAssignments] = useState<Assignment[]>([])
 
@@ -1530,56 +1538,69 @@ export default function Planning() {
       }))
 
     try {
+      setCreatingLessonPlan(true)
+      setCreateLpProgress({ step: 1, percent: 15, text: 'Validating lesson slot and checking class attendance...' })
       setLoading(true)
-        const starter = createLpStarter || (form.get('activity_starter') as string) || ''
-        const exposition = createLpExposition || (form.get('activity_exposition') as string) || ''
-        const learnersActivity = createLpLearners || (form.get('activity_learners') as string) || ''
-        const plenary = createLpPlenary || (form.get('activity_plenary') as string) || ''
-        const combinedActivity = formatActivityStages({ starter, exposition, learnersActivity, plenary }) || (form.get('main_teaching_activity') as string) || ''
-        const assessmentIdeas = createLpAssessmentIdeas || (form.get('assessment_ideas') as string) || ''
 
-        // Auto-fetch attendance for class on this date if recorded
-        let initialBoys: number | null = null
-        let initialGirls: number | null = null
+      const starter = createLpStarter || (form.get('activity_starter') as string) || ''
+      const exposition = createLpExposition || (form.get('activity_exposition') as string) || ''
+      const learnersActivity = createLpLearners || (form.get('activity_learners') as string) || ''
+      const plenary = createLpPlenary || (form.get('activity_plenary') as string) || ''
+      const combinedActivity = formatActivityStages({ starter, exposition, learnersActivity, plenary }) || (form.get('main_teaching_activity') as string) || ''
+      const assessmentIdeas = createLpAssessmentIdeas || (form.get('assessment_ideas') as string) || ''
+
+      // Auto-fetch attendance for class on this date if recorded
+      let initialBoys: number | null = null
+      let initialGirls: number | null = null
+      try {
+        const att = await api.getClassAttendanceGenderCount(classId, lessonDate)
+        if (att.recorded) {
+          initialBoys = att.boysPresent
+          initialGirls = att.girlsPresent
+        }
+      } catch {
+        // silent fallback
+      }
+
+      setCreateLpProgress({ step: 2, percent: 45, text: 'Creating prospective Cambridge lesson plan...' })
+
+      const id = await api.createLessonPlan({
+        class_id: classId,
+        subject_id: subjectId,
+        schedule_slot_id: createLpSlotId || null,
+        lesson_date: lessonDate,
+        start_time: startTime || null,
+        end_time: endTime || null,
+        topic_title: topicTitle.trim(),
+        challenge_title: challengeTitle.trim() || '',
+        main_teaching_activity: combinedActivity,
+        assessment_ideas: assessmentIdeas,
+        resources: (form.get('resources') as string) || '',
+        boys_attendance: initialBoys,
+        girls_attendance: initialGirls,
+        objectives: chosenObjectives
+      })
+
+      if (chosenObjectives.length > 0) {
+        setCreateLpProgress({ step: 3, percent: 75, text: 'Attaching uncovered learning objectives & updating work plan...' })
         try {
-          const att = await api.getClassAttendanceGenderCount(classId, lessonDate)
-          if (att.recorded) {
-            initialBoys = att.boysPresent
-            initialGirls = att.girlsPresent
-          }
-        } catch {
-          // silent fallback
+          await api.markWorkPlanObjectivesCovered(
+            classId,
+            subjectId,
+            chosenObjectives.map((o) => o.code_snapshot),
+            lessonDate
+          )
+        } catch (e) {
+          console.warn('Auto-marking workplan objectives covered failed:', e)
         }
+      }
 
-        const id = await api.createLessonPlan({
-          class_id: classId,
-          subject_id: subjectId,
-          schedule_slot_id: createLpSlotId || null,
-          lesson_date: lessonDate,
-          start_time: startTime || null,
-          end_time: endTime || null,
-          topic_title: topicTitle.trim(),
-          challenge_title: challengeTitle.trim() || '',
-          main_teaching_activity: combinedActivity,
-          assessment_ideas: assessmentIdeas,
-          resources: (form.get('resources') as string) || '',
-          boys_attendance: initialBoys,
-          girls_attendance: initialGirls,
-          objectives: chosenObjectives
-        })
+      setCreateLpProgress({ step: 4, percent: 92, text: 'Syncing timetables and refreshing planning view...' })
+      await loadAllPlanningData()
+      await handleSelectLessonPlan(id)
 
-        if (chosenObjectives.length > 0) {
-          try {
-            await api.markWorkPlanObjectivesCovered(
-              classId,
-              subjectId,
-              chosenObjectives.map((o) => o.code_snapshot),
-              lessonDate
-            )
-          } catch (e) {
-            console.warn('Auto-marking workplan objectives covered failed:', e)
-          }
-        }
+      setCreateLpProgress({ step: 5, percent: 100, text: 'Lesson Plan created successfully!' })
+      await new Promise((res) => setTimeout(res, 350))
 
       setShowCreateLessonPlanModal(false)
       setCreateLpSlotId(null)
@@ -1592,11 +1613,10 @@ export default function Planning() {
       setCreateLpPlenary('')
       setCreateLpAssessmentIdeas('')
       setSuccess('Lesson Plan created successfully with attached uncovered objectives.')
-      await loadAllPlanningData()
-      await handleSelectLessonPlan(id)
     } catch (err: any) {
       setError(err?.message || 'Could not create lesson plan.')
     } finally {
+      setCreatingLessonPlan(false)
       setLoading(false)
     }
   }
@@ -4952,7 +4972,131 @@ export default function Planning() {
       {/* ===================================================================== */}
       {showCreateLessonPlanModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 16 }}>
-          <div className="card" style={{ width: '100%', maxWidth: 520, padding: 24, maxHeight: '90vh', overflowY: 'auto' }}>
+          <div className="card" style={{ width: '100%', maxWidth: 520, padding: 24, maxHeight: '90vh', overflowY: 'auto', position: 'relative' }}>
+            {/* Loading Time Jar Progress Overlay */}
+            {creatingLessonPlan && (
+              <div
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  background: 'rgba(255, 255, 255, 0.95)',
+                  backdropFilter: 'blur(4px)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  zIndex: 50,
+                  padding: 24,
+                  borderRadius: 12,
+                  textAlign: 'center'
+                }}
+              >
+                {/* Animated Time Jar Graphic */}
+                <div className="time-jar-container" style={{ position: 'relative', width: 84, height: 84, marginBottom: 12 }}>
+                  <svg
+                    width="84"
+                    height="84"
+                    viewBox="0 0 64 64"
+                    fill="none"
+                    xmlns="http://www.w3.org/2000/svg"
+                  >
+                    {/* Top & Bottom Brass Caps */}
+                    <rect x="14" y="6" width="36" height="5" rx="2.5" fill="#4C2570" />
+                    <rect x="14" y="53" width="36" height="5" rx="2.5" fill="#4C2570" />
+                    <line x1="18" y1="11" x2="18" y2="53" stroke="#7c3aed" strokeWidth="2" strokeLinecap="round" />
+                    <line x1="46" y1="11" x2="46" y2="53" stroke="#7c3aed" strokeWidth="2" strokeLinecap="round" />
+
+                    {/* Glass Hourglass Body */}
+                    <path
+                      d="M20 11C20 22 28 26 31 31C28 36 20 40 20 53H44C44 40 36 36 33 31C36 26 44 22 44 11H20Z"
+                      fill="rgba(124, 58, 237, 0.08)"
+                      stroke="#7c3aed"
+                      strokeWidth="1.75"
+                    />
+
+                    {/* Top Sand Level */}
+                    <path
+                      d="M22 17C22 23 29 27 32 30C35 27 42 23 42 17H22Z"
+                      fill="url(#sandGradientTop)"
+                    />
+
+                    {/* Neck Sand Particles Trickling */}
+                    <circle cx="32" cy="30" r="1.5" fill="#f59e0b" className="time-jar-particle" />
+                    <circle cx="32" cy="36" r="1.25" fill="#f59e0b" className="time-jar-particle-delay-1" />
+                    <circle cx="32" cy="42" r="1.25" fill="#f59e0b" className="time-jar-particle-delay-2" />
+
+                    {/* Bottom Sand Mound */}
+                    <path
+                      d="M22 53C22 47 28 44 32 44C36 44 42 47 42 53H22Z"
+                      fill="url(#sandGradientBottom)"
+                    />
+
+                    {/* Shimmer Sparkles */}
+                    <path
+                      d="M10 24L11.5 21L14.5 19.5L11.5 18L10 15L8.5 18L5.5 19.5L8.5 21L10 24Z"
+                      fill="#eab308"
+                      className="time-jar-sparkle-icon"
+                    />
+                    <path
+                      d="M54 40L55.2 38L57.2 37L55.2 36L54 34L52.8 36L50.8 37L52.8 38L54 40Z"
+                      fill="#a855f7"
+                      className="time-jar-sparkle-icon"
+                    />
+
+                    <defs>
+                      <linearGradient id="sandGradientTop" x1="22" y1="17" x2="42" y2="30" gradientUnits="userSpaceOnUse">
+                        <stop stopColor="#a855f7" />
+                        <stop offset="1" stopColor="#7c3aed" />
+                      </linearGradient>
+                      <linearGradient id="sandGradientBottom" x1="22" y1="44" x2="42" y2="53" gradientUnits="userSpaceOnUse">
+                        <stop stopColor="#fbbf24" />
+                        <stop offset="1" stopColor="#d97706" />
+                      </linearGradient>
+                    </defs>
+                  </svg>
+                </div>
+
+                <div className="chip" style={{ background: '#f3e8ff', color: '#6b21a8', fontWeight: 800, fontSize: 11, marginBottom: 8, padding: '3px 10px' }}>
+                  ⏳ CREATING LESSON PLAN
+                </div>
+
+                <h4 style={{ margin: '0 0 4px', fontSize: 16, fontWeight: 800, color: '#1e293b' }}>
+                  Creating Prospective Lesson Plan...
+                </h4>
+
+                <p style={{ margin: '0 0 16px', fontSize: 13, color: '#64748b', maxWidth: 360, minHeight: 20 }}>
+                  {createLpProgress.text || 'Preparing lesson activities and learning objectives...'}
+                </p>
+
+                {/* Animated Progress Bar */}
+                <div
+                  style={{
+                    width: '100%',
+                    maxWidth: 280,
+                    height: 8,
+                    background: '#e2e8f0',
+                    borderRadius: 999,
+                    overflow: 'hidden',
+                    marginBottom: 6
+                  }}
+                >
+                  <div
+                    style={{
+                      width: `${createLpProgress.percent}%`,
+                      height: '100%',
+                      background: 'linear-gradient(90deg, #7c3aed 0%, #4C2570 100%)',
+                      borderRadius: 999,
+                      transition: 'width 0.35s ease-out'
+                    }}
+                  />
+                </div>
+
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#4C2570' }}>
+                  {createLpProgress.percent}%
+                </div>
+              </div>
+            )}
+
             <h3 style={{ margin: '0 0 14px' }}>Create Prospective Lesson Plan</h3>
 
             {!isLeadership && availableClasses.length === 0 && (
@@ -5437,10 +5581,25 @@ export default function Planning() {
                     (!isLeadership && availableClasses.length === 0) ||
                     (matchingWorkPlanForLp && uncoveredLpObjectives.length === 0 && coveredLpObjectives.length > 0) ||
                     isPastLessonSlot(createLpDate, createLpStartTime, createLpEndTime) ||
-                    loading
+                    loading ||
+                    creatingLessonPlan
                   }
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    minWidth: 170,
+                    justifyContent: 'center'
+                  }}
                 >
-                  Create Lesson Plan
+                  {creatingLessonPlan ? (
+                    <>
+                      <span>⏳</span>
+                      <span>Creating ({createLpProgress.percent}%)...</span>
+                    </>
+                  ) : (
+                    'Create Lesson Plan'
+                  )}
                 </button>
               </div>
             </form>
