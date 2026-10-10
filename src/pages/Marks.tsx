@@ -988,161 +988,190 @@ export default function Marks() {
           left: 0,
           right: 0,
           bottom: 0,
-          backgroundColor: 'rgba(0,0,0,0.5)',
+          backgroundColor: 'rgba(15, 23, 42, 0.65)',
+          backdropFilter: 'blur(3px)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           zIndex: 1000,
-          padding: 16
+          padding: '12px'
         }}>
-          <form onSubmit={submitEdit} className="card stack" style={{ maxWidth: 540, width: '100%', background: '#fff', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)' }}>
-            <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-              <h3 style={{ margin: 0 }}>
-                {editForm.assessment_type === 'midterm' ? 'Update Midterm Exam' : 'Update Unit Test'} — {editingTest.subject_name}
+          <form
+            onSubmit={submitEdit}
+            className="card stack"
+            style={{
+              maxWidth: 480,
+              width: '100%',
+              maxHeight: 'calc(100vh - 32px)',
+              display: 'flex',
+              flexDirection: 'column',
+              background: '#fff',
+              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+              borderRadius: 12,
+              padding: 0,
+              overflow: 'hidden'
+            }}
+          >
+            {/* Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 18px', borderBottom: '1px solid #e2e8f0' }}>
+              <h3 style={{ margin: 0, fontSize: 16 }}>
+                Update Assessment — {editingTest.subject_name}
               </h3>
-              <button type="button" className="btn btn-ghost btn-small" onClick={cancelEditing}>✕</button>
+              <button type="button" className="btn btn-ghost btn-small" onClick={cancelEditing} style={{ padding: '2px 8px' }}>✕</button>
             </div>
 
-            <div className="field">
-              <span style={{ fontWeight: 600, fontSize: 13 }}>Assessment Type *</span>
-              {!canCreateLeadershipExams ? (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 4 }}>
-                  <span style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 6,
-                    padding: '6px 14px',
-                    borderRadius: 6,
-                    border: '1px solid #cbd5e1',
-                    background: '#f8fafc',
-                    fontWeight: 600,
-                    fontSize: 13
-                  }}>
-                    {editForm.assessment_type === 'midterm' ? '📑 Midterm Exam' : editForm.assessment_type === 'exam' ? '📝 School Exam' : '📘 End of Unit Test'}
+            {/* Scrollable Body */}
+            <div style={{ padding: '16px 18px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div className="field">
+                <span style={{ fontWeight: 600, fontSize: 12.5 }}>Assessment Type *</span>
+                {!canCreateLeadershipExams ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 4 }}>
+                    <span style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      padding: '4px 10px',
+                      borderRadius: 6,
+                      border: '1px solid #cbd5e1',
+                      background: '#f8fafc',
+                      fontWeight: 600,
+                      fontSize: 12.5
+                    }}>
+                      {editForm.assessment_type === 'exam' || editForm.assessment_type === 'midterm' ? '📝 School Exam' : '📘 End of Unit Test'}
+                    </span>
+                    <span style={{ fontSize: 11.5, color: 'var(--muted)' }}>(Managed by Leadership)</span>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
+                    <label style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      cursor: 'pointer',
+                      padding: '5px 12px',
+                      borderRadius: 6,
+                      border: editForm.assessment_type === 'unit_test' ? '2px solid #0284c7' : '1px solid #cbd5e1',
+                      background: editForm.assessment_type === 'unit_test' ? '#f0f9ff' : '#fff',
+                      fontSize: 12.5
+                    }}>
+                      <input
+                        type="radio"
+                        name="edit_assessment_type"
+                        value="unit_test"
+                        checked={editForm.assessment_type === 'unit_test'}
+                        onChange={() => setEditForm({ ...editForm, assessment_type: 'unit_test' })}
+                      />
+                      <span style={{ fontWeight: 600, color: '#0369a1' }}>📘 Unit Test</span>
+                    </label>
+                    <label style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      cursor: 'pointer',
+                      padding: '5px 12px',
+                      borderRadius: 6,
+                      border: editForm.assessment_type === 'exam' ? '2px solid #ea580c' : '1px solid #cbd5e1',
+                      background: editForm.assessment_type === 'exam' ? '#fff7ed' : '#fff',
+                      fontSize: 12.5
+                    }}>
+                      <input
+                        type="radio"
+                        name="edit_assessment_type"
+                        value="exam"
+                        checked={editForm.assessment_type === 'exam'}
+                        onChange={() => setEditForm({ ...editForm, assessment_type: 'exam' })}
+                      />
+                      <span style={{ fontWeight: 700, color: '#c2410c' }}>📝 School Exam</span>
+                    </label>
+                  </div>
+                )}
+              </div>
+
+              <label className="field">
+                <span style={{ fontSize: 12.5, fontWeight: 600 }}>{editForm.assessment_type === 'unit_test' ? 'Unit / Topic Name *' : 'Exam Title *'}</span>
+                <input
+                  required
+                  value={editForm.title}
+                  onChange={(e) => setEditForm({ ...editForm, title: e.target.value })}
+                  placeholder={editForm.assessment_type === 'exam' ? 'e.g. Midterm Examination, Final Term Exam' : 'e.g. Fractions & Decimals'}
+                  style={{ padding: '6px 10px', fontSize: 13 }}
+                />
+              </label>
+
+              <div className="grid2">
+                <label className="field">
+                  <span style={{ fontSize: 12.5, fontWeight: 600 }}>Date</span>
+                  <input
+                    type="date"
+                    value={editForm.test_date}
+                    onChange={(e) => setEditForm({ ...editForm, test_date: e.target.value })}
+                    style={{ padding: '6px 10px', fontSize: 13 }}
+                  />
+                </label>
+                <label className="field">
+                  <span style={{ fontSize: 12.5, fontWeight: 600 }}>Max Mark</span>
+                  <input
+                    type="number"
+                    min={1}
+                    value={editForm.max_mark}
+                    onChange={(e) => setEditForm({ ...editForm, max_mark: e.target.value })}
+                    style={{ padding: '6px 10px', fontSize: 13 }}
+                  />
+                </label>
+              </div>
+
+              <div className="field">
+                <span style={{ fontSize: 12.5, fontWeight: 600 }}>Exam Paper (PDF)</span>
+                {(editingTest.exam_paper_url || editingTest.exam_paper_path) ? (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 10px', background: '#f8fafc', borderRadius: 6, border: '1px solid #e2e8f0' }}>
+                    <span style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 260 }}>
+                      📄 <strong>{editingTest.exam_paper_name || 'Current Exam Paper'}</strong>
+                    </span>
+                    <button
+                      type="button"
+                      className="btn btn-small btn-ghost"
+                      onClick={() => openExamPaper(editingTest)}
+                      style={{ fontSize: 11.5, padding: '2px 8px' }}
+                    >
+                      Preview
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{ padding: '6px 10px', background: '#fffbeb', borderRadius: 6, border: '1px solid #fef3c7', fontSize: 12, color: '#92400e' }}>
+                    ⚠️ No exam paper attached yet.
+                  </div>
+                )}
+                <input
+                  type="file"
+                  accept="application/pdf,.pdf"
+                  style={{ marginTop: 4, fontSize: 12 }}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0] || null
+                    if (file && !file.name.toLowerCase().endsWith('.pdf')) {
+                      setError('Exam paper must be a PDF file (.pdf)')
+                      setEditExamFile(null)
+                      e.target.value = ''
+                      return
+                    }
+                    setError('')
+                    setEditExamFile(file)
+                  }}
+                />
+                {editExamFile && (
+                  <span style={{ fontSize: 11.5, color: 'var(--brand)', marginTop: 2 }}>
+                    Selected: {editExamFile.name} ({(editExamFile.size / 1024).toFixed(0)} KB)
                   </span>
-                  <span style={{ fontSize: 12, color: 'var(--muted)' }}>(Assessment type managed by Leadership)</span>
-                </div>
-              ) : (
-                <div style={{ display: 'flex', gap: 12, marginTop: 4, flexWrap: 'wrap' }}>
-                  <label style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    cursor: 'pointer',
-                    padding: '6px 14px',
-                    borderRadius: 6,
-                    border: editForm.assessment_type === 'unit_test' ? '2px solid #0284c7' : '1px solid #cbd5e1',
-                    background: editForm.assessment_type === 'unit_test' ? '#f0f9ff' : '#fff'
-                  }}>
-                    <input
-                      type="radio"
-                      name="edit_assessment_type"
-                      value="unit_test"
-                      checked={editForm.assessment_type === 'unit_test'}
-                      onChange={() => setEditForm({ ...editForm, assessment_type: 'unit_test' })}
-                    />
-                    <span style={{ fontWeight: 600, color: '#0369a1' }}>📘 End of Unit Test</span>
-                  </label>
-                  <label style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    cursor: 'pointer',
-                    padding: '6px 14px',
-                    borderRadius: 6,
-                    border: editForm.assessment_type === 'exam' ? '2px solid #ea580c' : '1px solid #cbd5e1',
-                    background: editForm.assessment_type === 'exam' ? '#fff7ed' : '#fff'
-                  }}>
-                    <input
-                      type="radio"
-                      name="edit_assessment_type"
-                      value="exam"
-                      checked={editForm.assessment_type === 'exam'}
-                      onChange={() => setEditForm({ ...editForm, assessment_type: 'exam' })}
-                    />
-                    <span style={{ fontWeight: 700, color: '#c2410c' }}>📝 School Exam</span>
-                  </label>
-                </div>
-              )}
+                )}
+              </div>
             </div>
 
-            <label className="field">
-              <span>{editForm.assessment_type === 'unit_test' ? 'Unit / Topic Name *' : 'Exam Title (Any name of your choice) *'}</span>
-              <input
-                required
-                value={editForm.title}
-                onChange={(e) => setEditForm({ ...editForm, title: e.target.value })}
-                placeholder={editForm.assessment_type === 'exam' ? 'e.g. Midterm Examination, Final Term Exam' : 'e.g. Fractions & Decimals'}
-              />
-            </label>
-
-            <div className="grid2">
-              <label className="field">
-                <span>Date</span>
-                <input
-                  type="date"
-                  value={editForm.test_date}
-                  onChange={(e) => setEditForm({ ...editForm, test_date: e.target.value })}
-                />
-              </label>
-              <label className="field">
-                <span>Max Mark</span>
-                <input
-                  type="number"
-                  min={1}
-                  value={editForm.max_mark}
-                  onChange={(e) => setEditForm({ ...editForm, max_mark: e.target.value })}
-                />
-              </label>
-            </div>
-
-            <div className="field">
-              <span>Exam Paper (PDF)</span>
-              {(editingTest.exam_paper_url || editingTest.exam_paper_path) ? (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: '#f8fafc', borderRadius: 6, border: '1px solid #e2e8f0', marginBottom: 6 }}>
-                  <span style={{ fontSize: 13 }}>📄 <strong>{editingTest.exam_paper_name || 'Current Exam Paper'}</strong></span>
-                  <button
-                    type="button"
-                    className="btn btn-small btn-ghost"
-                    onClick={() => openExamPaper(editingTest)}
-                    style={{ fontSize: 12, padding: '2px 8px' }}
-                  >
-                    Preview
-                  </button>
-                </div>
-              ) : (
-                <div style={{ padding: '8px 12px', background: '#fffbeb', borderRadius: 6, border: '1px solid #fef3c7', marginBottom: 6, fontSize: 13, color: '#92400e' }}>
-                  ⚠️ No exam paper attached yet. Upload sample exam paper PDF below:
-                </div>
-              )}
-              <input
-                type="file"
-                accept="application/pdf,.pdf"
-                onChange={(e) => {
-                  const file = e.target.files?.[0] || null
-                  if (file && !file.name.toLowerCase().endsWith('.pdf')) {
-                    setError('Exam paper must be a PDF file (.pdf)')
-                    setEditExamFile(null)
-                    e.target.value = ''
-                    return
-                  }
-                  setError('')
-                  setEditExamFile(file)
-                }}
-              />
-              {editExamFile && (
-                <span style={{ fontSize: 12, color: 'var(--brand)', marginTop: 4 }}>
-                  Selected: {editExamFile.name} ({(editExamFile.size / 1024).toFixed(0)} KB)
-                </span>
-              )}
-            </div>
-
-            <div className="row" style={{ justifyContent: 'flex-end', gap: 8, marginTop: 10 }}>
-              <button type="button" className="btn btn-ghost" onClick={cancelEditing} disabled={editBusy}>
+            {/* Sticky Accessible Footer */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '12px 18px', borderTop: '1px solid #e2e8f0', background: '#f8fafc' }}>
+              <button type="button" className="btn btn-ghost btn-small" onClick={cancelEditing} disabled={editBusy}>
                 Cancel
               </button>
-              <button type="submit" className="btn btn-primary" disabled={editBusy}>
-                {editBusy ? 'Saving Changes…' : 'Save Changes'}
+              <button type="submit" className="btn btn-primary btn-small" disabled={editBusy}>
+                {editBusy ? 'Saving…' : 'Save Changes'}
               </button>
             </div>
           </form>
@@ -1163,51 +1192,56 @@ export default function Marks() {
           alignItems: 'center',
           justifyContent: 'center',
           zIndex: 1100,
-          padding: 16
+          padding: '12px'
         }}>
           <form
             onSubmit={handleCreateSchoolExam}
             className="card stack"
             style={{
-              maxWidth: 520,
+              maxWidth: 460,
               width: '100%',
+              maxHeight: 'calc(100vh - 32px)',
+              display: 'flex',
+              flexDirection: 'column',
               background: '#ffffff',
               boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
-              borderRadius: 14,
-              padding: 24
+              borderRadius: 12,
+              padding: 0,
+              overflow: 'hidden'
             }}
           >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '1px solid #f1f5f9', paddingBottom: 14 }}>
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ fontSize: 22 }}>🏛️</span>
-                  <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: '#1e1b4b' }}>
-                    Create School-Wide Exam
-                  </h3>
-                </div>
-                <p style={{ margin: '4px 0 0', fontSize: 12.5, color: '#64748b' }}>
-                  One-button creation: Schedules this exam for <strong>all classes and all subjects</strong> in the school.
-                </p>
+            {/* Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #e2e8f0', padding: '12px 18px', background: '#f8fafc' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 18 }}>🏛️</span>
+                <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#1e1b4b' }}>
+                  Create School-Wide Exam
+                </h3>
               </div>
               <button
                 type="button"
                 className="btn btn-ghost btn-small"
                 onClick={() => setShowSchoolExamModal(false)}
                 disabled={creatingSchoolExam}
-                style={{ fontSize: 16, lineHeight: 1 }}
+                style={{ fontSize: 14, padding: '2px 8px' }}
               >
                 ✕
               </button>
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 8 }}>
+            {/* Scrollable Form Body */}
+            <div style={{ padding: '14px 18px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 11 }}>
+              <p style={{ margin: 0, fontSize: 12, color: '#64748b', lineHeight: 1.4 }}>
+                Schedules this exam across <strong>all classes and all subjects</strong> at once.
+              </p>
+
               <div className="field">
-                <span style={{ fontWeight: 600, fontSize: 13 }}>Semester *</span>
+                <span style={{ fontWeight: 600, fontSize: 12.5 }}>Semester *</span>
                 <select
                   required
                   value={schoolExamSemester}
                   onChange={(e) => setSchoolExamSemester(e.target.value)}
-                  style={{ width: '100%' }}
+                  style={{ width: '100%', padding: '6px 10px', fontSize: 13 }}
                 >
                   <option value="1">Semester 1</option>
                   <option value="2">Semester 2</option>
@@ -1215,66 +1249,63 @@ export default function Marks() {
               </div>
 
               <div className="field">
-                <span style={{ fontWeight: 600, fontSize: 13 }}>Exam Name (Any name of your choice) *</span>
+                <span style={{ fontWeight: 600, fontSize: 12.5 }}>Exam Name (Any name of your choice) *</span>
                 <input
                   type="text"
                   required
                   autoFocus
-                  placeholder="e.g. Midterm Examination, Final Term Exam, Mock Exam, Checkpoint"
+                  placeholder="e.g. Midterm Examination, Final Term Exam, Mock Exam"
                   value={schoolExamName}
                   onChange={(e) => setSchoolExamName(e.target.value)}
-                  style={{ width: '100%' }}
+                  style={{ width: '100%', padding: '6px 10px', fontSize: 13 }}
                 />
-                <span style={{ fontSize: 11.5, color: '#64748b', marginTop: 3 }}>
-                  Examples: Midterm Examination, Semester 1 Finals, Cambridge Mock Paper
-                </span>
               </div>
 
               <div className="grid2">
                 <div className="field">
-                  <span style={{ fontWeight: 600, fontSize: 13 }}>Exam Date</span>
+                  <span style={{ fontWeight: 600, fontSize: 12.5 }}>Exam Date</span>
                   <input
                     type="date"
                     value={schoolExamDate}
                     onChange={(e) => setSchoolExamDate(e.target.value)}
+                    style={{ padding: '6px 10px', fontSize: 13 }}
                   />
                 </div>
                 <div className="field">
-                  <span style={{ fontWeight: 600, fontSize: 13 }}>Default Max Mark</span>
+                  <span style={{ fontWeight: 600, fontSize: 12.5 }}>Default Max Mark</span>
                   <input
                     type="number"
                     min={1}
                     value={schoolExamMaxMark}
                     onChange={(e) => setSchoolExamMaxMark(e.target.value)}
+                    style={{ padding: '6px 10px', fontSize: 13 }}
                   />
-                  <span style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
-                    (Teachers can adjust per subject)
-                  </span>
                 </div>
               </div>
 
               <div style={{
-                background: '#f8fafc',
+                background: '#f1f5f9',
                 border: '1px solid #e2e8f0',
-                borderRadius: 8,
-                padding: '10px 14px',
-                fontSize: 12,
+                borderRadius: 6,
+                padding: '8px 10px',
+                fontSize: 11.5,
                 color: '#475569',
                 display: 'flex',
                 alignItems: 'flex-start',
-                gap: 8
+                gap: 6
               }}>
-                <span style={{ fontSize: 16, lineHeight: 1 }}>ℹ️</span>
+                <span style={{ fontSize: 14, lineHeight: 1 }}>ℹ️</span>
                 <span>
-                  <strong>Subject Teachers will:</strong> Upload their specific exam paper PDF and key in their subject's exact Out Of / Max Score before entering marks.
+                  <strong>Subject Teachers will:</strong> Upload their exam PDF and can adjust their subject's Max Mark before recording scores.
                 </span>
               </div>
             </div>
 
-            <div className="row" style={{ justifyContent: 'flex-end', gap: 10, marginTop: 14, borderTop: '1px solid #f1f5f9', paddingTop: 14 }}>
+            {/* Sticky Accessible Footer */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '12px 18px', borderTop: '1px solid #e2e8f0', background: '#f8fafc' }}>
               <button
                 type="button"
-                className="btn btn-ghost"
+                className="btn btn-ghost btn-small"
                 onClick={() => setShowSchoolExamModal(false)}
                 disabled={creatingSchoolExam}
               >
@@ -1282,7 +1313,7 @@ export default function Marks() {
               </button>
               <button
                 type="submit"
-                className="btn btn-primary"
+                className="btn btn-primary btn-small"
                 disabled={creatingSchoolExam || !schoolExamName.trim()}
                 style={{
                   background: 'linear-gradient(135deg, #4338ca 0%, #6366f1 100%)',
@@ -1290,7 +1321,7 @@ export default function Marks() {
                   fontWeight: 700
                 }}
               >
-                {creatingSchoolExam ? 'Creating for All Classes…' : 'Create for All Classes & Subjects'}
+                {creatingSchoolExam ? 'Creating…' : 'Create for All Classes'}
               </button>
             </div>
           </form>
