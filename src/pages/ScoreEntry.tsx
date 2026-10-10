@@ -17,8 +17,11 @@ export default function ScoreEntry() {
   const [rows, setRows] = useState<ScoreRow[]>([])
   const [lockInfo, setLockInfo] = useState<ClassMarksLock | null>(null)
   const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
   const [canEdit, setCanEdit] = useState(false)
   const [downloading, setDownloading] = useState(false)
+  const [uploadingPdf, setUploadingPdf] = useState(false)
+  const pdfInputRef = useRef<HTMLInputElement | null>(null)
   const [marksheetData, setMarksheetData] = useState<{
     students: Student[]
     subjectTests: UnitTest[]
@@ -143,8 +146,40 @@ export default function ScoreEntry() {
     (!test?.created_at || !lockInfo.locked_at || new Date(test.created_at).getTime() <= new Date(lockInfo.locked_at).getTime())
   )
 
+  const hasExamPaper = Boolean(test?.exam_paper_url || test?.exam_paper_path)
+
+  const handleUploadExamPdf = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (!file.name.toLowerCase().endsWith('.pdf')) {
+      setError('Exam paper must be a PDF file (.pdf)')
+      e.target.value = ''
+      return
+    }
+    setError('')
+    setSuccess('')
+    setUploadingPdf(true)
+    try {
+      await api.updateUnitTest(testId!, { examPaperFile: file })
+      // Re-fetch test details
+      const ts = await api.listUnitTests(classId!)
+      const updated = ts.find((t) => t.id === testId) ?? null
+      setTest(updated)
+      setSuccess('Exam paper PDF uploaded successfully! Mark entry is now enabled.')
+    } catch (err: any) {
+      setError(err.message || 'Failed to upload exam paper PDF.')
+    } finally {
+      setUploadingPdf(false)
+      if (pdfInputRef.current) pdfInputRef.current.value = ''
+    }
+  }
+
   const setScore = (studentId: string, value: string) => {
     if (!canEdit || isDirector) return
+    if (!hasExamPaper && !isCoordinatorLead) {
+      setError('A PDF copy of the exam paper must be uploaded before entering marks.')
+      return
+    }
     if (isCurrentTestLocked) {
       setError('Marks for this test are locked because reports have been downloaded. Only Curriculum Coordinators can make changes.')
       return
@@ -293,6 +328,112 @@ export default function ScoreEntry() {
       </div>
 
       {error && <div className="notice notice-error">{error}</div>}
+      {success && <div className="notice notice-success">{success}</div>}
+
+      {/* Hidden input for PDF upload */}
+      <input
+        type="file"
+        ref={pdfInputRef}
+        accept="application/pdf,.pdf"
+        style={{ display: 'none' }}
+        onChange={handleUploadExamPdf}
+      />
+
+      {/* Exam Paper PDF Mandatory Banner */}
+      {!hasExamPaper ? (
+        <div
+          style={{
+            background: '#fffbeb',
+            border: '1.5px solid #f59e0b',
+            borderRadius: '12px',
+            padding: '16px 20px',
+            marginBottom: '16px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: '14px',
+            boxShadow: '0 1px 3px rgba(245, 158, 11, 0.1)'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <span style={{ fontSize: '28px', lineHeight: 1 }}>⚠️</span>
+            <div>
+              <div style={{ fontWeight: 700, color: '#92400e', fontSize: '15px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span>Exam Paper PDF Upload Required</span>
+                <span style={{ fontSize: '11px', background: '#fef3c7', color: '#92400e', padding: '1px 8px', borderRadius: '10px', border: '1px solid #fde68a' }}>
+                  Mandatory
+                </span>
+              </div>
+              <div style={{ fontSize: '13px', color: '#b45309', marginTop: '2px' }}>
+                Teachers are required to upload a PDF copy of this {test?.assessment_type === 'midterm' ? 'Midterm Exam' : test?.assessment_type === 'exam' ? 'School Exam' : 'End of Unit Test'} paper before entering student marks.
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="btn btn-primary"
+            style={{
+              background: '#d97706',
+              borderColor: '#b45309',
+              fontWeight: 700,
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '8px'
+            }}
+            onClick={() => pdfInputRef.current?.click()}
+            disabled={uploadingPdf}
+          >
+            <span>📄</span>
+            <span>{uploadingPdf ? 'Uploading PDF…' : 'Upload Exam Paper PDF'}</span>
+          </button>
+        </div>
+      ) : (
+        <div
+          style={{
+            background: '#f0fdf4',
+            border: '1px solid #86efac',
+            borderRadius: '10px',
+            padding: '10px 16px',
+            marginBottom: '16px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: '10px'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ color: '#16a34a', fontSize: '18px' }}>✓</span>
+            <span style={{ fontSize: '13px', color: '#15803d', fontWeight: 600 }}>
+              Exam Paper Verified:
+            </span>
+            <span style={{ fontSize: '13px', color: '#166534', fontWeight: 500 }}>
+              {test?.exam_paper_name || 'Exam Paper (PDF attached)'}
+            </span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              style={{ background: '#ffffff', borderColor: '#bbf7d0', color: '#166534', fontWeight: 600 }}
+              onClick={() => openExamPaper(test)}
+            >
+              📄 View PDF
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              style={{ background: '#ffffff', borderColor: '#cbd5e1', color: '#475569' }}
+              onClick={() => pdfInputRef.current?.click()}
+              disabled={uploadingPdf}
+              title="Upload replacement or revised PDF"
+            >
+              🔄 {uploadingPdf ? 'Uploading…' : 'Replace PDF'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Marks Lock Banners */}
       {lockInfo?.is_locked && !isCoordinatorLead && isCurrentTestLocked && (
@@ -547,14 +688,17 @@ export default function ScoreEntry() {
                   <td className="num">
                     <input
                       type="number" min={0} max={maxMark} step="any" className="score-input"
-                      disabled={!canEdit}
+                      disabled={!canEdit || (!hasExamPaper && !isCoordinatorLead)}
                       title={
-                        isDirector
+                        !hasExamPaper && !isCoordinatorLead
+                          ? '⚠️ Upload Exam Paper PDF: You must upload the exam paper PDF before entering marks.'
+                          : isDirector
                           ? 'View only'
                           : isCurrentTestLocked
                           ? '🔒 Scores locked: Marks for this existing test cannot be edited after reports download.'
                           : undefined
                       }
+                      placeholder={!hasExamPaper && !isCoordinatorLead ? 'PDF required' : ''}
                       value={r.score === null ? '' : String(r.score)}
                       onChange={(e) => setScore(r.student_id, e.target.value)}
                       inputMode="decimal"
@@ -571,7 +715,9 @@ export default function ScoreEntry() {
             </tbody>
           </table>
           <p className="muted">
-            {canEdit
+            {!hasExamPaper && !isCoordinatorLead
+              ? '⚠️ Score entry is disabled until the exam paper PDF is uploaded above.'
+              : canEdit
               ? 'Scores save automatically as you type.'
               : lockInfo?.is_locked
               ? '🔒 Scores locked: The homeroom teacher has downloaded reports for this class. Only Curriculum Coordinators can make changes.'

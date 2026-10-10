@@ -70,7 +70,7 @@ export default function ClassMarksheetPage() {
   const [showAllocationModal, setShowAllocationModal] = useState(false)
   const [studentSearch, setStudentSearch] = useState('')
   const [displayMode, setDisplayMode] = useState<'pct' | 'raw' | 'both'>('pct')
-  const [assessmentFilter, setAssessmentFilter] = useState<'all' | 'unit_test' | 'midterm'>('all')
+  const [assessmentFilter, setAssessmentFilter] = useState<'all' | 'unit_test' | 'midterm' | 'exam'>('all')
   const [exporting, setExporting] = useState<'excel' | 'csv' | null>(null)
 
   const isDirector = profile?.role === 'director'
@@ -672,6 +672,14 @@ export default function ClassMarksheetPage() {
                 onClick={() => setAssessmentFilter('midterm')}
               >
                 📑 Midterm
+              </button>
+              <button
+                type="button"
+                className={`btn btn-sm ${assessmentFilter === 'exam' ? 'btn-primary' : 'btn-ghost'}`}
+                style={{ padding: '3px 9px', fontSize: '11.5px', borderRadius: '6px', fontWeight: 600 }}
+                onClick={() => setAssessmentFilter('exam')}
+              >
+                📝 School Exams
               </button>
             </div>
           </div>

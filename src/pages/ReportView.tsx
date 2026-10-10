@@ -25,9 +25,9 @@ export default function ReportView() {
     if (m === 'all' || m === 'custom' || m === 'since_date') return m
     return 'since_date'
   })
-  const [assessmentType, setAssessmentType] = useState<'all' | 'unit_test' | 'midterm'>(() => {
+  const [assessmentType, setAssessmentType] = useState<'all' | 'unit_test' | 'midterm' | 'exam'>(() => {
     const t = searchParams.get('type')
-    if (t === 'unit_test' || t === 'midterm' || t === 'all') return t
+    if (t === 'unit_test' || t === 'midterm' || t === 'exam' || t === 'all') return t
     return 'all'
   })
   const [startDate, setStartDate] = useState<string>(() => {
@@ -39,7 +39,12 @@ export default function ReportView() {
   })
 
   // Keep URL parameters in sync
-  const updateFilter = (newMode: 'since_date' | 'all' | 'custom', newDate: string, newTests = selectedTestIds, newType = assessmentType) => {
+  const updateFilter = (
+    newMode: 'since_date' | 'all' | 'custom',
+    newDate: string,
+    newTests = selectedTestIds,
+    newType: 'all' | 'unit_test' | 'midterm' | 'exam' = assessmentType
+  ) => {
     setFilterMode(newMode)
     setStartDate(newDate)
     setSelectedTestIds(newTests)
@@ -77,13 +82,15 @@ export default function ReportView() {
 
   const reportTitle = useMemo(() => {
     if (assessmentType === 'midterm') return 'MIDTERM EXAM REPORT'
+    if (assessmentType === 'exam') return 'EXAM REPORT'
     if (assessmentType === 'unit_test') return 'END OF UNIT TEST REPORT'
     if (filteredRows.length > 0 && filteredRows.every((r) => r.assessment_type === 'midterm')) return 'MIDTERM EXAM REPORT'
+    if (filteredRows.length > 0 && filteredRows.every((r) => r.assessment_type === 'exam')) return 'EXAM REPORT'
     return undefined
   }, [assessmentType, filteredRows])
 
   const filterNotice = useMemo(() => {
-    const typeLabel = assessmentType === 'midterm' ? 'Midterm exams' : assessmentType === 'unit_test' ? 'Unit tests' : ''
+    const typeLabel = assessmentType === 'midterm' ? 'Midterm exams' : assessmentType === 'exam' ? 'School exams' : assessmentType === 'unit_test' ? 'Unit tests' : ''
     if (filterMode === 'since_date') {
       return `${typeLabel ? typeLabel + ' ' : ''}created on or after ${fmtDate(startDate)}`
     }
@@ -230,6 +237,14 @@ export default function ReportView() {
                 onClick={() => updateFilter(filterMode, startDate, selectedTestIds, 'midterm')}
               >
                 📑 Midterm
+              </button>
+              <button
+                type="button"
+                className={`btn btn-sm ${assessmentType === 'exam' ? 'btn-primary' : 'btn-ghost'}`}
+                style={{ fontSize: '11.5px', padding: '3px 8px', borderRadius: '4px', fontWeight: 600 }}
+                onClick={() => updateFilter(filterMode, startDate, selectedTestIds, 'exam')}
+              >
+                📝 School Exams
               </button>
             </div>
 

@@ -16,11 +16,14 @@ import {
 } from './types'
 
 export function deriveAssessmentType(record: any): AssessmentType {
-  if (record?.assessment_type === 'midterm' || record?.assessment_type === 'unit_test') {
+  if (record?.assessment_type === 'midterm' || record?.assessment_type === 'unit_test' || record?.assessment_type === 'exam') {
     return record.assessment_type
   }
   if (record?.title && /(?:^|\s|\[)(?:mid-?term)(?:\]|\s|$)/i.test(record.title)) {
     return 'midterm'
+  }
+  if (record?.title && /(?:^|\s|\[)(?:exam|mock|terminal|checkpoint)(?:\]|\s|$)/i.test(record.title)) {
+    return 'exam'
   }
   return 'unit_test'
 }

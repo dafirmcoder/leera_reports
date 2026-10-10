@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '../lib/api'
 import { fmtDate } from '../lib/report'
@@ -18,9 +18,12 @@ export default function Marks() {
   const [assignments, setAssignments] = useState<Assignment[]>([])
   const [lockInfo, setLockInfo] = useState<ClassMarksLock | null>(null)
   const [selectedSubjectId, setSelectedSubjectId] = useState<string>('')
-  const [selectedAssessmentType, setSelectedAssessmentType] = useState<'all' | 'unit_test' | 'midterm'>('all')
+  const [selectedAssessmentType, setSelectedAssessmentType] = useState<'all' | 'unit_test' | 'midterm' | 'exam'>('all')
   const [downloadingSubjectId, setDownloadingSubjectId] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(false)
+  const [uploadingForTestId, setUploadingForTestId] = useState<string | null>(null)
+  const quickUploadRef = useRef<HTMLInputElement | null>(null)
+  const targetTestForUpload = useRef<UnitTest | null>(null)
   const [form, setForm] = useState<{ subject_id: string; title: string; test_date: string; max_mark: string; assessment_type: AssessmentType }>({
     subject_id: '',
     title: '',
@@ -114,7 +117,9 @@ export default function Marks() {
     ? subjects
     : subjects.filter((s) => myAssignments.some((a) => a.subject_id === s.id))
 
-  // Teachers should still be able to create new tests even if reports were downloaded
+  const canCreateLeadershipExams = isLeadership
+
+  // Teachers create End of Unit Tests; Leadership can create any exam (Unit Test, Midterm, School Exam)
   const canAdd = roleCanAdd && (
     isLeadership
     || isOwnClass
@@ -128,6 +133,34 @@ export default function Marks() {
     || test.created_by === profile?.id
   )
   const canDeleteTest = (test: UnitTest) => !isTestLocked(test) && can(profile?.role, 'deleteTests', profile?.additional_roles)
+
+  const triggerUploadForTest = (t: UnitTest) => {
+    targetTestForUpload.current = t
+    quickUploadRef.current?.click()
+  }
+
+  const handleQuickUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    const t = targetTestForUpload.current
+    if (!file || !t) return
+    if (!file.name.toLowerCase().endsWith('.pdf')) {
+      setError('Exam paper must be a PDF file (.pdf)')
+      e.target.value = ''
+      return
+    }
+    setError('')
+    setUploadingForTestId(t.id)
+    try {
+      await api.updateUnitTest(t.id, { examPaperFile: file })
+      reload()
+    } catch (err: any) {
+      setError(err.message || 'Failed to upload exam paper PDF.')
+    } finally {
+      setUploadingForTestId(null)
+      targetTestForUpload.current = null
+      if (quickUploadRef.current) quickUploadRef.current.value = ''
+    }
+  }
 
   const startEditing = (t: UnitTest) => {
     setEditingTest(t)
@@ -154,6 +187,10 @@ export default function Marks() {
     }
     if (!editingTest || !editForm.title.trim()) {
       setError('Title / Topic name cannot be empty.')
+      return
+    }
+    if (!canCreateLeadershipExams && editForm.assessment_type !== 'unit_test' && editingTest.assessment_type !== editForm.assessment_type) {
+      setError('Only the Head of School and Curriculum Coordinators can set or change assessment type to Midterm or School Exam. Teachers only create End of Unit Tests.')
       return
     }
     setError('')
@@ -244,11 +281,11 @@ export default function Marks() {
   const submit = async (e: FormEvent) => {
     e.preventDefault()
     if (!selectedClassId || !form.subject_id || !form.title.trim()) {
-      setError('Choose a subject and enter a unit/topic.')
+      setError('Choose a subject and enter an assessment title / unit topic.')
       return
     }
-    if (!examPaperFile) {
-      setError('Please upload the sample exam paper (PDF file).')
+    if (!canCreateLeadershipExams && form.assessment_type !== 'unit_test') {
+      setError('Teachers can only create End of Unit Tests. Midterm and other exams must be created by the Head of School or Curriculum Coordinators.')
       return
     }
     setError('')
@@ -260,7 +297,7 @@ export default function Marks() {
         test_date: form.test_date,
         max_mark: Number(form.max_mark) || 100,
         assessment_type: form.assessment_type,
-        examPaperFile
+        examPaperFile: examPaperFile || null
       })
       setForm({ subject_id: '', title: '', test_date: today(), max_mark: '100', assessment_type: 'unit_test' })
       setExamPaperFile(null)
@@ -294,6 +331,7 @@ export default function Marks() {
 
   const totalUnitTestsCount = tests.filter((t) => (t.assessment_type || 'unit_test') === 'unit_test').length
   const totalMidtermsCount = tests.filter((t) => t.assessment_type === 'midterm').length
+  const totalExamsCount = tests.filter((t) => t.assessment_type === 'exam').length
 
   // Filter tests if a subject and/or assessment type is selected
   const visibleTests = tests.filter((t) => {
@@ -539,6 +577,21 @@ export default function Marks() {
             >
               📑 Midterm Exams ({totalMidtermsCount})
             </button>
+            <button
+              type="button"
+              className="btn btn-small"
+              style={{
+                background: selectedAssessmentType === 'exam' ? '#ffffff' : 'transparent',
+                color: selectedAssessmentType === 'exam' ? '#c2410c' : 'var(--muted, #64748b)',
+                boxShadow: selectedAssessmentType === 'exam' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                fontWeight: selectedAssessmentType === 'exam' ? 700 : 500,
+                border: 'none',
+                cursor: 'pointer'
+              }}
+              onClick={() => setSelectedAssessmentType('exam')}
+            >
+              📝 School Exams ({totalExamsCount})
+            </button>
           </div>
 
           <div className="row" style={{ alignItems: 'center', gap: 6 }}>
@@ -577,60 +630,116 @@ export default function Marks() {
 
       {error && <div className="notice notice-error">{error}</div>}
 
+      {/* Hidden file input for quick exam paper upload */}
+      <input
+        type="file"
+        ref={quickUploadRef}
+        accept="application/pdf,.pdf"
+        style={{ display: 'none' }}
+        onChange={handleQuickUpload}
+      />
+
       {showForm && canAdd && (
         <form onSubmit={submit} className="card stack">
           <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
             <h3 style={{ margin: 0 }}>
-              {form.assessment_type === 'midterm' ? 'New Midterm Exam' : 'New End of Unit Test'}
+              {form.assessment_type === 'midterm'
+                ? 'New Midterm Exam'
+                : form.assessment_type === 'exam'
+                ? 'New School / Terminal Exam'
+                : 'New End of Unit Test'}
             </h3>
             <span style={{ fontSize: 12, color: 'var(--muted)' }}>Class: <strong>{className}</strong></span>
           </div>
 
           <div className="field">
             <span style={{ fontWeight: 600, fontSize: 13 }}>Assessment Type *</span>
-            <div style={{ display: 'flex', gap: 12, marginTop: 4, flexWrap: 'wrap' }}>
-              <label style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                cursor: 'pointer',
-                padding: '8px 16px',
-                borderRadius: 8,
-                border: form.assessment_type === 'unit_test' ? '2px solid #0284c7' : '1px solid #cbd5e1',
-                background: form.assessment_type === 'unit_test' ? '#f0f9ff' : '#fff',
-                boxShadow: form.assessment_type === 'unit_test' ? '0 1px 3px rgba(2,132,199,0.15)' : 'none'
-              }}>
-                <input
-                  type="radio"
-                  name="create_assessment_type"
-                  value="unit_test"
-                  checked={form.assessment_type === 'unit_test'}
-                  onChange={() => setForm({ ...form, assessment_type: 'unit_test' })}
-                />
-                <span style={{ fontWeight: 600, color: '#0369a1' }}>📘 End of Unit Test</span>
-              </label>
+            {!canCreateLeadershipExams ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 4, flexWrap: 'wrap' }}>
+                <div style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '8px 16px',
+                  borderRadius: 8,
+                  border: '2px solid #0284c7',
+                  background: '#f0f9ff',
+                  color: '#0369a1',
+                  fontWeight: 600,
+                  fontSize: 13
+                }}>
+                  📘 End of Unit Test
+                </div>
+                <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+                  (Teachers create End of Unit Tests. Midterm and school exams are scheduled by Leadership)
+                </span>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', gap: 12, marginTop: 4, flexWrap: 'wrap' }}>
+                <label style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  cursor: 'pointer',
+                  padding: '8px 16px',
+                  borderRadius: 8,
+                  border: form.assessment_type === 'unit_test' ? '2px solid #0284c7' : '1px solid #cbd5e1',
+                  background: form.assessment_type === 'unit_test' ? '#f0f9ff' : '#fff',
+                  boxShadow: form.assessment_type === 'unit_test' ? '0 1px 3px rgba(2,132,199,0.15)' : 'none'
+                }}>
+                  <input
+                    type="radio"
+                    name="create_assessment_type"
+                    value="unit_test"
+                    checked={form.assessment_type === 'unit_test'}
+                    onChange={() => setForm({ ...form, assessment_type: 'unit_test' })}
+                  />
+                  <span style={{ fontWeight: 600, color: '#0369a1' }}>📘 End of Unit Test</span>
+                </label>
 
-              <label style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                cursor: 'pointer',
-                padding: '8px 16px',
-                borderRadius: 8,
-                border: form.assessment_type === 'midterm' ? '2px solid #d97706' : '1px solid #cbd5e1',
-                background: form.assessment_type === 'midterm' ? '#fffbeb' : '#fff',
-                boxShadow: form.assessment_type === 'midterm' ? '0 1px 3px rgba(217,119,6,0.15)' : 'none'
-              }}>
-                <input
-                  type="radio"
-                  name="create_assessment_type"
-                  value="midterm"
-                  checked={form.assessment_type === 'midterm'}
-                  onChange={() => setForm({ ...form, assessment_type: 'midterm' })}
-                />
-                <span style={{ fontWeight: 700, color: '#92400e' }}>📑 Midterm Exam</span>
-              </label>
-            </div>
+                <label style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  cursor: 'pointer',
+                  padding: '8px 16px',
+                  borderRadius: 8,
+                  border: form.assessment_type === 'midterm' ? '2px solid #d97706' : '1px solid #cbd5e1',
+                  background: form.assessment_type === 'midterm' ? '#fffbeb' : '#fff',
+                  boxShadow: form.assessment_type === 'midterm' ? '0 1px 3px rgba(217,119,6,0.15)' : 'none'
+                }}>
+                  <input
+                    type="radio"
+                    name="create_assessment_type"
+                    value="midterm"
+                    checked={form.assessment_type === 'midterm'}
+                    onChange={() => setForm({ ...form, assessment_type: 'midterm' })}
+                  />
+                  <span style={{ fontWeight: 700, color: '#92400e' }}>📑 Midterm Exam</span>
+                </label>
+
+                <label style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  cursor: 'pointer',
+                  padding: '8px 16px',
+                  borderRadius: 8,
+                  border: form.assessment_type === 'exam' ? '2px solid #ea580c' : '1px solid #cbd5e1',
+                  background: form.assessment_type === 'exam' ? '#fff7ed' : '#fff',
+                  boxShadow: form.assessment_type === 'exam' ? '0 1px 3px rgba(234,88,12,0.15)' : 'none'
+                }}>
+                  <input
+                    type="radio"
+                    name="create_assessment_type"
+                    value="exam"
+                    checked={form.assessment_type === 'exam'}
+                    onChange={() => setForm({ ...form, assessment_type: 'exam' })}
+                  />
+                  <span style={{ fontWeight: 700, color: '#c2410c' }}>📝 School / Custom Exam</span>
+                </label>
+              </div>
+            )}
           </div>
           <div className="grid4">
             <label className="field"><span>Subject *</span>
@@ -639,8 +748,20 @@ export default function Marks() {
                 {mySubjects.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
             </label>
-            <label className="field"><span>Unit / Topic *</span>
-              <input required value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="e.g. Fractions & Decimals" />
+            <label className="field">
+              <span>{form.assessment_type === 'unit_test' ? 'Unit / Topic *' : 'Exam Title (Any name of your choice) *'}</span>
+              <input
+                required
+                value={form.title}
+                onChange={(e) => setForm({ ...form, title: e.target.value })}
+                placeholder={
+                  form.assessment_type === 'midterm'
+                    ? 'e.g. Midterm Exam - Semester 1'
+                    : form.assessment_type === 'exam'
+                    ? 'e.g. End of Term Exam, Mock Exam, Checkpoint Paper'
+                    : 'e.g. Fractions & Decimals'
+                }
+              />
             </label>
             <label className="field"><span>Date</span>
               <input type="date" value={form.test_date} onChange={(e) => setForm({ ...form, test_date: e.target.value })} />
@@ -650,11 +771,10 @@ export default function Marks() {
             </label>
           </div>
           <div className="field" style={{ maxWidth: 480 }}>
-            <span>Exam Paper (PDF) *</span>
+            <span>Exam Paper (PDF) <span style={{ fontSize: 11, color: 'var(--muted)', fontWeight: 400 }}>(Required before entering marks)</span></span>
             <input
               type="file"
               accept="application/pdf,.pdf"
-              required
               onChange={(e) => {
                 const file = e.target.files?.[0] || null
                 if (file && !file.name.toLowerCase().endsWith('.pdf')) {
@@ -674,7 +794,7 @@ export default function Marks() {
             )}
           </div>
           <div className="row">
-            <button className="btn btn-primary" disabled={busy}>{busy ? 'Creating…' : 'Create test & enter scores'}</button>
+            <button className="btn btn-primary" disabled={busy}>{busy ? 'Creating…' : 'Create assessment & enter scores'}</button>
           </div>
         </form>
       )}
@@ -713,6 +833,10 @@ export default function Marks() {
                     <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: '#fef3c7', color: '#92400e', border: '1px solid #fde68a', fontWeight: 700 }}>
                       📑 Midterm Exam
                     </span>
+                  ) : t.assessment_type === 'exam' ? (
+                    <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: '#ffedd5', color: '#c2410c', border: '1px solid #fed7aa', fontWeight: 700 }}>
+                      📝 School Exam
+                    </span>
                   ) : (
                     <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: '#e0f2fe', color: '#0369a1', border: '1px solid #bae6fd', fontWeight: 600 }}>
                       📘 Unit Test
@@ -732,22 +856,38 @@ export default function Marks() {
               </div>
               <div className="list-actions">
                 {(t.exam_paper_url || t.exam_paper_path) ? (
+                  <>
+                    <button
+                      type="button"
+                      className="btn btn-small"
+                      onClick={() => openExamPaper(t)}
+                      title={t.exam_paper_name ? `View ${t.exam_paper_name}` : 'View Exam Paper'}
+                      style={{ background: '#e0e7ff', color: '#3730a3', borderColor: '#c7d2fe' }}
+                    >
+                      📄 Exam Paper
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-small"
+                      onClick={() => triggerUploadForTest(t)}
+                      disabled={uploadingForTestId === t.id}
+                      title="Replace exam paper PDF"
+                      style={{ background: '#f8fafc', color: '#475569', borderColor: '#cbd5e1' }}
+                    >
+                      🔄 {uploadingForTestId === t.id ? 'Uploading…' : 'Replace PDF'}
+                    </button>
+                  </>
+                ) : (
                   <button
                     type="button"
                     className="btn btn-small"
-                    onClick={() => openExamPaper(t)}
-                    title={t.exam_paper_name ? `View ${t.exam_paper_name}` : 'View Exam Paper'}
-                    style={{ background: '#e0e7ff', color: '#3730a3', borderColor: '#c7d2fe' }}
+                    onClick={() => triggerUploadForTest(t)}
+                    disabled={uploadingForTestId === t.id}
+                    title="Teachers are required to upload a PDF copy of this exam paper before recording marks"
+                    style={{ background: '#fef3c7', color: '#92400e', borderColor: '#fde68a', fontWeight: 700 }}
                   >
-                    📄 Exam Paper
+                    ⚠️ {uploadingForTestId === t.id ? 'Uploading PDF…' : 'Upload PDF (Required)'}
                   </button>
-                ) : (
-                  <span
-                    style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, background: '#fef3c7', color: '#92400e', fontWeight: 600 }}
-                    title="No exam paper uploaded. Click Update to attach PDF."
-                  >
-                    ⚠️ Missing PDF
-                  </span>
                 )}{' '}
                 <Link
                   to={`/marks/${t.class_id}/${t.id}?view=${isTestLocked(t) ? 'marksheet' : 'entry'}`}
@@ -796,50 +936,88 @@ export default function Marks() {
 
             <div className="field">
               <span style={{ fontWeight: 600, fontSize: 13 }}>Assessment Type *</span>
-              <div style={{ display: 'flex', gap: 12, marginTop: 4, flexWrap: 'wrap' }}>
-                <label style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  cursor: 'pointer',
-                  padding: '6px 14px',
-                  borderRadius: 6,
-                  border: editForm.assessment_type === 'unit_test' ? '2px solid #0284c7' : '1px solid #cbd5e1',
-                  background: editForm.assessment_type === 'unit_test' ? '#f0f9ff' : '#fff'
-                }}>
-                  <input
-                    type="radio"
-                    name="edit_assessment_type"
-                    value="unit_test"
-                    checked={editForm.assessment_type === 'unit_test'}
-                    onChange={() => setEditForm({ ...editForm, assessment_type: 'unit_test' })}
-                  />
-                  <span style={{ fontWeight: 600, color: '#0369a1' }}>📘 End of Unit Test</span>
-                </label>
-                <label style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  cursor: 'pointer',
-                  padding: '6px 14px',
-                  borderRadius: 6,
-                  border: editForm.assessment_type === 'midterm' ? '2px solid #d97706' : '1px solid #cbd5e1',
-                  background: editForm.assessment_type === 'midterm' ? '#fffbeb' : '#fff'
-                }}>
-                  <input
-                    type="radio"
-                    name="edit_assessment_type"
-                    value="midterm"
-                    checked={editForm.assessment_type === 'midterm'}
-                    onChange={() => setEditForm({ ...editForm, assessment_type: 'midterm' })}
-                  />
-                  <span style={{ fontWeight: 700, color: '#92400e' }}>📑 Midterm Exam</span>
-                </label>
-              </div>
+              {!canCreateLeadershipExams ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 4 }}>
+                  <span style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    padding: '6px 14px',
+                    borderRadius: 6,
+                    border: '1px solid #cbd5e1',
+                    background: '#f8fafc',
+                    fontWeight: 600,
+                    fontSize: 13
+                  }}>
+                    {editForm.assessment_type === 'midterm' ? '📑 Midterm Exam' : editForm.assessment_type === 'exam' ? '📝 School Exam' : '📘 End of Unit Test'}
+                  </span>
+                  <span style={{ fontSize: 12, color: 'var(--muted)' }}>(Assessment type managed by Leadership)</span>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', gap: 12, marginTop: 4, flexWrap: 'wrap' }}>
+                  <label style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    cursor: 'pointer',
+                    padding: '6px 14px',
+                    borderRadius: 6,
+                    border: editForm.assessment_type === 'unit_test' ? '2px solid #0284c7' : '1px solid #cbd5e1',
+                    background: editForm.assessment_type === 'unit_test' ? '#f0f9ff' : '#fff'
+                  }}>
+                    <input
+                      type="radio"
+                      name="edit_assessment_type"
+                      value="unit_test"
+                      checked={editForm.assessment_type === 'unit_test'}
+                      onChange={() => setEditForm({ ...editForm, assessment_type: 'unit_test' })}
+                    />
+                    <span style={{ fontWeight: 600, color: '#0369a1' }}>📘 End of Unit Test</span>
+                  </label>
+                  <label style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    cursor: 'pointer',
+                    padding: '6px 14px',
+                    borderRadius: 6,
+                    border: editForm.assessment_type === 'midterm' ? '2px solid #d97706' : '1px solid #cbd5e1',
+                    background: editForm.assessment_type === 'midterm' ? '#fffbeb' : '#fff'
+                  }}>
+                    <input
+                      type="radio"
+                      name="edit_assessment_type"
+                      value="midterm"
+                      checked={editForm.assessment_type === 'midterm'}
+                      onChange={() => setEditForm({ ...editForm, assessment_type: 'midterm' })}
+                    />
+                    <span style={{ fontWeight: 700, color: '#92400e' }}>📑 Midterm Exam</span>
+                  </label>
+                  <label style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    cursor: 'pointer',
+                    padding: '6px 14px',
+                    borderRadius: 6,
+                    border: editForm.assessment_type === 'exam' ? '2px solid #ea580c' : '1px solid #cbd5e1',
+                    background: editForm.assessment_type === 'exam' ? '#fff7ed' : '#fff'
+                  }}>
+                    <input
+                      type="radio"
+                      name="edit_assessment_type"
+                      value="exam"
+                      checked={editForm.assessment_type === 'exam'}
+                      onChange={() => setEditForm({ ...editForm, assessment_type: 'exam' })}
+                    />
+                    <span style={{ fontWeight: 700, color: '#c2410c' }}>📝 School Exam</span>
+                  </label>
+                </div>
+              )}
             </div>
 
             <label className="field">
-              <span>{editForm.assessment_type === 'midterm' ? 'Exam Title / Topics *' : 'Unit / Topic Name *'}</span>
+              <span>{editForm.assessment_type === 'unit_test' ? 'Unit / Topic Name *' : 'Exam Title (Any name of your choice) *'}</span>
               <input
                 required
                 value={editForm.title}

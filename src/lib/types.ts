@@ -295,7 +295,7 @@ export interface AdminDashboardData {
   classes_summary: AdminClassAttendanceSummary[]
 }
 
-export type AssessmentType = 'unit_test' | 'midterm'
+export type AssessmentType = 'unit_test' | 'midterm' | 'exam'
 
 export interface UnitTest {
   id: string
@@ -356,7 +356,7 @@ export interface ReportFilter {
   mode: 'since_date' | 'all' | 'custom'
   startDate?: string // ISO 'YYYY-MM-DD', default '2026-09-20'
   selectedTestIds?: string[]
-  assessmentType?: 'all' | 'unit_test' | 'midterm'
+  assessmentType?: 'all' | 'unit_test' | 'midterm' | 'exam'
 }
 
 export interface ReportSubject {

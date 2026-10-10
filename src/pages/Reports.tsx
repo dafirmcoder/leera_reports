@@ -26,7 +26,7 @@ export default function Reports() {
   // Report Test Filter State
   // Default mode is 'since_date' starting on 2026-09-20 (or teacher selected start date)
   const [filterMode, setFilterMode] = useState<'since_date' | 'all' | 'custom'>('since_date')
-  const [assessmentType, setAssessmentType] = useState<'all' | 'unit_test' | 'midterm'>('all')
+  const [assessmentType, setAssessmentType] = useState<'all' | 'unit_test' | 'midterm' | 'exam'>('all')
   const [startDate, setStartDate] = useState<string>(DEFAULT_REPORT_START_DATE)
   const [selectedTestIds, setSelectedTestIds] = useState<string[]>([])
   const [showTestChecklist, setShowTestChecklist] = useState(false)
@@ -85,7 +85,7 @@ export default function Reports() {
   }), [filterMode, startDate, selectedTestIds, assessmentType])
 
   const filterNotice = useMemo(() => {
-    const typeLabel = assessmentType === 'midterm' ? 'Midterm exams' : assessmentType === 'unit_test' ? 'Unit tests' : ''
+    const typeLabel = assessmentType === 'midterm' ? 'Midterm exams' : assessmentType === 'exam' ? 'School exams' : assessmentType === 'unit_test' ? 'Unit tests' : ''
     if (filterMode === 'since_date') {
       return `${typeLabel ? typeLabel + ' ' : ''}created on or after ${fmtDate(startDate)}`
     }
@@ -378,6 +378,14 @@ export default function Reports() {
                 onClick={() => setAssessmentType('midterm')}
               >
                 📑 Midterm Exams Only
+              </button>
+              <button
+                type="button"
+                className={`btn btn-sm ${assessmentType === 'exam' ? 'btn-primary' : 'btn-ghost'}`}
+                style={{ fontSize: '11.5px', padding: '3px 10px', borderRadius: '6px', fontWeight: 600 }}
+                onClick={() => setAssessmentType('exam')}
+              >
+                📝 School Exams Only
               </button>
             </div>
           </div>
