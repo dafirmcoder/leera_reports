@@ -2,7 +2,6 @@ import { getSupabaseConfigError, supabase } from './supabase'
 import { formatAdmissionNo, formatRollNo, formatStudentNo, getYearLevelFromClassName, isYear10OrAbove } from './report'
 import { CAMBRIDGE_PRESEEDED_SCHEMES } from './cambridgeData'
 import { isCoordinatorOrLeadership } from './permissions'
-import { getGeminiApiKey as getLocalGeminiApiKey, setGeminiApiKey as setLocalGeminiApiKey } from './gemini'
 import {
   isLessonTimeInPast,
   type AdminClassAttendanceSummary, type AdminDashboardData, type Api, type Assignment, type AttendanceAggregatedSummary, type AttendanceRow, type AttendanceStatus, type AttendanceSummary,
@@ -4232,6 +4231,7 @@ export const supabaseApi: Api = {
   },
 
   async getGeminiApiKey(): Promise<string> {
+    const GEMINI_LOCAL_KEY = 'leera_gemini_api_key'
     try {
       const { data, error } = await db()
         .from('app_settings')
@@ -4241,28 +4241,49 @@ export const supabaseApi: Api = {
 
       if (!error && data?.value && typeof data.value === 'string' && data.value.trim()) {
         const val = data.value.trim()
-        setLocalGeminiApiKey(val)
+        try {
+          localStorage.setItem(GEMINI_LOCAL_KEY, val)
+        } catch {}
         return val
       }
     } catch {
       // app_settings table might not be created yet, fallback below
     }
 
-    return getLocalGeminiApiKey()
+    try {
+      return localStorage.getItem(GEMINI_LOCAL_KEY) || localStorage.getItem('gemini_api_key') || ''
+    } catch {
+      return ''
+    }
   },
 
-  async saveGeminiApiKey(key: string): Promise<void> {
+  async saveGeminiApiKey(key: string): Promise<{ inDb: boolean; error?: string }> {
+    const GEMINI_LOCAL_KEY = 'leera_gemini_api_key'
     const trimmed = key.trim()
-    setLocalGeminiApiKey(trimmed)
 
     try {
-      await db().from('app_settings').upsert({
+      if (trimmed) {
+        localStorage.setItem(GEMINI_LOCAL_KEY, trimmed)
+      } else {
+        localStorage.removeItem(GEMINI_LOCAL_KEY)
+        localStorage.removeItem('gemini_api_key')
+      }
+    } catch {}
+
+    try {
+      const { error } = await db().from('app_settings').upsert({
         key: 'gemini_api_key',
         value: trimmed,
         updated_at: new Date().toISOString()
       })
-    } catch (err) {
-      console.warn('Could not save gemini_api_key to app_settings table in database:', err)
+      if (error) {
+        console.warn('Could not save gemini_api_key to app_settings table in database:', error.message)
+        return { inDb: false, error: error.message }
+      }
+      return { inDb: true }
+    } catch (err: any) {
+      console.warn('Exception saving gemini_api_key to app_settings table in database:', err)
+      return { inDb: false, error: err?.message || 'Database error' }
     }
   }
 }

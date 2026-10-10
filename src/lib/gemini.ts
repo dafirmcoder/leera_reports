@@ -327,8 +327,9 @@ async function callGeminiApi(
           continue
         }
 
-        // If auth error, throw immediately with clear message
+        // If auth error, clear stale key so it does not block future generations
         if (response.status === 400 || response.status === 401 || response.status === 403) {
+          clearGeminiApiKey()
           throw new Error(`Gemini API Authentication Error (${response.status}): ${errMsg}`)
         }
 

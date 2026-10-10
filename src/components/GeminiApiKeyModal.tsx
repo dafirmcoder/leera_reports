@@ -15,6 +15,44 @@ interface GeminiApiKeyModalProps {
   onUseTemplates?: () => void
 }
 
+const SUPABASE_APP_SETTINGS_SQL = `-- Run this in your Supabase Dashboard -> SQL Editor:
+CREATE TABLE IF NOT EXISTS public.app_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE public.app_settings ENABLE ROW LEVEL SECURITY;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'app_settings' AND policyname = 'Allow read app_settings'
+  ) THEN
+    CREATE POLICY "Allow read app_settings" ON public.app_settings FOR SELECT USING (true);
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'app_settings' AND policyname = 'Allow insert app_settings'
+  ) THEN
+    CREATE POLICY "Allow insert app_settings" ON public.app_settings FOR INSERT WITH CHECK (true);
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'app_settings' AND policyname = 'Allow update app_settings'
+  ) THEN
+    CREATE POLICY "Allow update app_settings" ON public.app_settings FOR UPDATE USING (true);
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'app_settings' AND policyname = 'Allow delete app_settings'
+  ) THEN
+    CREATE POLICY "Allow delete app_settings" ON public.app_settings FOR DELETE USING (true);
+  END IF;
+EXCEPTION
+  WHEN OTHERS THEN NULL;
+END $$;`
+
 export const GeminiApiKeyModal: React.FC<GeminiApiKeyModalProps> = ({
   isOpen,
   onClose,
@@ -25,6 +63,9 @@ export const GeminiApiKeyModal: React.FC<GeminiApiKeyModalProps> = ({
   const [showKey, setShowKey] = useState(false)
   const [statusMsg, setStatusMsg] = useState<{ text: string; isError?: boolean; isSuccess?: boolean } | null>(null)
   const [testing, setTesting] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [dbMissing, setDbMissing] = useState(false)
+  const [copiedSql, setCopiedSql] = useState(false)
 
   useEffect(() => {
     if (isOpen) {
@@ -38,6 +79,9 @@ export const GeminiApiKeyModal: React.FC<GeminiApiKeyModalProps> = ({
       }
       setStatusMsg(null)
       setTesting(false)
+      setSaving(false)
+      setDbMissing(false)
+      setCopiedSql(false)
     }
   }, [isOpen])
 
@@ -74,13 +118,14 @@ export const GeminiApiKeyModal: React.FC<GeminiApiKeyModalProps> = ({
     }
   }
 
-  const handleSave = () => {
+  const handleSave = async () => {
     const trimmed = apiKey.trim()
     if (!trimmed) {
       clearGeminiApiKey()
-      import('../lib/api').then(({ api }) => {
-        api.saveGeminiApiKey('').catch(() => {})
-      })
+      try {
+        const { api } = await import('../lib/api')
+        await api.saveGeminiApiKey('')
+      } catch {}
       setStatusMsg({ text: 'API key cleared.', isSuccess: true })
       onSaved?.('')
       setTimeout(() => onClose(), 600)
@@ -95,23 +140,60 @@ export const GeminiApiKeyModal: React.FC<GeminiApiKeyModalProps> = ({
       return
     }
 
-    setGeminiApiKey(trimmed)
-    import('../lib/api').then(({ api }) => {
-      api.saveGeminiApiKey(trimmed).catch(() => {})
-    })
-    setStatusMsg({ text: 'API key saved to system and database successfully!', isSuccess: true })
-    onSaved?.(trimmed)
-    setTimeout(() => onClose(), 600)
+    setSaving(true)
+    setStatusMsg({ text: 'Saving Gemini API key to database...' })
+
+    try {
+      setGeminiApiKey(trimmed)
+      const { api } = await import('../lib/api')
+      const res = await api.saveGeminiApiKey(trimmed)
+
+      if (res.inDb) {
+        setDbMissing(false)
+        setStatusMsg({
+          text: 'API key saved to database successfully! All teachers and users can now use Gemini AI without being prompted for a key.',
+          isSuccess: true
+        })
+        onSaved?.(trimmed)
+        setTimeout(() => onClose(), 1200)
+      } else {
+        setDbMissing(true)
+        setStatusMsg({
+          text: 'Key saved for this browser, but database saving failed because table "app_settings" does not exist in Supabase yet. Run the SQL below in Supabase once to share it with ALL users.',
+          isError: true
+        })
+        onSaved?.(trimmed)
+      }
+    } catch (err: any) {
+      setStatusMsg({
+        text: err?.message || 'Error saving API key to database.',
+        isError: true
+      })
+    } finally {
+      setSaving(false)
+    }
   }
 
-  const handleClear = () => {
+  const handleClear = async () => {
     clearGeminiApiKey()
-    import('../lib/api').then(({ api }) => {
-      api.saveGeminiApiKey('').catch(() => {})
-    })
+    try {
+      const { api } = await import('../lib/api')
+      await api.saveGeminiApiKey('')
+    } catch {}
     setApiKeyInput('')
     setStatusMsg({ text: 'API key removed.', isSuccess: true })
+    setDbMissing(false)
     onSaved?.('')
+  }
+
+  const copySqlToClipboard = () => {
+    try {
+      navigator.clipboard.writeText(SUPABASE_APP_SETTINGS_SQL)
+      setCopiedSql(true)
+      setTimeout(() => setCopiedSql(false), 2500)
+    } catch {
+      alert('Unable to copy automatically. Please select the SQL text and copy manually.')
+    }
   }
 
   const handleTriggerTemplates = () => {
@@ -143,9 +225,10 @@ export const GeminiApiKeyModal: React.FC<GeminiApiKeyModalProps> = ({
           backgroundColor: '#ffffff',
           borderRadius: 12,
           boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.2), 0 10px 10px -5px rgba(0, 0, 0, 0.1)',
-          maxWidth: 520,
+          maxWidth: 540,
           width: '100%',
-          overflow: 'hidden',
+          maxHeight: '90vh',
+          overflowY: 'auto',
           border: '1px solid #e2e8f0'
         }}
       >
@@ -213,7 +296,7 @@ export const GeminiApiKeyModal: React.FC<GeminiApiKeyModalProps> = ({
                   border: '1.5px solid #cbd5e1',
                   borderRadius: 6
                 }}
-                placeholder="AIzaSy..."
+                placeholder="AIzaSy... or AQ.Ab..."
                 value={apiKey}
                 onChange={(e) => setApiKeyInput(e.target.value)}
                 autoFocus
@@ -257,6 +340,75 @@ export const GeminiApiKeyModal: React.FC<GeminiApiKeyModalProps> = ({
             </div>
           )}
 
+          {/* Database Setup Helper if app_settings is not in Supabase */}
+          {dbMissing && (
+            <div
+              style={{
+                background: '#fffbeb',
+                border: '1.5px solid #fde68a',
+                borderRadius: 8,
+                padding: '14px 16px',
+                marginBottom: 16,
+                fontSize: 12,
+                color: '#92400e'
+              }}
+            >
+              <div style={{ fontWeight: 700, marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6, color: '#b45309', fontSize: 12.5 }}>
+                <span>⚡ 1-Step Setup to Share This Key with ALL Users</span>
+              </div>
+              <p style={{ margin: '0 0 8px', lineHeight: 1.4, color: '#78350f' }}>
+                Copy and run this query once in your <strong>Supabase Dashboard &rarr; SQL Editor</strong>. After running it, all teachers on all devices will share this Gemini key automatically:
+              </p>
+              <pre
+                style={{
+                  background: '#0f172a',
+                  color: '#e2e8f0',
+                  padding: '10px 12px',
+                  borderRadius: 6,
+                  fontSize: 11,
+                  fontFamily: 'monospace',
+                  overflowX: 'auto',
+                  maxHeight: '120px',
+                  margin: '0 0 10px',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-all'
+                }}
+              >
+                {SUPABASE_APP_SETTINGS_SQL}
+              </pre>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  style={{
+                    fontSize: 11.5,
+                    fontWeight: 700,
+                    background: '#ffffff',
+                    color: '#b45309',
+                    borderColor: '#fcd34d'
+                  }}
+                  onClick={copySqlToClipboard}
+                >
+                  {copiedSql ? '✓ Copied SQL to Clipboard!' : '📋 Copy SQL to Clipboard'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  style={{
+                    fontSize: 11.5,
+                    fontWeight: 700,
+                    background: '#b45309',
+                    borderColor: '#92400e'
+                  }}
+                  onClick={handleSave}
+                  disabled={saving}
+                >
+                  {saving ? 'Checking...' : '🔄 Verify & Save to Database'}
+                </button>
+              </div>
+            </div>
+          )}
+
           <div
             style={{
               background: '#f8fafc',
@@ -281,8 +433,8 @@ export const GeminiApiKeyModal: React.FC<GeminiApiKeyModalProps> = ({
             >
               Get Free Key from Google AI Studio &rarr;
             </a>
-            <div style={{ marginTop: 6 }}>
-              Keys start with <code>AIzaSy...</code> and are stored securely in your browser's local storage.
+            <div style={{ marginTop: 6, color: '#475569' }}>
+              🔑 When saved, this key is stored in your school database so <strong>all teachers and coordinators</strong> can automatically use Gemini AI without having to configure keys on their own devices.
             </div>
           </div>
 
@@ -326,6 +478,7 @@ export const GeminiApiKeyModal: React.FC<GeminiApiKeyModalProps> = ({
                 type="button"
                 className="btn btn-primary"
                 onClick={handleSave}
+                disabled={saving || !apiKey.trim()}
                 style={{
                   fontSize: 13,
                   fontWeight: 700,
@@ -333,7 +486,7 @@ export const GeminiApiKeyModal: React.FC<GeminiApiKeyModalProps> = ({
                   borderColor: '#4C2570'
                 }}
               >
-                Save Key
+                {saving ? 'Saving...' : 'Save Key'}
               </button>
             </div>
           </div>
@@ -342,4 +495,3 @@ export const GeminiApiKeyModal: React.FC<GeminiApiKeyModalProps> = ({
     </div>
   )
 }
-

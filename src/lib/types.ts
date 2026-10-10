@@ -563,7 +563,7 @@ export interface Api {
 
   // gemini ai config
   getGeminiApiKey(): Promise<string>
-  saveGeminiApiKey(key: string): Promise<void>
+  saveGeminiApiKey(key: string): Promise<{ inDb: boolean; error?: string }>
 }
 
 // ------------------------------------------------------------------
