@@ -54,6 +54,10 @@ export default function ScoreEntry() {
     }
   }, [viewParam, isDirector])
 
+  const [editingMaxMark, setEditingMaxMark] = useState(false)
+  const [tempMaxMark, setTempMaxMark] = useState('')
+  const [savingMaxMark, setSavingMaxMark] = useState(false)
+
   useEffect(() => {
     if (!testId) return
     api.listScoresForTest(testId).then(setRows).catch((e) => setError(e.message))
@@ -61,6 +65,9 @@ export default function ScoreEntry() {
       api.listUnitTests(classId).then(async (ts) => {
         const selected = ts.find((t) => t.id === testId) ?? null
         setTest(selected)
+        if (selected) {
+          setTempMaxMark(String(selected.max_mark || 100))
+        }
         if (!selected || !profile) return
 
         const lock = await api.getClassMarksLock(classId).catch(() => null)
@@ -71,11 +78,14 @@ export default function ScoreEntry() {
         const assignments = await api.listAssignments(classId).catch(() => [])
         const isAssignedSubjectTeacher = assignments.some((a) => a.teacher_id === profile.id && a.subject_id === selected.subject_id)
 
-        const isTestLockedForTeacher = Boolean(
+        // Test is locked if:
+        // 1. It is explicitly locked individually (selected.is_locked), OR
+        // 2. Class is locked and test created before class lock date
+        const isClassMarksLocked = Boolean(
           lock?.is_locked &&
-          !isLead &&
           (!selected.created_at || !lock.locked_at || new Date(selected.created_at).getTime() <= new Date(lock.locked_at).getTime())
         )
+        const isTestLockedForTeacher = !isLead && (Boolean(selected.is_locked) || isClassMarksLocked)
 
         setCanEdit(
           !isDirector &&
@@ -140,11 +150,54 @@ export default function ScoreEntry() {
 
   const maxMark = test?.max_mark ?? 100
 
-  const isCurrentTestLocked = Boolean(
+  // Check if this test is locked for marks entry:
+  // Either individually locked by Leadership (test.is_locked), OR class reports downloaded.
+  const isIndividualLocked = Boolean(test?.is_locked)
+  const isClassLocked = Boolean(
     lockInfo?.is_locked &&
-    !isCoordinatorLead &&
     (!test?.created_at || !lockInfo.locked_at || new Date(test.created_at).getTime() <= new Date(lockInfo.locked_at).getTime())
   )
+  const isCurrentTestLocked = !isCoordinatorLead && (isIndividualLocked || isClassLocked)
+
+  const handleSaveMaxMark = async (newVal: number) => {
+    if (!testId || !test) return
+    if (!newVal || newVal <= 0) {
+      setError('Out of / Max Mark must be a number greater than 0.')
+      return
+    }
+    setError('')
+    setSuccess('')
+    setSavingMaxMark(true)
+    try {
+      await api.updateUnitTest(testId, { max_mark: newVal })
+      setTest({ ...test, max_mark: newVal })
+      setEditingMaxMark(false)
+      setSuccess(`Max score updated to ${newVal}. Student percentage scores updated accordingly.`)
+    } catch (err: any) {
+      setError(err.message || 'Failed to update Max Mark.')
+    } finally {
+      setSavingMaxMark(false)
+    }
+  }
+
+  const handleToggleExamLock = async () => {
+    if (!testId || !test || !isCoordinatorLead) return
+    setError('')
+    setSuccess('')
+    try {
+      if (test.is_locked) {
+        await api.unlockUnitTest(testId)
+        setTest({ ...test, is_locked: false })
+        setSuccess('Exam marks unlocked! Subject teachers can now enter and edit marks.')
+      } else {
+        await api.lockUnitTest(testId, 'Locked by Leadership')
+        setTest({ ...test, is_locked: true })
+        setSuccess('Exam marks locked! Subject teachers cannot modify marks for this exam.')
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to update exam lock status.')
+    }
+  }
 
   const hasExamPaper = Boolean(test?.exam_paper_url || test?.exam_paper_path)
 
@@ -284,21 +337,116 @@ export default function ScoreEntry() {
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <h2 style={{ margin: 0 }}>{test ? `${test.subject_name} — ${test.title}` : 'Score sheet'}</h2>
-            {test?.assessment_type === 'midterm' ? (
-              <span style={{ fontSize: 12, padding: '2px 10px', borderRadius: 6, background: '#fef3c7', color: '#92400e', border: '1px solid #fde68a', fontWeight: 700 }}>
-                📑 Midterm Exam
+            {test?.assessment_type === 'exam' || test?.assessment_type === 'midterm' ? (
+              <span style={{ fontSize: 12, padding: '2px 10px', borderRadius: 6, background: '#ffedd5', color: '#c2410c', border: '1px solid #fed7aa', fontWeight: 700 }}>
+                📝 School Exam
               </span>
             ) : test ? (
               <span style={{ fontSize: 12, padding: '2px 10px', borderRadius: 6, background: '#e0f2fe', color: '#0369a1', border: '1px solid #bae6fd', fontWeight: 600 }}>
                 📘 End of Unit Test
               </span>
             ) : null}
+            {test?.is_locked ? (
+              <span style={{ fontSize: 12, padding: '2px 10px', borderRadius: 6, background: '#fee2e2', color: '#991b1b', border: '1px solid #fecaca', fontWeight: 700 }}>
+                🔒 Locked by Leadership
+              </span>
+            ) : isCurrentTestLocked ? (
+              <span style={{ fontSize: 12, padding: '2px 10px', borderRadius: 6, background: '#fee2e2', color: '#991b1b', border: '1px solid #fecaca', fontWeight: 700 }}>
+                🔒 Locked (Reports Generated)
+              </span>
+            ) : (
+              <span style={{ fontSize: 12, padding: '2px 10px', borderRadius: 6, background: '#ecfdf5', color: '#065f46', border: '1px solid #a7f3d0', fontWeight: 600 }}>
+                🔓 Open
+              </span>
+            )}
           </div>
-          <p className="muted" style={{ marginTop: 4 }}>
-            {test && `${fmtDate(test.test_date)} · Max ${maxMark} · ${entered}/${rows.length} entered`}
-          </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginTop: 6 }}>
+            <p className="muted" style={{ margin: 0 }}>
+              {test && `${fmtDate(test.test_date)} · ${entered}/${rows.length} marks entered`}
+            </p>
+            {/* Subject Teacher Max Mark / Out of editable control */}
+            {test && (
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: '#f8fafc', padding: '2px 8px', borderRadius: 6, border: '1px solid #e2e8f0', fontSize: 13 }}>
+                <span style={{ fontWeight: 600, color: '#334155' }}>Out Of / Max:</span>
+                {editingMaxMark ? (
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault()
+                      handleSaveMaxMark(Number(tempMaxMark))
+                    }}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                  >
+                    <input
+                      type="number"
+                      min={1}
+                      autoFocus
+                      required
+                      value={tempMaxMark}
+                      onChange={(e) => setTempMaxMark(e.target.value)}
+                      style={{ width: 64, padding: '2px 6px', fontSize: 13, height: 26 }}
+                      disabled={savingMaxMark}
+                    />
+                    <button
+                      type="submit"
+                      className="btn btn-primary btn-small"
+                      disabled={savingMaxMark}
+                      style={{ padding: '2px 8px', fontSize: 12, height: 26 }}
+                    >
+                      {savingMaxMark ? '…' : 'Save'}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-small"
+                      onClick={() => {
+                        setTempMaxMark(String(test.max_mark || 100))
+                        setEditingMaxMark(false)
+                      }}
+                      disabled={savingMaxMark}
+                      style={{ padding: '2px 6px', fontSize: 12, height: 26 }}
+                    >
+                      ✕
+                    </button>
+                  </form>
+                ) : (
+                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                    <strong style={{ color: '#0f172a' }}>{maxMark}</strong>
+                    {canEdit && !isCurrentTestLocked && (
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-small"
+                        onClick={() => {
+                          setTempMaxMark(String(maxMark))
+                          setEditingMaxMark(true)
+                        }}
+                        title="Change Out Of / Max Score for this subject"
+                        style={{ padding: '1px 6px', fontSize: 11, color: '#4338ca', fontWeight: 600 }}
+                      >
+                        ✏️ Edit Max
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
         <div className="row" style={{ alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          {isCoordinatorLead && test && (
+            <button
+              type="button"
+              className="btn btn-small"
+              onClick={handleToggleExamLock}
+              style={{
+                background: test.is_locked ? '#fef2f2' : '#f0fdf4',
+                color: test.is_locked ? '#991b1b' : '#166534',
+                borderColor: test.is_locked ? '#fecaca' : '#bbf7d0',
+                fontWeight: 700
+              }}
+              title={test.is_locked ? 'Unlock this exam for marks entry' : 'Lock this exam to prevent marks entry'}
+            >
+              {test.is_locked ? '🔓 Unlock Exam Marks' : '🔒 Lock Exam Marks'}
+            </button>
+          )}
           {(test?.exam_paper_url || test?.exam_paper_path) && (
             <button
               type="button"
@@ -366,7 +514,7 @@ export default function ScoreEntry() {
                 </span>
               </div>
               <div style={{ fontSize: '13px', color: '#b45309', marginTop: '2px' }}>
-                Teachers are required to upload a PDF copy of this {test?.assessment_type === 'midterm' ? 'Midterm Exam' : test?.assessment_type === 'exam' ? 'School Exam' : 'End of Unit Test'} paper before entering student marks.
+                Teachers are required to upload a PDF copy of this {test?.assessment_type === 'exam' || test?.assessment_type === 'midterm' ? 'School Exam' : 'End of Unit Test'} paper before entering student marks.
               </div>
             </div>
           </div>
@@ -436,7 +584,34 @@ export default function ScoreEntry() {
       )}
 
       {/* Marks Lock Banners */}
-      {lockInfo?.is_locked && !isCoordinatorLead && isCurrentTestLocked && (
+      {test?.is_locked && !isCoordinatorLead && (
+        <div
+          style={{
+            background: '#fff1f2',
+            border: '1.5px solid #fda4af',
+            borderRadius: '10px',
+            padding: '12px 16px',
+            marginBottom: '16px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
+            boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
+          }}
+        >
+          <span style={{ fontSize: '24px' }}>🔒</span>
+          <div>
+            <div style={{ fontWeight: 700, color: '#9f1239', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span>Exam Marks Locked (Read-Only)</span>
+              <span style={{ fontSize: '11px', background: '#ffe4e6', color: '#9f1239', padding: '1px 6px', borderRadius: '10px' }}>Locked by Leadership</span>
+            </div>
+            <div style={{ fontSize: '12.5px', color: '#881337', marginTop: '2px' }}>
+              The Head of School / Curriculum Coordinators have locked marks entry for this specific exam. Subject teachers cannot modify student scores while this exam is locked.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {!test?.is_locked && lockInfo?.is_locked && !isCoordinatorLead && isCurrentTestLocked && (
         <div
           style={{
             background: '#fff1f2',

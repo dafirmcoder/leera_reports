@@ -81,16 +81,14 @@ export default function ReportView() {
   }, [rows, currentFilter])
 
   const reportTitle = useMemo(() => {
-    if (assessmentType === 'midterm') return 'MIDTERM EXAM REPORT'
-    if (assessmentType === 'exam') return 'EXAM REPORT'
+    if (assessmentType === 'exam' || assessmentType === 'midterm') return 'EXAM REPORT'
     if (assessmentType === 'unit_test') return 'END OF UNIT TEST REPORT'
-    if (filteredRows.length > 0 && filteredRows.every((r) => r.assessment_type === 'midterm')) return 'MIDTERM EXAM REPORT'
-    if (filteredRows.length > 0 && filteredRows.every((r) => r.assessment_type === 'exam')) return 'EXAM REPORT'
+    if (filteredRows.length > 0 && filteredRows.every((r) => r.assessment_type === 'exam' || r.assessment_type === 'midterm')) return 'EXAM REPORT'
     return undefined
   }, [assessmentType, filteredRows])
 
   const filterNotice = useMemo(() => {
-    const typeLabel = assessmentType === 'midterm' ? 'Midterm exams' : assessmentType === 'exam' ? 'School exams' : assessmentType === 'unit_test' ? 'Unit tests' : ''
+    const typeLabel = assessmentType === 'exam' || assessmentType === 'midterm' ? 'School exams' : assessmentType === 'unit_test' ? 'Unit tests' : ''
     if (filterMode === 'since_date') {
       return `${typeLabel ? typeLabel + ' ' : ''}created on or after ${fmtDate(startDate)}`
     }
@@ -229,14 +227,6 @@ export default function ReportView() {
                 onClick={() => updateFilter(filterMode, startDate, selectedTestIds, 'unit_test')}
               >
                 📘 Unit Tests
-              </button>
-              <button
-                type="button"
-                className={`btn btn-sm ${assessmentType === 'midterm' ? 'btn-primary' : 'btn-ghost'}`}
-                style={{ fontSize: '11.5px', padding: '3px 8px', borderRadius: '4px', fontWeight: 600 }}
-                onClick={() => updateFilter(filterMode, startDate, selectedTestIds, 'midterm')}
-              >
-                📑 Midterm
               </button>
               <button
                 type="button"

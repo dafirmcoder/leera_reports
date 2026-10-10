@@ -15,13 +15,13 @@ import {
 } from './types'
 
 export function deriveAssessmentType(record: any): AssessmentType {
-  if (record?.assessment_type === 'midterm' || record?.assessment_type === 'unit_test' || record?.assessment_type === 'exam') {
-    return record.assessment_type
+  if (record?.assessment_type === 'exam' || record?.assessment_type === 'midterm') {
+    return 'exam'
   }
-  if (record?.title && /(?:^|\s|\[)(?:mid-?term)(?:\]|\s|$)/i.test(record.title)) {
-    return 'midterm'
+  if (record?.assessment_type === 'unit_test') {
+    return 'unit_test'
   }
-  if (record?.title && /(?:^|\s|\[)(?:exam|mock|terminal|checkpoint)(?:\]|\s|$)/i.test(record.title)) {
+  if (record?.title && /(?:^|\s|\[)(?:exam|mock|terminal|checkpoint|mid-?term)(?:\]|\s|$)/i.test(record.title)) {
     return 'exam'
   }
   return 'unit_test'
@@ -855,12 +855,13 @@ export const supabaseApi: Api = {
     let data: any = null
     let error: any = null
 
+    // Try selecting all fields including lock fields
     const res = await db()
       .from('unit_tests')
-      .select('id, class_id, subject_id, title, test_date, max_mark, assessment_type, created_by, created_at, exam_paper_url, exam_paper_path, exam_paper_name, subjects(name)')
+      .select('id, class_id, subject_id, title, test_date, max_mark, assessment_type, is_locked, locked_at, locked_by_name, created_by, created_at, exam_paper_url, exam_paper_path, exam_paper_name, subjects(name)')
       .eq('class_id', classId)
 
-    if (res.error && (res.error.code === '42703' || res.error.message?.includes('assessment_type'))) {
+    if (res.error && (res.error.code === '42703' || res.error.message?.includes('is_locked') || res.error.message?.includes('assessment_type'))) {
       const fallback = await db()
         .from('unit_tests')
         .select('id, class_id, subject_id, title, test_date, max_mark, created_by, created_at, exam_paper_url, exam_paper_path, exam_paper_name, subjects(name)')
@@ -873,17 +874,38 @@ export const supabaseApi: Api = {
     }
 
     if (error) throw new Error(error.message)
-    const list: UnitTest[] = (data ?? []).map((r: any): UnitTest => ({
-      id: r.id, class_id: r.class_id, subject_id: r.subject_id,
-      subject_name: r.subjects?.name ?? '—', title: r.title,
-      test_date: r.test_date, max_mark: Number(r.max_mark),
-      assessment_type: deriveAssessmentType(r),
-      created_by: r.created_by ?? null,
-      created_at: r.created_at ?? undefined,
-      exam_paper_url: r.exam_paper_url ?? null,
-      exam_paper_path: r.exam_paper_path ?? null,
-      exam_paper_name: r.exam_paper_name ?? null
-    }))
+
+    // Check localStorage fallback for specific exam lock overrides
+    const getLocalLock = (id: string) => {
+      try {
+        const raw = localStorage.getItem(`leera_unit_test_lock_${id}`)
+        return raw ? JSON.parse(raw) : null
+      } catch {
+        return null
+      }
+    }
+
+    const list: UnitTest[] = (data ?? []).map((r: any): UnitTest => {
+      const localLock = getLocalLock(r.id)
+      const isLocked = localLock !== null ? Boolean(localLock.is_locked) : Boolean(r.is_locked)
+      const lockedAt = localLock?.locked_at || r.locked_at || null
+      const lockedByName = localLock?.locked_by_name || r.locked_by_name || null
+
+      return {
+        id: r.id, class_id: r.class_id, subject_id: r.subject_id,
+        subject_name: r.subjects?.name ?? '—', title: r.title,
+        test_date: r.test_date, max_mark: Number(r.max_mark),
+        assessment_type: deriveAssessmentType(r),
+        is_locked: isLocked,
+        locked_at: lockedAt,
+        locked_by_name: lockedByName,
+        created_by: r.created_by ?? null,
+        created_at: r.created_at ?? undefined,
+        exam_paper_url: r.exam_paper_url ?? null,
+        exam_paper_path: r.exam_paper_path ?? null,
+        exam_paper_name: r.exam_paper_name ?? null
+      }
+    })
     // Sort subject-wise, then topic-wise
     return list.sort((a, b) => {
       const subjectComp = a.subject_name.localeCompare(b.subject_name, undefined, { numeric: true, sensitivity: 'base' })
@@ -912,8 +934,8 @@ export const supabaseApi: Api = {
 
     let insertRes = await d.from('unit_tests').insert(insertPayload).select().single()
     if (insertRes.error && (insertRes.error.code === '42703' || insertRes.error.message?.includes('assessment_type'))) {
-      const fallbackTitle = chosenType === 'midterm' && !/(?:^|\s|\[)(?:mid-?term)(?:\]|\s|$)/i.test(testData.title)
-        ? `[Midterm] ${testData.title}`
+      const fallbackTitle = chosenType === 'exam' && !/(?:^|\s|\[)(?:exam|mock|terminal|checkpoint)(?:\]|\s|$)/i.test(testData.title)
+        ? `[Exam] ${testData.title}`
         : testData.title
       const { assessment_type: _, ...rest } = insertPayload
       insertRes = await d.from('unit_tests').insert({
@@ -1171,9 +1193,28 @@ export const supabaseApi: Api = {
   async saveScore(unit_test_id: string, student_id: string, score: number | null): Promise<void> {
     const { data: testData } = await db()
       .from('unit_tests')
-      .select('id, class_id, created_at')
+      .select('id, class_id, created_at, is_locked')
       .eq('id', unit_test_id)
       .maybeSingle()
+
+    // 1. Check specific exam lock
+    let isSpecificExamLocked = false
+    try {
+      const raw = localStorage.getItem(`leera_unit_test_lock_${unit_test_id}`)
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        isSpecificExamLocked = Boolean(parsed.is_locked)
+      } else if (testData?.is_locked) {
+        isSpecificExamLocked = true
+      }
+    } catch {}
+
+    if (isSpecificExamLocked) {
+      const profile = await this.getProfile().catch(() => null)
+      if (!isCoordinatorOrLeadership(profile)) {
+        throw new Error('Marks for this exam are locked by the Head of School / Curriculum Coordinators. Only Leadership can unlock it.')
+      }
+    }
 
     const classId = testData?.class_id
     if (classId) {
@@ -1312,6 +1353,200 @@ export const supabaseApi: Api = {
       console.warn('Supabase unlockClassMarks update warning:', err)
     }
     invalidateTeacherDashboardCache()
+  },
+
+  async lockUnitTest(testId: string, reason?: string): Promise<void> {
+    const profile = await this.getProfile().catch(() => null)
+    if (!isCoordinatorOrLeadership(profile)) {
+      throw new Error('Only Curriculum Coordinators or School Leadership can lock exam marks.')
+    }
+    const lockedAt = new Date().toISOString()
+    const lockedByName = profile?.full_name || 'Coordinator'
+
+    const lockPayload = {
+      is_locked: true,
+      locked_at: lockedAt,
+      locked_by_name: lockedByName,
+      reason: reason || 'Locked by Leadership'
+    }
+
+    try {
+      localStorage.setItem(`leera_unit_test_lock_${testId}`, JSON.stringify(lockPayload))
+    } catch {}
+
+    try {
+      await db()
+        .from('unit_tests')
+        .update({
+          is_locked: true,
+          locked_at: lockedAt,
+          locked_by_name: lockedByName
+        })
+        .eq('id', testId)
+    } catch (err) {
+      console.warn('Database lockUnitTest update warning (table column may be missing):', err)
+    }
+    invalidateTeacherDashboardCache()
+  },
+
+  async unlockUnitTest(testId: string): Promise<void> {
+    const profile = await this.getProfile().catch(() => null)
+    if (!isCoordinatorOrLeadership(profile)) {
+      throw new Error('Only Curriculum Coordinators or School Leadership can unlock exam marks.')
+    }
+
+    const unlockPayload = {
+      is_locked: false,
+      locked_at: null,
+      locked_by_name: null
+    }
+
+    try {
+      localStorage.setItem(`leera_unit_test_lock_${testId}`, JSON.stringify(unlockPayload))
+    } catch {}
+
+    try {
+      await db()
+        .from('unit_tests')
+        .update({
+          is_locked: false,
+          locked_at: null,
+          locked_by_name: null
+        })
+        .eq('id', testId)
+    } catch (err) {
+      console.warn('Database unlockUnitTest update warning:', err)
+    }
+    invalidateTeacherDashboardCache()
+  },
+
+  async createSchoolExamAcrossAllClasses(input: {
+    title: string
+    semester?: string
+    test_date: string
+    max_mark?: number
+  }): Promise<{ testsCreated: number; classesCount: number; subjectsCount: number }> {
+    const profile = await this.getProfile().catch(() => null)
+    if (!isCoordinatorOrLeadership(profile)) {
+      throw new Error('Only Curriculum Coordinators and the Head of School can create school-wide exams.')
+    }
+
+    const d = db()
+    const trimmedTitle = input.title.trim()
+    if (!trimmedTitle) throw new Error('Exam title is required')
+
+    const defaultMaxMark = Number(input.max_mark) > 0 ? Number(input.max_mark) : 100
+    const testDate = input.test_date || toLocalIsoDate(new Date())
+
+    // 1. Fetch all classes and all subjects
+    const [allClasses, allSubjects] = await Promise.all([
+      this.listClasses(),
+      this.listSubjects()
+    ])
+
+    if (allClasses.length === 0) throw new Error('No classes found in school.')
+    if (allSubjects.length === 0) throw new Error('No subjects found in school.')
+
+    // 2. Fetch all students across classes to initialize scores
+    const { data: allStudents, error: stErr } = await d.from('students').select('id, class_id')
+    if (stErr) throw new Error(stErr.message)
+
+    const studentsByClass = new Map<string, string[]>()
+    for (const st of allStudents ?? []) {
+      if (st.class_id) {
+        const list = studentsByClass.get(st.class_id) || []
+        list.push(st.id)
+        studentsByClass.set(st.class_id, list)
+      }
+    }
+
+    // 3. Query existing tests across classes with this title to avoid duplicate re-creation
+    const { data: existingTests } = await d
+      .from('unit_tests')
+      .select('class_id, subject_id, title')
+      .ilike('title', trimmedTitle)
+
+    const existingSet = new Set(
+      (existingTests ?? []).map((t: any) => `${t.class_id}_${t.subject_id}`)
+    )
+
+    let createdCount = 0
+
+    // 4. Batch create exam records for all classes & subjects
+    const nowIso = new Date().toISOString()
+    const testsToInsert: any[] = []
+
+    for (const cls of allClasses) {
+      for (const subj of allSubjects) {
+        const key = `${cls.id}_${subj.id}`
+        if (!existingSet.has(key)) {
+          testsToInsert.push({
+            class_id: cls.id,
+            subject_id: subj.id,
+            title: trimmedTitle,
+            test_date: testDate,
+            max_mark: defaultMaxMark,
+            assessment_type: 'exam',
+            created_by: profile?.id || null,
+            created_at: nowIso
+          })
+        }
+      }
+    }
+
+    if (testsToInsert.length === 0) {
+      return { testsCreated: 0, classesCount: allClasses.length, subjectsCount: allSubjects.length }
+    }
+
+    // Insert unit_tests in chunks of 50
+    const chunkSize = 50
+    const insertedIdsWithClass: Array<{ id: string; class_id: string; subject_id: string }> = []
+
+    for (let i = 0; i < testsToInsert.length; i += chunkSize) {
+      const chunk = testsToInsert.slice(i, i + chunkSize)
+      let insRes = await d.from('unit_tests').insert(chunk).select('id, class_id, subject_id')
+      if (insRes.error && (insRes.error.code === '42703' || insRes.error.message?.includes('assessment_type'))) {
+        // Fallback without assessment_type column
+        const fallbackChunk = chunk.map(({ assessment_type, ...rest }) => rest)
+        insRes = await d.from('unit_tests').insert(fallbackChunk).select('id, class_id, subject_id')
+      }
+      if (insRes.error) {
+        throw new Error(`Failed creating exams: ${insRes.error.message}`)
+      }
+      for (const row of insRes.data ?? []) {
+        insertedIdsWithClass.push(row)
+        createdCount++
+      }
+    }
+
+    // 5. Initialize score rows for all students in the respective classes
+    const scoreRowsToInsert: any[] = []
+    for (const testRecord of insertedIdsWithClass) {
+      const studentIds = studentsByClass.get(testRecord.class_id) || []
+      for (const sId of studentIds) {
+        scoreRowsToInsert.push({
+          unit_test_id: testRecord.id,
+          student_id: sId,
+          score: null
+        })
+      }
+    }
+
+    // Insert scores in chunks of 100
+    for (let i = 0; i < scoreRowsToInsert.length; i += 100) {
+      const scoreChunk = scoreRowsToInsert.slice(i, i + 100)
+      const { error: scErr } = await d.from('scores').insert(scoreChunk)
+      if (scErr) {
+        console.warn('Initial scores batch insert warning:', scErr.message)
+      }
+    }
+
+    invalidateTeacherDashboardCache()
+    return {
+      testsCreated: createdCount,
+      classesCount: allClasses.length,
+      subjectsCount: allSubjects.length
+    }
   },
 
   async getStudentReport(studentId: string): Promise<StudentReportRow[]> {

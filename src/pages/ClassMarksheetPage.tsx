@@ -667,14 +667,6 @@ export default function ClassMarksheetPage() {
               </button>
               <button
                 type="button"
-                className={`btn btn-sm ${assessmentFilter === 'midterm' ? 'btn-primary' : 'btn-ghost'}`}
-                style={{ padding: '3px 9px', fontSize: '11.5px', borderRadius: '6px', fontWeight: 600 }}
-                onClick={() => setAssessmentFilter('midterm')}
-              >
-                📑 Midterm
-              </button>
-              <button
-                type="button"
                 className={`btn btn-sm ${assessmentFilter === 'exam' ? 'btn-primary' : 'btn-ghost'}`}
                 style={{ padding: '3px 9px', fontSize: '11.5px', borderRadius: '6px', fontWeight: 600 }}
                 onClick={() => setAssessmentFilter('exam')}
@@ -865,29 +857,29 @@ export default function ClassMarksheetPage() {
                         </th>
                       ) : (
                         sub.tests.map((t, idx) => {
-                          const isMid = t.assessment_type === 'midterm'
+                          const isExam = t.assessment_type === 'exam' || t.assessment_type === 'midterm'
                           return (
                             <th
                               key={t.id}
-                              title={`${isMid ? '[Midterm Exam] ' : '[Unit Test] '}${t.title} (${t.test_date}) • Max: ${t.max_mark}`}
+                              title={`${isExam ? '[School Exam] ' : '[Unit Test] '}${t.title} (${t.test_date}) • Max: ${t.max_mark}`}
                               style={{
                                 padding: '6px 4px',
                                 fontSize: '11px',
                                 fontWeight: 700,
                                 minWidth: displayMode === 'both' ? '64px' : displayMode === 'raw' ? '54px' : '46px',
-                                color: isMid ? '#92400e' : '#334155',
+                                color: isExam ? '#c2410c' : '#334155',
                                 borderRight: '1px solid #e2e8f0',
                                 borderBottom: '2px solid #cbd5e1',
-                                background: isMid ? '#fffbeb' : '#f8fafc',
+                                background: isExam ? '#fff7ed' : '#f8fafc',
                                 cursor: 'help'
                               }}
                             >
                               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 2 }}>
-                                {isMid ? <span style={{ fontSize: '9px', background: '#fde68a', color: '#92400e', padding: '0 3px', borderRadius: 2, fontWeight: 800 }}>M</span> : null}
-                                <span>{isMid ? 'Mid' : idx + 1}</span>
+                                {isExam ? <span style={{ fontSize: '9px', background: '#fed7aa', color: '#c2410c', padding: '0 3px', borderRadius: 2, fontWeight: 800 }}>E</span> : null}
+                                <span>{isExam ? 'Exam' : idx + 1}</span>
                               </div>
                               {displayMode !== 'pct' && (
-                                <div style={{ fontSize: '9px', fontWeight: 600, color: isMid ? '#b45309' : '#64748b' }}>/{t.max_mark}</div>
+                                <div style={{ fontSize: '9px', fontWeight: 600, color: isExam ? '#c2410c' : '#64748b' }}>/{t.max_mark}</div>
                               )}
                             </th>
                           )

@@ -295,7 +295,7 @@ export interface AdminDashboardData {
   classes_summary: AdminClassAttendanceSummary[]
 }
 
-export type AssessmentType = 'unit_test' | 'midterm' | 'exam'
+export type AssessmentType = 'unit_test' | 'exam' | 'midterm'
 
 export interface UnitTest {
   id: string
@@ -309,6 +309,9 @@ export interface UnitTest {
   exam_paper_url?: string | null
   exam_paper_path?: string | null
   exam_paper_name?: string | null
+  is_locked?: boolean
+  locked_at?: string | null
+  locked_by_name?: string | null
   created_by?: string | null
   created_at?: string
 }
@@ -319,6 +322,7 @@ export interface UpdateUnitTestInput {
   max_mark?: number
   assessment_type?: AssessmentType
   examPaperFile?: File | null
+  is_locked?: boolean
 }
 
 export interface ScoreRow {
@@ -458,10 +462,13 @@ export interface Api {
   // unit tests
   listUnitTests(classId: string): Promise<UnitTest[]>
   createUnitTest(classId: string, input: { subject_id: string; title: string; test_date: string; max_mark: number; assessment_type?: AssessmentType; examPaperFile?: File | null }): Promise<string>
+  createSchoolExamAcrossAllClasses(input: { title: string; semester?: string; test_date: string; max_mark?: number }): Promise<{ testsCreated: number; classesCount: number; subjectsCount: number }>
   updateUnitTest(id: string, input: UpdateUnitTestInput): Promise<void>
   deleteUnitTest(id: string): Promise<void>
   getUnitTestOverview(): Promise<EndOfUnitTestOverview>
   getExamPaperUrl?(pathOrUrl: string): Promise<string>
+  lockUnitTest(testId: string, reason?: string): Promise<void>
+  unlockUnitTest(testId: string): Promise<void>
 
   // scores
   listScoresForTest(testId: string): Promise<ScoreRow[]>

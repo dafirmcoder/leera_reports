@@ -85,7 +85,7 @@ export default function Reports() {
   }), [filterMode, startDate, selectedTestIds, assessmentType])
 
   const filterNotice = useMemo(() => {
-    const typeLabel = assessmentType === 'midterm' ? 'Midterm exams' : assessmentType === 'exam' ? 'School exams' : assessmentType === 'unit_test' ? 'Unit tests' : ''
+    const typeLabel = assessmentType === 'exam' || assessmentType === 'midterm' ? 'School exams' : assessmentType === 'unit_test' ? 'Unit tests' : ''
     if (filterMode === 'since_date') {
       return `${typeLabel ? typeLabel + ' ' : ''}created on or after ${fmtDate(startDate)}`
     }
@@ -109,8 +109,8 @@ export default function Reports() {
         rowsByStudent[stId] = filterReportRows(rows, currentFilter)
       }
 
-      const reportTitle = assessmentType === 'midterm'
-        ? 'MIDTERM EXAM REPORT'
+      const reportTitle = assessmentType === 'exam' || assessmentType === 'midterm'
+        ? 'EXAM REPORT'
         : assessmentType === 'unit_test'
         ? 'END OF UNIT TEST REPORT'
         : undefined
@@ -370,14 +370,6 @@ export default function Reports() {
                 onClick={() => setAssessmentType('unit_test')}
               >
                 📘 End of Unit Tests Only
-              </button>
-              <button
-                type="button"
-                className={`btn btn-sm ${assessmentType === 'midterm' ? 'btn-primary' : 'btn-ghost'}`}
-                style={{ fontSize: '11.5px', padding: '3px 10px', borderRadius: '6px', fontWeight: 600 }}
-                onClick={() => setAssessmentType('midterm')}
-              >
-                📑 Midterm Exams Only
               </button>
               <button
                 type="button"

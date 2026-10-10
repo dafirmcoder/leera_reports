@@ -119,9 +119,9 @@ export async function generateStudentPdf(ctx: PdfContext): Promise<jsPDF> {
     headerBottom = Math.max(headerBottom, cambridgeLogoY + cambridgeLogoH)
   }
 
-  // Title band ("MIDTERM EXAM REPORT" vs "END OF UNIT TEST REPORT")
-  const isAllMidterm = rows.length > 0 && rows.every((r) => r.assessment_type === 'midterm')
-  const titleBandText = ctx.reportTitle || (isAllMidterm ? 'MIDTERM EXAM REPORT' : 'END OF UNIT TEST REPORT')
+  // Title band ("EXAM REPORT" vs "END OF UNIT TEST REPORT")
+  const isAllExam = rows.length > 0 && rows.every((r) => r.assessment_type === 'exam' || r.assessment_type === 'midterm')
+  const titleBandText = ctx.reportTitle || (isAllExam ? 'EXAM REPORT' : 'END OF UNIT TEST REPORT')
 
   let y = headerBottom + 4
   const band2H = 7.5

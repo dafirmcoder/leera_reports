@@ -42,7 +42,16 @@ export default function Marks() {
   const [editExamFile, setEditExamFile] = useState<File | null>(null)
   const [editBusy, setEditBusy] = useState(false)
   const [error, setError] = useState('')
+  const [successMsg, setSuccessMsg] = useState('')
   const [busy, setBusy] = useState(false)
+
+  // One-Button School-Wide Exam Modal State
+  const [showSchoolExamModal, setShowSchoolExamModal] = useState(false)
+  const [schoolExamSemester, setSchoolExamSemester] = useState('1')
+  const [schoolExamName, setSchoolExamName] = useState('')
+  const [schoolExamDate, setSchoolExamDate] = useState(today())
+  const [schoolExamMaxMark, setSchoolExamMaxMark] = useState('100')
+  const [creatingSchoolExam, setCreatingSchoolExam] = useState(false)
 
   const urlClassId = searchParams.get('classId')
   const urlSubjectId = searchParams.get('subjectId')
@@ -100,11 +109,61 @@ export default function Marks() {
   const isCoordinatorLead = isCoordinatorOrLeadership(profile)
   const isClassLocked = Boolean(lockInfo?.is_locked)
 
-  // A test is locked if the class marks are locked AND the test was created at or before the lock timestamp
+  // A test is locked if:
+  // 1. It is explicitly locked individually (t.is_locked), OR
+  // 2. The whole class is locked and this test was created before the class lock timestamp.
   const isTestLocked = (t: UnitTest) => {
-    if (!lockInfo?.is_locked || isCoordinatorLead) return false
+    if (isCoordinatorLead) return false // Coordinators/HOS can always edit and unlock
+    if (t.is_locked) return true
+    if (!lockInfo?.is_locked) return false
     if (!lockInfo.locked_at || !t.created_at) return true
     return new Date(t.created_at).getTime() <= new Date(lockInfo.locked_at).getTime()
+  }
+
+  const toggleLockTest = async (t: UnitTest) => {
+    if (!isCoordinatorLead) {
+      setError('Only Curriculum Coordinators and the Head of School can lock or unlock specific exams.')
+      return
+    }
+    setError('')
+    try {
+      if (t.is_locked) {
+        await api.unlockUnitTest(t.id)
+        setSuccessMsg(`"${t.title}" marks unlocked successfully. Subject teachers can now enter marks.`)
+      } else {
+        await api.lockUnitTest(t.id, 'Locked by Leadership')
+        setSuccessMsg(`"${t.title}" marks locked successfully. Teachers cannot modify scores.`)
+      }
+      reload()
+    } catch (err: any) {
+      setError(err.message || 'Failed to toggle exam lock.')
+    }
+  }
+
+  const handleCreateSchoolExam = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!schoolExamName.trim()) {
+      setError('Please enter the exam name.')
+      return
+    }
+    setError('')
+    setCreatingSchoolExam(true)
+    try {
+      const res = await api.createSchoolExamAcrossAllClasses({
+        title: schoolExamName.trim(),
+        semester: schoolExamSemester,
+        test_date: schoolExamDate,
+        max_mark: Number(schoolExamMaxMark) || 100
+      })
+      setSuccessMsg(`Exam "${schoolExamName.trim()}" successfully created for all ${res.classesCount} classes and ${res.subjectsCount} subjects (${res.testsCreated} exam records generated)! Teachers can now set max marks, upload exam PDFs, and enter scores.`)
+      setShowSchoolExamModal(false)
+      setSchoolExamName('')
+      reload()
+    } catch (err: any) {
+      setError(err.message || 'Failed to create school exam.')
+    } finally {
+      setCreatingSchoolExam(false)
+    }
   }
 
   const isLeadership = hasRole(profile?.role, 'head_of_school', profile?.additional_roles)
@@ -452,10 +511,33 @@ export default function Marks() {
         <>
           <div className="page-head">
         <div>
-          <h2>Unit Tests{className ? ` — ${className}` : ''}</h2>
-          <p className="muted">{canAdd ? 'Every end-of-unit test you record, with its score sheet.' : 'Read-only view of recorded unit tests.'}</p>
+          <h2>Assessments & Scores{className ? ` — ${className}` : ''}</h2>
+          <p className="muted">{canAdd ? 'Manage end-of-unit tests and school-wide exams, upload question papers, and record scores.' : 'Read-only view of recorded unit tests and exams.'}</p>
         </div>
-        <div className="row" style={{ alignItems: 'center', gap: '8px' }}>
+        <div className="row" style={{ alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          {canCreateLeadershipExams && (
+            <button
+              type="button"
+              className="btn btn-primary"
+              style={{
+                background: 'linear-gradient(135deg, #4338ca 0%, #6366f1 100%)',
+                borderColor: '#4338ca',
+                fontWeight: 700,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                boxShadow: '0 2px 6px rgba(99, 102, 241, 0.35)'
+              }}
+              onClick={() => {
+                setSchoolExamSemester(school?.semester || '1')
+                setShowSchoolExamModal(true)
+              }}
+              title="Leadership One-Button Exam Creation: Schedules an exam for all classes and all subjects at once"
+            >
+              <span>🏛️</span>
+              <span>Create School Exam</span>
+            </button>
+          )}
           {selectedClassId && (
             <Link
               to={`/marks/class/${selectedClassId}`}
@@ -469,12 +551,19 @@ export default function Marks() {
           )}
           <ClassPicker />
           {canAdd && (
-            <button className="btn btn-primary" onClick={() => setShowForm((v) => !v)}>
-              {showForm ? 'Close form' : '+ New unit test'}
+            <button className="btn btn-secondary" onClick={() => setShowForm((v) => !v)}>
+              {showForm ? 'Close form' : '+ New Unit Test'}
             </button>
           )}
         </div>
       </div>
+
+      {successMsg && (
+        <div className="notice notice-success" style={{ marginBottom: 14 }}>
+          {successMsg}
+          <button type="button" className="btn btn-ghost btn-small" style={{ marginLeft: 8 }} onClick={() => setSuccessMsg('')}>✕</button>
+        </div>
+      )}
 
       {/* Marks Lock Notification */}
       {selectedClassId && lockInfo?.is_locked && (
@@ -561,21 +650,6 @@ export default function Marks() {
               onClick={() => setSelectedAssessmentType('unit_test')}
             >
               📘 Unit Tests ({totalUnitTestsCount})
-            </button>
-            <button
-              type="button"
-              className="btn btn-small"
-              style={{
-                background: selectedAssessmentType === 'midterm' ? '#ffffff' : 'transparent',
-                color: selectedAssessmentType === 'midterm' ? '#b45309' : 'var(--muted, #64748b)',
-                boxShadow: selectedAssessmentType === 'midterm' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
-                fontWeight: selectedAssessmentType === 'midterm' ? 700 : 500,
-                border: 'none',
-                cursor: 'pointer'
-              }}
-              onClick={() => setSelectedAssessmentType('midterm')}
-            >
-              📑 Midterm Exams ({totalMidtermsCount})
             </button>
             <button
               type="button"
@@ -704,27 +778,6 @@ export default function Marks() {
                   cursor: 'pointer',
                   padding: '8px 16px',
                   borderRadius: 8,
-                  border: form.assessment_type === 'midterm' ? '2px solid #d97706' : '1px solid #cbd5e1',
-                  background: form.assessment_type === 'midterm' ? '#fffbeb' : '#fff',
-                  boxShadow: form.assessment_type === 'midterm' ? '0 1px 3px rgba(217,119,6,0.15)' : 'none'
-                }}>
-                  <input
-                    type="radio"
-                    name="create_assessment_type"
-                    value="midterm"
-                    checked={form.assessment_type === 'midterm'}
-                    onChange={() => setForm({ ...form, assessment_type: 'midterm' })}
-                  />
-                  <span style={{ fontWeight: 700, color: '#92400e' }}>📑 Midterm Exam</span>
-                </label>
-
-                <label style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  cursor: 'pointer',
-                  padding: '8px 16px',
-                  borderRadius: 8,
                   border: form.assessment_type === 'exam' ? '2px solid #ea580c' : '1px solid #cbd5e1',
                   background: form.assessment_type === 'exam' ? '#fff7ed' : '#fff',
                   boxShadow: form.assessment_type === 'exam' ? '0 1px 3px rgba(234,88,12,0.15)' : 'none'
@@ -736,7 +789,7 @@ export default function Marks() {
                     checked={form.assessment_type === 'exam'}
                     onChange={() => setForm({ ...form, assessment_type: 'exam' })}
                   />
-                  <span style={{ fontWeight: 700, color: '#c2410c' }}>📝 School / Custom Exam</span>
+                  <span style={{ fontWeight: 700, color: '#c2410c' }}>📝 School Exam (Leadership)</span>
                 </label>
               </div>
             )}
@@ -829,11 +882,7 @@ export default function Marks() {
               <div className="list-main">
                 <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
                   <strong>{t.title}</strong>
-                  {t.assessment_type === 'midterm' ? (
-                    <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: '#fef3c7', color: '#92400e', border: '1px solid #fde68a', fontWeight: 700 }}>
-                      📑 Midterm Exam
-                    </span>
-                  ) : t.assessment_type === 'exam' ? (
+                  {t.assessment_type === 'exam' || t.assessment_type === 'midterm' ? (
                     <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: '#ffedd5', color: '#c2410c', border: '1px solid #fed7aa', fontWeight: 700 }}>
                       📝 School Exam
                     </span>
@@ -842,19 +891,39 @@ export default function Marks() {
                       📘 Unit Test
                     </span>
                   )}
-                  {isTestLocked(t) ? (
+                  {t.is_locked ? (
+                    <span style={{ fontSize: 11, padding: '1px 6px', borderRadius: 4, background: '#fee2e2', color: '#991b1b', fontWeight: 600 }} title="Locked individually by Leadership">
+                      🔒 Exam Locked
+                    </span>
+                  ) : isTestLocked(t) ? (
                     <span style={{ fontSize: 11, padding: '1px 6px', borderRadius: 4, background: '#fee2e2', color: '#991b1b', fontWeight: 600 }}>
-                      🔒 Locked
+                      🔒 Class Locked
                     </span>
-                  ) : lockInfo?.is_locked ? (
+                  ) : (
                     <span style={{ fontSize: 11, padding: '1px 6px', borderRadius: 4, background: '#ecfdf5', color: '#065f46', fontWeight: 600 }}>
-                      ✨ New Test (Open)
+                      🔓 Open
                     </span>
-                  ) : null}
+                  )}
                 </div>
                 <span className="muted"> {fmtDate(t.test_date)} · Max {t.max_mark}</span>
               </div>
               <div className="list-actions">
+                {isCoordinatorLead && (
+                  <button
+                    type="button"
+                    className="btn btn-small"
+                    onClick={() => toggleLockTest(t)}
+                    title={t.is_locked ? "Click to unlock marks entry for teachers" : "Click to lock marks entry for teachers"}
+                    style={{
+                      background: t.is_locked ? '#fef2f2' : '#f0fdf4',
+                      color: t.is_locked ? '#991b1b' : '#166534',
+                      borderColor: t.is_locked ? '#fecaca' : '#bbf7d0',
+                      fontWeight: 600
+                    }}
+                  >
+                    {t.is_locked ? '🔓 Unlock Exam' : '🔒 Lock Exam'}
+                  </button>
+                )}
                 {(t.exam_paper_url || t.exam_paper_path) ? (
                   <>
                     <button
@@ -981,25 +1050,6 @@ export default function Marks() {
                     cursor: 'pointer',
                     padding: '6px 14px',
                     borderRadius: 6,
-                    border: editForm.assessment_type === 'midterm' ? '2px solid #d97706' : '1px solid #cbd5e1',
-                    background: editForm.assessment_type === 'midterm' ? '#fffbeb' : '#fff'
-                  }}>
-                    <input
-                      type="radio"
-                      name="edit_assessment_type"
-                      value="midterm"
-                      checked={editForm.assessment_type === 'midterm'}
-                      onChange={() => setEditForm({ ...editForm, assessment_type: 'midterm' })}
-                    />
-                    <span style={{ fontWeight: 700, color: '#92400e' }}>📑 Midterm Exam</span>
-                  </label>
-                  <label style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    cursor: 'pointer',
-                    padding: '6px 14px',
-                    borderRadius: 6,
                     border: editForm.assessment_type === 'exam' ? '2px solid #ea580c' : '1px solid #cbd5e1',
                     background: editForm.assessment_type === 'exam' ? '#fff7ed' : '#fff'
                   }}>
@@ -1022,7 +1072,7 @@ export default function Marks() {
                 required
                 value={editForm.title}
                 onChange={(e) => setEditForm({ ...editForm, title: e.target.value })}
-                placeholder={editForm.assessment_type === 'midterm' ? 'e.g. Midterm Exam - Semester 1' : 'e.g. Fractions & Decimals'}
+                placeholder={editForm.assessment_type === 'exam' ? 'e.g. Midterm Examination, Final Term Exam' : 'e.g. Fractions & Decimals'}
               />
             </label>
 
@@ -1093,6 +1143,154 @@ export default function Marks() {
               </button>
               <button type="submit" className="btn btn-primary" disabled={editBusy}>
                 {editBusy ? 'Saving Changes…' : 'Save Changes'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Leadership One-Button School-Wide Exam Creation Modal */}
+      {showSchoolExamModal && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(15, 23, 42, 0.65)',
+          backdropFilter: 'blur(3px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1100,
+          padding: 16
+        }}>
+          <form
+            onSubmit={handleCreateSchoolExam}
+            className="card stack"
+            style={{
+              maxWidth: 520,
+              width: '100%',
+              background: '#ffffff',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+              borderRadius: 14,
+              padding: 24
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '1px solid #f1f5f9', paddingBottom: 14 }}>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 22 }}>🏛️</span>
+                  <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: '#1e1b4b' }}>
+                    Create School-Wide Exam
+                  </h3>
+                </div>
+                <p style={{ margin: '4px 0 0', fontSize: 12.5, color: '#64748b' }}>
+                  One-button creation: Schedules this exam for <strong>all classes and all subjects</strong> in the school.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="btn btn-ghost btn-small"
+                onClick={() => setShowSchoolExamModal(false)}
+                disabled={creatingSchoolExam}
+                style={{ fontSize: 16, lineHeight: 1 }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 8 }}>
+              <div className="field">
+                <span style={{ fontWeight: 600, fontSize: 13 }}>Semester *</span>
+                <select
+                  required
+                  value={schoolExamSemester}
+                  onChange={(e) => setSchoolExamSemester(e.target.value)}
+                  style={{ width: '100%' }}
+                >
+                  <option value="1">Semester 1</option>
+                  <option value="2">Semester 2</option>
+                </select>
+              </div>
+
+              <div className="field">
+                <span style={{ fontWeight: 600, fontSize: 13 }}>Exam Name (Any name of your choice) *</span>
+                <input
+                  type="text"
+                  required
+                  autoFocus
+                  placeholder="e.g. Midterm Examination, Final Term Exam, Mock Exam, Checkpoint"
+                  value={schoolExamName}
+                  onChange={(e) => setSchoolExamName(e.target.value)}
+                  style={{ width: '100%' }}
+                />
+                <span style={{ fontSize: 11.5, color: '#64748b', marginTop: 3 }}>
+                  Examples: Midterm Examination, Semester 1 Finals, Cambridge Mock Paper
+                </span>
+              </div>
+
+              <div className="grid2">
+                <div className="field">
+                  <span style={{ fontWeight: 600, fontSize: 13 }}>Exam Date</span>
+                  <input
+                    type="date"
+                    value={schoolExamDate}
+                    onChange={(e) => setSchoolExamDate(e.target.value)}
+                  />
+                </div>
+                <div className="field">
+                  <span style={{ fontWeight: 600, fontSize: 13 }}>Default Max Mark</span>
+                  <input
+                    type="number"
+                    min={1}
+                    value={schoolExamMaxMark}
+                    onChange={(e) => setSchoolExamMaxMark(e.target.value)}
+                  />
+                  <span style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
+                    (Teachers can adjust per subject)
+                  </span>
+                </div>
+              </div>
+
+              <div style={{
+                background: '#f8fafc',
+                border: '1px solid #e2e8f0',
+                borderRadius: 8,
+                padding: '10px 14px',
+                fontSize: 12,
+                color: '#475569',
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: 8
+              }}>
+                <span style={{ fontSize: 16, lineHeight: 1 }}>ℹ️</span>
+                <span>
+                  <strong>Subject Teachers will:</strong> Upload their specific exam paper PDF and key in their subject's exact Out Of / Max Score before entering marks.
+                </span>
+              </div>
+            </div>
+
+            <div className="row" style={{ justifyContent: 'flex-end', gap: 10, marginTop: 14, borderTop: '1px solid #f1f5f9', paddingTop: 14 }}>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => setShowSchoolExamModal(false)}
+                disabled={creatingSchoolExam}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="btn btn-primary"
+                disabled={creatingSchoolExam || !schoolExamName.trim()}
+                style={{
+                  background: 'linear-gradient(135deg, #4338ca 0%, #6366f1 100%)',
+                  borderColor: '#4338ca',
+                  fontWeight: 700
+                }}
+              >
+                {creatingSchoolExam ? 'Creating for All Classes…' : 'Create for All Classes & Subjects'}
               </button>
             </div>
           </form>

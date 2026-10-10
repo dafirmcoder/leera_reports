@@ -15,9 +15,8 @@ interface Props {
 export default function ReportSheet({ student, school, className, teacherName, rows, filterNotice, reportTitle }: Props) {
   const report = buildReport(rows)
   const printedDate = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })
-  const isAllMidterm = rows.length > 0 && rows.every((r) => r.assessment_type === 'midterm')
-  const isAllExam = rows.length > 0 && rows.every((r) => r.assessment_type === 'exam')
-  const titleText = reportTitle || (isAllMidterm ? 'MIDTERM EXAM REPORT' : isAllExam ? 'EXAM REPORT' : 'END OF UNIT TEST REPORT')
+  const isAllExam = rows.length > 0 && rows.every((r) => r.assessment_type === 'exam' || r.assessment_type === 'midterm')
+  const titleText = reportTitle || (isAllExam ? 'EXAM REPORT' : 'END OF UNIT TEST REPORT')
 
   return (
     <div className="report-sheet">
