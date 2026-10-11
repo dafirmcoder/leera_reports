@@ -4,6 +4,7 @@ import { CAMBRIDGE_PRESEEDED_SCHEMES } from './cambridgeData'
 import { isCoordinatorOrLeadership } from './permissions'
 import {
   isLessonTimeInPast,
+  isSlotActiveOnDate,
   type AdminClassAttendanceSummary, type AdminDashboardData, type Api, type Assignment, type AttendanceAggregatedSummary, type AttendanceRow, type AttendanceStatus, type AttendanceSummary,
   type ClassAttendanceExportData, type ClassInfo, type ClassMarksLock, type ClassPopulationSummary, type DetailedAttendanceExport,
   type EndOfUnitTestOverview, type Profile, type Role, type School,
@@ -3041,29 +3042,45 @@ export const supabaseApi: Api = {
   // TIMETABLES & SCHEDULE SLOTS
   // ----------------------------------------------------------------
 
-  async getTeacherTimetable(teacherId?: string): Promise<{ timetable: TeacherTimetable | null; slots: TeacherScheduleSlot[] }> {
+  async getTeacherTimetable(teacherId?: string, forDate?: string): Promise<{ timetable: TeacherTimetable | null; slots: TeacherScheduleSlot[] }> {
     if (teacherId === 'all') {
       try {
-        const { data: slots } = await db()
-          .from('teacher_schedule_slots')
-          .select('*')
-          .order('day_of_week')
-          .order('period_number')
+        const [{ data: timetables }, { data: slots }] = await Promise.all([
+          db().from('teacher_timetables').select('*'),
+          db().from('teacher_schedule_slots').select('*').order('day_of_week').order('period_number')
+        ])
+        const ttMap = new Map((timetables || []).map((t: any) => [t.id, t]))
         if (slots && slots.length > 0) {
-          return { timetable: null, slots: slots as TeacherScheduleSlot[] }
+          let decoratedSlots: TeacherScheduleSlot[] = (slots as any[]).map((s) => {
+            const tt = s.timetable_id ? ttMap.get(s.timetable_id) : undefined
+            const effFrom = s.effective_from || tt?.effective_from || tt?.created_at?.slice(0, 10) || s.created_at?.slice(0, 10)
+            const effUntil = s.effective_until || tt?.effective_until || null
+            return {
+              ...s,
+              effective_from: effFrom,
+              effective_until: effUntil
+            }
+          })
+          if (forDate) {
+            decoratedSlots = decoratedSlots.filter((s) => isSlotActiveOnDate(s, forDate))
+          }
+          return { timetable: null, slots: decoratedSlots }
         }
       } catch (e) {
         console.warn('getTeacherTimetable(all) fallback to local storage:', e)
       }
 
       try {
-        const allSlots: TeacherScheduleSlot[] = []
+        let allSlots: TeacherScheduleSlot[] = []
         for (let i = 0; i < localStorage.length; i++) {
           const key = localStorage.key(i)
           if (key && key.startsWith('leera_timetable_slots_')) {
             const s = JSON.parse(localStorage.getItem(key) || '[]')
             if (Array.isArray(s)) allSlots.push(...s)
           }
+        }
+        if (forDate) {
+          allSlots = allSlots.filter((s) => isSlotActiveOnDate(s, forDate))
         }
         return { timetable: null, slots: allSlots }
       } catch {}
@@ -3072,23 +3089,40 @@ export const supabaseApi: Api = {
 
     const tid = teacherId || (await uid())
     try {
-      const { data: tt } = await db()
+      // 1. Fetch all timetables for this teacher to know effective date ranges
+      const { data: timetables } = await db()
         .from('teacher_timetables')
         .select('*')
         .eq('teacher_id', tid)
-        .eq('is_active', true)
         .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle()
 
-      if (tt) {
-        const { data: slots } = await db()
-          .from('teacher_schedule_slots')
-          .select('*')
-          .eq('timetable_id', tt.id)
-          .order('day_of_week')
-          .order('period_number')
-        return { timetable: tt as TeacherTimetable, slots: (slots || []) as TeacherScheduleSlot[] }
+      // Active timetable (latest active or newest)
+      const activeTt = (timetables || []).find((t: any) => t.is_active) || (timetables || [])[0] || null
+
+      // 2. Fetch all schedule slots for this teacher
+      const { data: slots } = await db()
+        .from('teacher_schedule_slots')
+        .select('*')
+        .eq('teacher_id', tid)
+        .order('day_of_week')
+        .order('period_number')
+
+      if (slots && slots.length > 0) {
+        const ttMap = new Map((timetables || []).map((t: any) => [t.id, t]))
+        let decoratedSlots: TeacherScheduleSlot[] = (slots as any[]).map((s) => {
+          const tt = s.timetable_id ? ttMap.get(s.timetable_id) : undefined
+          const effFrom = s.effective_from || tt?.effective_from || tt?.created_at?.slice(0, 10) || s.created_at?.slice(0, 10)
+          const effUntil = s.effective_until || tt?.effective_until || null
+          return {
+            ...s,
+            effective_from: effFrom,
+            effective_until: effUntil
+          }
+        })
+        if (forDate) {
+          decoratedSlots = decoratedSlots.filter((s) => isSlotActiveOnDate(s, forDate))
+        }
+        return { timetable: (activeTt as TeacherTimetable) || null, slots: decoratedSlots }
       }
     } catch (e) {
       console.warn('getTeacherTimetable fallback to local storage:', e)
@@ -3097,9 +3131,21 @@ export const supabaseApi: Api = {
     const cachedSlots = localStorage.getItem(`leera_timetable_slots_${tid}`)
     if (cachedSlots) {
       try {
-        const slots = JSON.parse(cachedSlots)
+        let slots: TeacherScheduleSlot[] = JSON.parse(cachedSlots)
+        if (forDate) {
+          slots = slots.filter((s) => isSlotActiveOnDate(s, forDate))
+        }
         return {
-          timetable: { id: 'local-tt', teacher_id: tid, school_id: null, file_name: 'Timetable.pdf', academic_year: '2026/2027', semester: '1', is_active: true },
+          timetable: {
+            id: 'local-tt',
+            teacher_id: tid,
+            school_id: null,
+            file_name: 'Timetable.pdf',
+            academic_year: '2026/2027',
+            semester: '1',
+            is_active: true,
+            effective_from: slots[0]?.effective_from || new Date().toISOString().split('T')[0]
+          },
           slots
         }
       } catch {}
@@ -3107,13 +3153,47 @@ export const supabaseApi: Api = {
     return { timetable: null, slots: [] }
   },
 
-  async saveTeacherScheduleSlots(slots: Array<Omit<TeacherScheduleSlot, 'id' | 'timetable_id' | 'teacher_id'>>, fileName = 'Weekly Timetable.pdf'): Promise<void> {
+  async saveTeacherScheduleSlots(
+    slots: Array<Omit<TeacherScheduleSlot, 'id' | 'timetable_id' | 'teacher_id'>>,
+    fileName = 'Weekly Timetable.pdf',
+    effectiveDate?: string
+  ): Promise<void> {
     const tid = await uid()
     const school = await this.getSchool()
 
+    // Determine effective start date (YYYY-MM-DD)
+    const now = new Date()
+    const localToday = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+    const effectiveFrom = effectiveDate || localToday
+
+    // Previous active timetable should end the day prior to the new effective date
+    const prevDate = new Date(effectiveFrom)
+    prevDate.setDate(prevDate.getDate() - 1)
+    const prevDateStr = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}-${String(prevDate.getDate()).padStart(2, '0')}`
+
     try {
-      // Create timetable record
-      const { data: tt, error: ttErr } = await db()
+      // 1. Cap active period of previous timetables and slots for this teacher so they do not overlap
+      try {
+        await db()
+          .from('teacher_timetables')
+          .update({ is_active: false, effective_until: prevDateStr })
+          .eq('teacher_id', tid)
+          .eq('is_active', true)
+
+        await db()
+          .from('teacher_schedule_slots')
+          .update({ effective_until: prevDateStr })
+          .eq('teacher_id', tid)
+          .is('effective_until', null)
+      } catch (errPrev) {
+        console.warn('Could not update previous timetable effective_until (schema may not have column yet):', errPrev)
+      }
+
+      // 2. Insert new timetable record with effective_from
+      let tt: any = null
+      let ttErr: any = null
+
+      const insertWithDates = await db()
         .from('teacher_timetables')
         .insert({
           school_id: school?.id || null,
@@ -3121,10 +3201,32 @@ export const supabaseApi: Api = {
           file_name: fileName,
           academic_year: school?.academic_year || '2026/2027',
           semester: school?.semester || '1',
-          is_active: true
+          is_active: true,
+          effective_from: effectiveFrom,
+          effective_until: null
         })
         .select()
         .single()
+
+      if (insertWithDates.error) {
+        // Fallback without effective_from if DB column hasn't been added yet
+        const retry = await db()
+          .from('teacher_timetables')
+          .insert({
+            school_id: school?.id || null,
+            teacher_id: tid,
+            file_name: fileName,
+            academic_year: school?.academic_year || '2026/2027',
+            semester: school?.semester || '1',
+            is_active: true
+          })
+          .select()
+          .single()
+        tt = retry.data
+        ttErr = retry.error
+      } else {
+        tt = insertWithDates.data
+      }
 
       if (!ttErr && tt) {
         const slotRows = slots.map((s) => ({
@@ -3138,16 +3240,65 @@ export const supabaseApi: Api = {
           period_number: s.period_number,
           start_time: s.start_time,
           end_time: s.end_time,
-          room: s.room || ''
+          room: s.room || '',
+          effective_from: effectiveFrom,
+          effective_until: null
         }))
-        await db().from('teacher_schedule_slots').insert(slotRows)
+
+        // Try inserting with effective_from and effective_until
+        const slotsInsert = await db().from('teacher_schedule_slots').insert(slotRows)
+        if (slotsInsert.error) {
+          // Fallback without effective date columns if schema is older
+          const strippedRows = slots.map((s) => ({
+            timetable_id: tt.id,
+            teacher_id: tid,
+            class_id: s.class_id,
+            subject_id: s.subject_id,
+            class_name: s.class_name,
+            subject_name: s.subject_name,
+            day_of_week: s.day_of_week,
+            period_number: s.period_number,
+            start_time: s.start_time,
+            end_time: s.end_time,
+            room: s.room || ''
+          }))
+          await db().from('teacher_schedule_slots').insert(strippedRows)
+        }
         return
       }
     } catch (e) {
       console.warn('saveTeacherScheduleSlots fallback to local storage:', e)
     }
 
-    localStorage.setItem(`leera_timetable_slots_${tid}`, JSON.stringify(slots))
+    // LocalStorage fallback: preserve historical slots and cap previous ones
+    try {
+      const existingKey = `leera_timetable_slots_${tid}`
+      const existingRaw = localStorage.getItem(existingKey)
+      const newSlotsWithDates = slots.map((s) => ({
+        ...s,
+        effective_from: effectiveFrom,
+        effective_until: null
+      }))
+
+      let mergedSlots: any[] = []
+      if (existingRaw) {
+        const parsedExisting: any[] = JSON.parse(existingRaw)
+        if (Array.isArray(parsedExisting)) {
+          const cappedExisting = parsedExisting.map((s) => ({
+            ...s,
+            effective_until: s.effective_until || prevDateStr
+          }))
+          mergedSlots = [...cappedExisting, ...newSlotsWithDates]
+        } else {
+          mergedSlots = newSlotsWithDates
+        }
+      } else {
+        mergedSlots = newSlotsWithDates
+      }
+      localStorage.setItem(existingKey, JSON.stringify(mergedSlots))
+    } catch {
+      localStorage.setItem(`leera_timetable_slots_${tid}`, JSON.stringify(slots))
+    }
   },
 
   // ----------------------------------------------------------------

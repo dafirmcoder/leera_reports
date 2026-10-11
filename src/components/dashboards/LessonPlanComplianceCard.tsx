@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../../lib/api'
 import type { LessonPlan, TeacherScheduleSlot } from '../../lib/types'
+import { isSlotActiveOnDate } from '../../lib/types'
 import { findMatchingLessonPlan, isPastLessonSlot } from '../../pages/Planning'
 
 // ── Date helpers ─────────────────────────────────────────────────────────────
@@ -93,13 +94,13 @@ export default function LessonPlanComplianceCard({
           if (jsDay >= 1 && jsDay <= 5) {
             // TeacherScheduleSlot day_of_week: 0=Mon…4=Fri
             const slotDay = jsDay - 1
+            const dateStr = toISO(cursor)
             const daySlots = slots.filter((s) => {
               if (s.day_of_week !== slotDay) return false
               if (classId && s.class_id !== classId) return false
+              if (!isSlotActiveOnDate(s, dateStr)) return false
               return true
             })
-
-            const dateStr = toISO(cursor)
             for (const slot of daySlots) {
               totalScheduled++
               const matchingPlan = findMatchingLessonPlan(slot, dateStr, plans)

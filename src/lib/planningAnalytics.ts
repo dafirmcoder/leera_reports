@@ -1,13 +1,14 @@
-import type {
-  Assignment,
-  ClassInfo,
-  CurriculumObjective,
-  CurriculumScheme,
-  LessonPlan,
-  Profile,
-  Subject,
-  TeacherScheduleSlot,
-  WorkPlan
+import {
+  isSlotActiveOnDate,
+  type Assignment,
+  type ClassInfo,
+  type CurriculumObjective,
+  type CurriculumScheme,
+  type LessonPlan,
+  type Profile,
+  type Subject,
+  type TeacherScheduleSlot,
+  type WorkPlan
 } from './types'
 import { findMatchingLessonPlan, isPastLessonSlot } from '../pages/Planning'
 
@@ -176,8 +177,8 @@ export function calculateTeacherComplianceAndCoverage(params: {
       const jsDay = cursor.getDay()
       if (jsDay >= 1 && jsDay <= 5) {
         const slotDay = jsDay - 1
-        const daySlots = teacherSlots.filter((s) => s.day_of_week === slotDay)
         const dateStr = toISO(cursor)
+        const daySlots = teacherSlots.filter((s) => s.day_of_week === slotDay && isSlotActiveOnDate(s, dateStr))
 
         for (const slot of daySlots) {
           totalScheduled++

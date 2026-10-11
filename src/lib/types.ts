@@ -503,8 +503,8 @@ export interface Api {
   resetDemoPlanningData(): Promise<{ success: boolean; message: string }>
 
   // teacher timetables & schedule slots
-  getTeacherTimetable(teacherId?: string): Promise<{ timetable: TeacherTimetable | null; slots: TeacherScheduleSlot[] }>
-  saveTeacherScheduleSlots(slots: Array<Omit<TeacherScheduleSlot, 'id' | 'timetable_id' | 'teacher_id'>>, fileName?: string): Promise<void>
+  getTeacherTimetable(teacherId?: string, forDate?: string): Promise<{ timetable: TeacherTimetable | null; slots: TeacherScheduleSlot[] }>
+  saveTeacherScheduleSlots(slots: Array<Omit<TeacherScheduleSlot, 'id' | 'timetable_id' | 'teacher_id'>>, fileName?: string, effectiveDate?: string): Promise<void>
 
   // work plans
   listWorkPlans(filter?: { teacherId?: string; classId?: string; subjectId?: string; semester?: string }): Promise<WorkPlan[]>
@@ -630,6 +630,8 @@ export interface TeacherTimetable {
   academic_year: string
   semester: string
   is_active: boolean
+  effective_from?: string // YYYY-MM-DD
+  effective_until?: string | null // YYYY-MM-DD
   created_at?: string
 }
 
@@ -646,6 +648,41 @@ export interface TeacherScheduleSlot {
   start_time: string // "08:00"
   end_time: string   // "08:45"
   room: string
+  effective_from?: string // YYYY-MM-DD
+  effective_until?: string | null // YYYY-MM-DD
+  created_at?: string
+}
+
+/**
+ * Determines whether a schedule slot is active on a specific calendar date (YYYY-MM-DD).
+ * An uploaded timetable (or revision) only takes effect from the day of upload onwards
+ * and does not show in previous weeks.
+ */
+export function isSlotActiveOnDate(slot: TeacherScheduleSlot, dateStr: string): boolean {
+  if (!dateStr) return true
+  const cleanDate = dateStr.includes('T') ? dateStr.split('T')[0] : dateStr.trim()
+
+  // Determine effective_from (fallback to created_at date if effective_from is not explicit)
+  const fromDate = slot.effective_from
+    ? (slot.effective_from.includes('T') ? slot.effective_from.split('T')[0] : slot.effective_from.trim())
+    : (slot.created_at ? slot.created_at.split('T')[0] : null)
+
+  // If there is an effective_from date, the slot only takes effect from that date onwards
+  if (fromDate && cleanDate < fromDate) {
+    return false
+  }
+
+  // Determine effective_until
+  if (slot.effective_until) {
+    const untilDate = slot.effective_until.includes('T')
+      ? slot.effective_until.split('T')[0]
+      : slot.effective_until.trim()
+    if (cleanDate > untilDate) {
+      return false
+    }
+  }
+
+  return true
 }
 
 export type PlanStatus = 'draft' | 'submitted' | 'under_review' | 'approved' | 'returned' | 'archived'

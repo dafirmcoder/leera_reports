@@ -9,6 +9,7 @@ import { parseTeacherTimetablePdf } from '../lib/timetablePdfParser'
 import { generateLessonPlanPdf, generateWorkPlanPdf } from '../lib/planningPdf'
 import {
   isLessonTimeInPast,
+  isSlotActiveOnDate,
   type Assignment,
   type ClassInfo,
   type CurriculumObjective,
@@ -545,6 +546,8 @@ export default function Planning() {
   const [showUploadTimetableModal, setShowUploadTimetableModal] = useState(false)
   const [parsingTimetable, setParsingTimetable] = useState(false)
   const [parsedTimetablePreview, setParsedTimetablePreview] = useState<TeacherScheduleSlot[]>([])
+  const [timetableEffectiveDate, setTimetableEffectiveDate] = useState<string>(() => formatDateISO(new Date()))
+  const [timetableFileName, setTimetableFileName] = useState<string>('Weekly Timetable.pdf')
 
   // Curriculum & PDF Ingestion State
   const [schemes, setSchemes] = useState<CurriculumScheme[]>([])
@@ -834,7 +837,7 @@ export default function Planning() {
       const dayDate = new Date(selectedWeekMonday)
       dayDate.setDate(selectedWeekMonday.getDate() + dayIdx)
       const dayDateStr = formatDateISO(dayDate)
-      const slots = timetableSlots.filter((s) => s.day_of_week === dayIdx)
+      const slots = timetableSlots.filter((s) => s.day_of_week === dayIdx && isSlotActiveOnDate(s, dayDateStr))
       totalSlots += slots.length
 
       for (const s of slots) {
@@ -861,6 +864,11 @@ export default function Planning() {
       unplannedCount: futureUnplannedCount + pastUnplannedCount
     }
   }, [selectedWeekMonday, timetableSlots, lessonPlans])
+
+  const currentActiveSlotsCount = useMemo(() => {
+    const todayStr = formatDateISO(new Date())
+    return timetableSlots.filter((s) => isSlotActiveOnDate(s, todayStr)).length
+  }, [timetableSlots])
 
   const openCreateLessonPlan = (
     slotClass?: string,
@@ -1895,6 +1903,8 @@ export default function Planning() {
 
     setParsingTimetable(true)
     setError(null)
+    setTimetableFileName(file.name || 'Weekly Timetable.pdf')
+    setTimetableEffectiveDate(formatDateISO(new Date()))
     try {
       const parsed = await parseTeacherTimetablePdf(file, classes, subjects, profile?.full_name)
       setParsedTimetablePreview(parsed.slots as any)
@@ -1912,9 +1922,13 @@ export default function Planning() {
   const handleConfirmTimetableSlots = async () => {
     try {
       setLoading(true)
-      await api.saveTeacherScheduleSlots(parsedTimetablePreview)
+      await api.saveTeacherScheduleSlots(
+        parsedTimetablePreview,
+        timetableFileName || 'Weekly Timetable.pdf',
+        timetableEffectiveDate || formatDateISO(new Date())
+      )
       setShowUploadTimetableModal(false)
-      setSuccess('Weekly timetable schedule configured successfully.')
+      setSuccess(`Weekly timetable schedule configured successfully. Takes effect from ${timetableEffectiveDate}.`)
       await loadAllPlanningData()
     } catch (err: any) {
       setError(err?.message || 'Failed to save timetable slots.')
@@ -2187,14 +2201,36 @@ export default function Planning() {
             )}
           </div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 12 }}>
+          <div>
+            {weekSlotStats.totalSlots === 0 && (
+              <div
+                style={{
+                  background: '#f8fafc',
+                  border: '1px dashed #cbd5e1',
+                  borderRadius: 8,
+                  padding: '12px 16px',
+                  marginBottom: 14,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  fontSize: 13,
+                  color: '#475569'
+                }}
+              >
+                <span style={{ fontSize: 18 }}>ℹ️</span>
+                <span>
+                  <strong>Historical Week:</strong> No timetable schedule was active during this week. Uploaded timetables take effect strictly from their upload date onwards and do not apply retroactively to previous weeks.
+                </span>
+              </div>
+            )}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 12 }}>
             {[0, 1, 2, 3, 4].map((dayIdx) => {
               const dayDate = new Date(selectedWeekMonday)
               dayDate.setDate(selectedWeekMonday.getDate() + dayIdx)
               const dayDateStr = formatDateISO(dayDate)
               const isToday = dayDateStr === formatDateISO(new Date())
               const daySlots = timetableSlots
-                .filter((s) => s.day_of_week === dayIdx)
+                .filter((s) => s.day_of_week === dayIdx && isSlotActiveOnDate(s, dayDateStr))
                 .sort((a, b) => (a.start_time || '').localeCompare(b.start_time || ''))
 
               return (
@@ -2430,6 +2466,7 @@ export default function Planning() {
                 </div>
               )
             })}
+            </div>
           </div>
         )}
       </div>
@@ -2515,7 +2552,7 @@ export default function Planning() {
           className={`seg-btn ${activeTab === 'timetable' ? 'active' : ''}`}
           onClick={() => setActiveTab('timetable')}
         >
-          🗓 My Timetable ({timetableSlots.length})
+          🗓 My Timetable ({currentActiveSlotsCount || timetableSlots.length})
         </button>
         <button
           className={`seg-btn ${activeTab === 'curriculum' ? 'active' : ''}`}
@@ -5717,6 +5754,45 @@ export default function Planning() {
                 </p>
               </div>
               <button className="btn btn-ghost btn-small" onClick={() => setShowUploadTimetableModal(false)}>✕</button>
+            </div>
+
+            {/* Effective Start Date Banner & Control */}
+            <div
+              style={{
+                background: '#eff6ff',
+                border: '1px solid #bfdbfe',
+                borderRadius: 8,
+                padding: '12px 16px',
+                marginBottom: 14,
+                display: 'flex',
+                flexWrap: 'wrap',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                gap: 12
+              }}
+            >
+              <div style={{ flex: '1 1 340px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, color: '#1e40af', fontSize: 13 }}>
+                  <span>📅</span>
+                  <span>Effective From Upload Date</span>
+                </div>
+                <div style={{ fontSize: 12, color: '#3b82f6', marginTop: 3 }}>
+                  This timetable only takes effect from the selected date onwards. Historical weeks prior to this date remain untouched and will not show this schedule.
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <label style={{ fontSize: 12, fontWeight: 700, color: '#1e3a8a', whiteSpace: 'nowrap' }}>
+                  Effective Start Date:
+                </label>
+                <input
+                  type="date"
+                  className="field input"
+                  style={{ width: 145, fontSize: 12, padding: '4px 8px', fontWeight: 600 }}
+                  value={timetableEffectiveDate}
+                  onChange={(e) => setTimetableEffectiveDate(e.target.value)}
+                />
+              </div>
             </div>
 
             <div style={{ maxHeight: 360, overflowY: 'auto', border: '1px solid #e2e8f0', borderRadius: 6, marginBottom: 12 }}>
