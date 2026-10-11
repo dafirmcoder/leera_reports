@@ -106,13 +106,23 @@ export function buildReport(rows: StudentReportRow[]): ReportData {
       map.set(key, entry)
     }
     entry.rows.push(r)
-    // Only accumulate totalScore and totalMax for tests that have been scored!
-    // Tests without score (score is null/undefined) must NOT be counted as 0 out of max_mark,
-    // which unfairly penalizes students or pulls down averages.
     if (r.score !== null && r.score !== undefined) {
       entry.totalScore += Number(r.score)
       entry.totalMax += Number(r.max_mark)
       entry.scoredCount += 1
+    }
+  }
+
+  // Case A: Unexcused (ABS)
+  // For subjects where the student has actively sat at least one assessment (scoredCount > 0),
+  // any missed administered test carries 0 marks, and its max_mark is retained in the denominator.
+  for (const entry of map.values()) {
+    if (entry.scoredCount > 0) {
+      for (const r of entry.rows) {
+        if (r.score === null || r.score === undefined) {
+          entry.totalMax += Number(r.max_mark)
+        }
+      }
     }
   }
 

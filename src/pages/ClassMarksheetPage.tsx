@@ -209,7 +209,20 @@ export default function ClassMarksheetPage() {
     }
   }, [isSenior, allocations, hasAllocationsConfigured])
 
-  // Compute student scores, subject averages, and aggregate
+  const administeredTestIds = useMemo(() => {
+    const set = new Set<string>()
+    tests.forEach((t) => {
+      const hasAnyScore = students.some((st) => {
+        if (!isStudentEnrolledInSubject(st.id, t.subject_id)) return false
+        const s = scoresMap[t.id]?.[st.id]
+        return s !== undefined && s !== null
+      })
+      if (hasAnyScore) set.add(t.id)
+    })
+    return set
+  }, [tests, students, scoresMap, isStudentEnrolledInSubject])
+
+  // Compute student scores, subject averages, and aggregate under Case A: Unexcused (ABS)
   const studentMetrics = useMemo(() => {
     const map = new Map<string, {
       subjectAverages: Record<string, number | null>
@@ -224,20 +237,42 @@ export default function ClassMarksheetPage() {
         const isEnrolled = isStudentEnrolledInSubject(st.id, sub.subject_id)
         if (!isEnrolled) {
           subjectAverages[sub.subject_id] = null
-          return // Excluded from student's overall aggregate!
+          return // Excluded from student's overall aggregate
         }
 
-        const testPcts: number[] = []
-        sub.tests.forEach((t) => {
+        // Check if student has at least one recorded mark across this subject's tests (active assessed student)
+        const hasAnyScoreInSub = sub.tests.some((t) => {
           const raw = scoresMap[t.id]?.[st.id]
-          if (raw !== undefined && raw !== null && t.max_mark > 0) {
-            const pct = (raw / t.max_mark) * 100
-            testPcts.push(pct)
+          return raw !== undefined && raw !== null
+        })
+
+        if (!hasAnyScoreInSub) {
+          // Unassessed student in this subject
+          subjectAverages[sub.subject_id] = null
+          return
+        }
+
+        let earnedSum = 0
+        let possibleSum = 0
+
+        sub.tests.forEach((t) => {
+          if (!administeredTestIds.has(t.id)) {
+            // Not yet administered to cohort (e.g. pending test)
+            return
+          }
+          const raw = scoresMap[t.id]?.[st.id]
+          if (raw !== undefined && raw !== null) {
+            earnedSum += Number(raw)
+            possibleSum += t.max_mark
+          } else {
+            // Case A: Unexcused (ABS) - student gets 0 marks, max_mark stays in denominator
+            earnedSum += 0
+            possibleSum += t.max_mark
           }
         })
 
-        if (testPcts.length > 0) {
-          const avg = Number((testPcts.reduce((a, b) => a + b, 0) / testPcts.length).toFixed(1))
+        if (possibleSum > 0) {
+          const avg = Number(((earnedSum / possibleSum) * 100).toFixed(1))
           subjectAverages[sub.subject_id] = avg
           validSubjectAverages.push(avg)
         } else {
@@ -253,37 +288,72 @@ export default function ClassMarksheetPage() {
     })
 
     return map
-  }, [students, subjectsWithTests, scoresMap, isStudentEnrolledInSubject])
+  }, [students, subjectsWithTests, scoresMap, isStudentEnrolledInSubject, administeredTestIds])
 
-  // Class unit test averages and overall subject averages
+  // Class unit test averages and overall subject averages under Case A: Unexcused (ABS)
   const classAverages = useMemo(() => {
     const unitAverages: Record<string, number | null> = {}
     const subjectAverages: Record<string, number | null> = {}
     const allAggregates: number[] = []
 
     tests.forEach((t) => {
-      const pcts: number[] = []
+      if (!administeredTestIds.has(t.id)) {
+        unitAverages[t.id] = null
+        return
+      }
+      let tEarned = 0
+      let tMaxTotal = 0
       students.forEach((st) => {
         if (!isStudentEnrolledInSubject(st.id, t.subject_id)) return
+        const hasAnyScoreInSub = tests.some((otherT) => {
+          if (otherT.subject_id !== t.subject_id) return false
+          const raw = scoresMap[otherT.id]?.[st.id]
+          return raw !== undefined && raw !== null
+        })
+        if (!hasAnyScoreInSub) return
+
         const raw = scoresMap[t.id]?.[st.id]
-        if (raw !== undefined && raw !== null && t.max_mark > 0) {
-          pcts.push((raw / t.max_mark) * 100)
+        if (raw !== undefined && raw !== null) {
+          tEarned += Number(raw)
+          tMaxTotal += t.max_mark
+        } else {
+          // Case A: Unexcused (ABS)
+          tEarned += 0
+          tMaxTotal += t.max_mark
         }
       })
-      unitAverages[t.id] = pcts.length > 0
-        ? Number((pcts.reduce((a, b) => a + b, 0) / pcts.length).toFixed(1))
+      unitAverages[t.id] = tMaxTotal > 0
+        ? Number(((tEarned / tMaxTotal) * 100).toFixed(1))
         : null
     })
 
     subjectsWithTests.forEach((sub) => {
-      const avgs: number[] = []
+      let subEarnedTotal = 0
+      let subPossibleTotal = 0
       students.forEach((st) => {
         if (!isStudentEnrolledInSubject(st.id, sub.subject_id)) return
-        const avg = studentMetrics.get(st.id)?.subjectAverages[sub.subject_id]
-        if (avg !== undefined && avg !== null) avgs.push(avg)
+        const hasAnyScoreInSub = sub.tests.some((t) => {
+          const raw = scoresMap[t.id]?.[st.id]
+          return raw !== undefined && raw !== null
+        })
+        if (!hasAnyScoreInSub) return // exclude unassessed students
+
+        sub.tests.forEach((t) => {
+          if (!administeredTestIds.has(t.id)) return // skip pending
+          const raw = scoresMap[t.id]?.[st.id]
+          if (raw !== undefined && raw !== null) {
+            subEarnedTotal += Number(raw)
+            subPossibleTotal += t.max_mark
+          } else {
+            // Case A: Unexcused (ABS)
+            subEarnedTotal += 0
+            subPossibleTotal += t.max_mark
+          }
+        })
       })
-      subjectAverages[sub.subject_id] = avgs.length > 0
-        ? Number((avgs.reduce((a, b) => a + b, 0) / avgs.length).toFixed(1))
+
+      subjectAverages[sub.subject_id] = subPossibleTotal > 0
+        ? Number(((subEarnedTotal / subPossibleTotal) * 100).toFixed(1))
         : null
     })
 
@@ -297,7 +367,7 @@ export default function ClassMarksheetPage() {
       : null
 
     return { unitAverages, subjectAverages, classOverall }
-  }, [tests, students, subjectsWithTests, scoresMap, studentMetrics, isStudentEnrolledInSubject])
+  }, [tests, students, subjectsWithTests, scoresMap, studentMetrics, isStudentEnrolledInSubject, administeredTestIds])
 
   const handleExportExcel = async () => {
     try {
@@ -1052,20 +1122,37 @@ export default function ClassMarksheetPage() {
                                     ? Math.round((rawScore / t.max_mark) * 100)
                                     : null
 
+                                  const isTestAdmin = administeredTestIds.has(t.id)
+                                  const isStudentAssessedInSub = sub.tests.some((ot) => {
+                                    const r = scoresMap[ot.id]?.[st.id]
+                                    return r !== undefined && r !== null
+                                  })
+                                  const isAbsent = !hasScore && isTestAdmin && isStudentAssessedInSub
+
                                   return (
                                     <td
                                       key={`${st.id}_${t.id}`}
                                       style={{
                                         padding: '6px 4px',
                                         fontSize: '11px',
-                                        fontWeight: hasScore ? 600 : 400,
-                                        color: hasScore ? '#0f172a' : '#cbd5e1',
+                                        fontWeight: hasScore ? 600 : isAbsent ? 700 : 400,
+                                        color: hasScore ? '#0f172a' : isAbsent ? '#dc2626' : '#cbd5e1',
                                         borderRight: '1px solid #f1f5f9',
                                         background: hasScore
                                           ? (pct! >= 70 ? 'rgba(16, 185, 129, 0.05)' : pct! >= 50 ? 'rgba(245, 158, 11, 0.05)' : 'rgba(239, 68, 68, 0.05)')
+                                          : isAbsent
+                                          ? 'rgba(100, 116, 139, 0.04)'
                                           : 'transparent'
                                       }}
-                                      title={hasScore ? `Raw: ${rawScore}/${t.max_mark} (${pct}%)` : 'No score entered'}
+                                      title={
+                                        hasScore
+                                          ? `Raw: ${rawScore}/${t.max_mark} (${pct}%)`
+                                          : isAbsent
+                                          ? `Unexcused Absence: = (0/${t.max_mark})`
+                                          : !isTestAdmin
+                                          ? 'Pending / Not administered yet'
+                                          : 'No score entered'
+                                      }
                                     >
                                       {hasScore ? (
                                         displayMode === 'raw' ? (
@@ -1080,6 +1167,8 @@ export default function ClassMarksheetPage() {
                                         ) : (
                                           `${pct}%`
                                         )
+                                      ) : isAbsent ? (
+                                        <span style={{ color: '#475569', fontWeight: 700, fontSize: '13px' }}>=</span>
                                       ) : (
                                         '—'
                                       )}
@@ -1147,7 +1236,7 @@ export default function ClassMarksheetPage() {
                       letterSpacing: '0.5px'
                     }}
                   >
-                    Class Average
+                    Class Average {students.length > 0 && `(N=${students.filter((st) => studentMetrics.get(st.id)?.overallAggregatePct !== null).length} / ${students.length})`}
                   </td>
 
                   {subjectsWithTests.map((sub) => {

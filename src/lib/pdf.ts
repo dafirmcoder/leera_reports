@@ -37,6 +37,23 @@ function pct(score: number, max: number): string {
   return `${((score / (max || 1)) * 100).toFixed(1)}%`
 }
 
+export function sanitizePdfText(text: string): string {
+  if (!text) return ''
+  return text
+    .replace(/\u0130/g, 'I') // Capital dotted I (İ)
+    .replace(/\u0131/g, 'i') // Small dotless i (ı)
+    .replace(/\u015E/g, 'S') // Ş
+    .replace(/\u015F/g, 's') // ş
+    .replace(/\u011E/g, 'G') // Ğ
+    .replace(/\u011F/g, 'g') // ğ
+    .replace(/\u00C7/g, 'C') // Ç
+    .replace(/\u00E7/g, 'c') // ç
+    .replace(/\u00D6/g, 'O') // Ö
+    .replace(/\u00F6/g, 'o') // ö
+    .replace(/\u00DC/g, 'U') // Ü
+    .replace(/\u00FC/g, 'u') // ü
+}
+
 export interface PdfContext {
   student: Student
   school: School
@@ -473,51 +490,92 @@ export async function generateSubjectMarksheetPdf(ctx: SubjectMarksheetContext):
   }
   const startY = y + 2
 
+  // 1. Identify administered tests: at least one student in the class has a recorded mark
+  const sortedStudents = [...students].sort((a, b) => a.full_name.localeCompare(b.full_name))
+  const administeredSet = new Set<string>()
+  tests.forEach((t) => {
+    const hasScore = sortedStudents.some((st) => {
+      const sc = scoresByTest[t.id]?.[st.id]
+      return sc !== null && sc !== undefined
+    })
+    if (hasScore) administeredSet.add(t.id)
+  })
+
   // Table structure
   const headRow: string[] = ['#', 'Roll No.', 'Student Name']
   tests.forEach((t) => {
-    headRow.push(`${t.title}\n(${fmtDate(t.test_date)})\nMax: ${t.max_mark}`)
+    const isPnd = !administeredSet.has(t.id)
+    headRow.push(`${t.title}\n(${fmtDate(t.test_date)})\nMax: ${t.max_mark}${isPnd ? '\n[PND]' : ''}`)
   })
   headRow.push('Total')
   headRow.push('Average %')
 
-  const sortedStudents = [...students].sort((a, b) => a.full_name.localeCompare(b.full_name))
   const body: any[] = []
-
   const testScoresList: number[][] = tests.map(() => [])
-  let classTotalPctSum = 0
-  let studentsWithMarksCount = 0
+  let cohortEarnedSum = 0
+  let cohortMaxSum = 0
+  let assessedStudentsCount = 0
+  const assessedStudentPcts: number[] = []
+  const assessedStudentTotals: number[] = []
+  const assessedStudentMaxTotals: number[] = []
 
   sortedStudents.forEach((student, idx) => {
     const rowCells: any[] = [
       String(idx + 1),
       formatRollNo(student.roll_no || student.admission_no) || '—',
-      student.full_name
+      sanitizePdfText(student.full_name)
     ]
+
+    // Determine if student has participated in at least one assessment in this subject
+    const isAssessed = tests.some((t) => {
+      const sc = scoresByTest[t.id]?.[student.id]
+      return sc !== null && sc !== undefined
+    })
+
+    if (!isAssessed) {
+      // Unassessed / on leave student
+      tests.forEach(() => rowCells.push('—'))
+      rowCells.push('—')
+      rowCells.push('—')
+      body.push(rowCells)
+      return
+    }
 
     let studentScoreSum = 0
     let studentMaxSum = 0
-    let studentTestsTaken = 0
 
     tests.forEach((t, tIdx) => {
+      if (!administeredSet.has(t.id)) {
+        // Pending assessment (not yet administered to anyone)
+        rowCells.push('—')
+        return
+      }
+
       const score = scoresByTest[t.id]?.[student.id]
       if (score !== null && score !== undefined) {
         rowCells.push(String(score))
-        studentScoreSum += score
+        studentScoreSum += Number(score)
         studentMaxSum += t.max_mark
-        studentTestsTaken += 1
-        testScoresList[tIdx].push(score)
+        testScoresList[tIdx].push(Number(score))
       } else {
-        rowCells.push('—')
+        // Case A: Unexcused (ABS) - display double dashes (=) instead of 0 [ABS], while counting as 0 score with full max mark in denominator
+        rowCells.push('=')
+        studentScoreSum += 0
+        studentMaxSum += t.max_mark
+        testScoresList[tIdx].push(0)
       }
     })
 
-    if (studentTestsTaken > 0 && studentMaxSum > 0) {
+    if (studentMaxSum > 0) {
       const studentPct = (studentScoreSum / studentMaxSum) * 100
       rowCells.push(`${studentScoreSum} / ${studentMaxSum}`)
       rowCells.push(`${studentPct.toFixed(1)}%`)
-      classTotalPctSum += studentPct
-      studentsWithMarksCount += 1
+      cohortEarnedSum += studentScoreSum
+      cohortMaxSum += studentMaxSum
+      assessedStudentsCount += 1
+      assessedStudentPcts.push(studentPct)
+      assessedStudentTotals.push(studentScoreSum)
+      assessedStudentMaxTotals.push(studentMaxSum)
     } else {
       rowCells.push('—')
       rowCells.push('—')
@@ -527,34 +585,62 @@ export async function generateSubjectMarksheetPdf(ctx: SubjectMarksheetContext):
   })
 
   // Summary rows
-  const avgRow: any[] = [{ content: 'Class Average', colSpan: 3, styles: { halign: 'left', fontStyle: 'bold', fillColor: [221, 235, 241], textColor: [31, 78, 95] } }]
+  const avgLabel = assessedStudentsCount > 0
+    ? `Class Average (N=${assessedStudentsCount} / ${sortedStudents.length})`
+    : 'Class Average'
+  const avgRow: any[] = [{ content: avgLabel, colSpan: 3, styles: { halign: 'left', fontStyle: 'bold', fillColor: [221, 235, 241], textColor: [31, 78, 95] } }]
   const highRow: any[] = [{ content: 'Highest Score', colSpan: 3, styles: { halign: 'left', fontStyle: 'bold', fillColor: [238, 246, 241], textColor: [20, 83, 45] } }]
   const lowRow: any[] = [{ content: 'Lowest Score', colSpan: 3, styles: { halign: 'left', fontStyle: 'bold', fillColor: [253, 242, 242], textColor: [153, 27, 27] } }]
 
   tests.forEach((t, tIdx) => {
-    const scores = testScoresList[tIdx]
-    if (scores.length > 0) {
-      const sum = scores.reduce((a, b) => a + b, 0)
-      const avg = sum / scores.length
-      const avgPct = (avg / (t.max_mark || 1)) * 100
-      avgRow.push({ content: `${avg.toFixed(1)} (${avgPct.toFixed(1)}%)`, styles: { halign: 'center', fontStyle: 'bold', fillColor: [221, 235, 241], textColor: [31, 78, 95] } })
-      highRow.push({ content: String(Math.max(...scores)), styles: { halign: 'center', fontStyle: 'bold', fillColor: [238, 246, 241], textColor: [20, 83, 45] } })
-      lowRow.push({ content: String(Math.min(...scores)), styles: { halign: 'center', fontStyle: 'bold', fillColor: [253, 242, 242], textColor: [153, 27, 27] } })
+    if (!administeredSet.has(t.id)) {
+      avgRow.push({ content: '— [PND]', styles: { halign: 'center', fontStyle: 'bold', fillColor: [221, 235, 241], textColor: [100, 116, 139] } })
+      highRow.push({ content: '—', styles: { halign: 'center', fontStyle: 'bold', fillColor: [238, 246, 241], textColor: [100, 116, 139] } })
+      lowRow.push({ content: '—', styles: { halign: 'center', fontStyle: 'bold', fillColor: [253, 242, 242], textColor: [100, 116, 139] } })
     } else {
-      avgRow.push({ content: '—', styles: { halign: 'center', fontStyle: 'bold', fillColor: [221, 235, 241] } })
-      highRow.push({ content: '—', styles: { halign: 'center', fontStyle: 'bold', fillColor: [238, 246, 241] } })
-      lowRow.push({ content: '—', styles: { halign: 'center', fontStyle: 'bold', fillColor: [253, 242, 242] } })
+      const scores = testScoresList[tIdx]
+      if (scores.length > 0) {
+        const sum = scores.reduce((a, b) => a + b, 0)
+        const avg = sum / scores.length
+        const avgPct = (avg / (t.max_mark || 1)) * 100
+        avgRow.push({ content: `${avg.toFixed(1)} (${avgPct.toFixed(1)}%)`, styles: { halign: 'center', fontStyle: 'bold', fillColor: [221, 235, 241], textColor: [31, 78, 95] } })
+        highRow.push({ content: String(Math.max(...scores)), styles: { halign: 'center', fontStyle: 'bold', fillColor: [238, 246, 241], textColor: [20, 83, 45] } })
+        lowRow.push({ content: String(Math.min(...scores)), styles: { halign: 'center', fontStyle: 'bold', fillColor: [253, 242, 242], textColor: [153, 27, 27] } })
+      } else {
+        avgRow.push({ content: '—', styles: { halign: 'center', fontStyle: 'bold', fillColor: [221, 235, 241] } })
+        highRow.push({ content: '—', styles: { halign: 'center', fontStyle: 'bold', fillColor: [238, 246, 241] } })
+        lowRow.push({ content: '—', styles: { halign: 'center', fontStyle: 'bold', fillColor: [253, 242, 242] } })
+      }
     }
   })
 
-  const overallAvg = studentsWithMarksCount > 0 ? (classTotalPctSum / studentsWithMarksCount).toFixed(1) + '%' : '—'
-  avgRow.push({ content: '—', styles: { halign: 'center', fontStyle: 'bold', fillColor: [221, 235, 241] } })
-  avgRow.push({ content: overallAvg, styles: { halign: 'center', fontStyle: 'bold', fillColor: [221, 235, 241], textColor: [31, 78, 95] } })
+  // Total Column & Average % Column in Summary Rows
+  if (assessedStudentsCount > 0 && cohortMaxSum > 0) {
+    const avgScore = (cohortEarnedSum / assessedStudentsCount).toFixed(1)
+    const avgMax = (cohortMaxSum / assessedStudentsCount).toFixed(0)
+    const classWeightedPct = (cohortEarnedSum / cohortMaxSum) * 100
 
-  highRow.push({ content: '', styles: { fillColor: [238, 246, 241] } })
-  highRow.push({ content: '', styles: { fillColor: [238, 246, 241] } })
-  lowRow.push({ content: '', styles: { fillColor: [253, 242, 242] } })
-  lowRow.push({ content: '', styles: { fillColor: [253, 242, 242] } })
+    avgRow.push({ content: `${avgScore} / ${avgMax} (${classWeightedPct.toFixed(1)}%)`, styles: { halign: 'center', fontStyle: 'bold', fillColor: [221, 235, 241], textColor: [31, 78, 95] } })
+    avgRow.push({ content: `${classWeightedPct.toFixed(1)}%`, styles: { halign: 'center', fontStyle: 'bold', fillColor: [221, 235, 241], textColor: [31, 78, 95] } })
+
+    const highestScore = Math.max(...assessedStudentTotals)
+    const highestPct = Math.max(...assessedStudentPcts)
+    const lowestScore = Math.min(...assessedStudentTotals)
+    const lowestPct = Math.min(...assessedStudentPcts)
+
+    highRow.push({ content: `${highestScore} / ${avgMax}`, styles: { halign: 'center', fontStyle: 'bold', fillColor: [238, 246, 241], textColor: [20, 83, 45] } })
+    highRow.push({ content: `${highestPct.toFixed(1)}%`, styles: { halign: 'center', fontStyle: 'bold', fillColor: [238, 246, 241], textColor: [20, 83, 45] } })
+
+    lowRow.push({ content: `${lowestScore} / ${avgMax}`, styles: { halign: 'center', fontStyle: 'bold', fillColor: [253, 242, 242], textColor: [153, 27, 27] } })
+    lowRow.push({ content: `${lowestPct.toFixed(1)}%`, styles: { halign: 'center', fontStyle: 'bold', fillColor: [253, 242, 242], textColor: [153, 27, 27] } })
+  } else {
+    avgRow.push({ content: '—', styles: { halign: 'center', fontStyle: 'bold', fillColor: [221, 235, 241] } })
+    avgRow.push({ content: '—', styles: { halign: 'center', fontStyle: 'bold', fillColor: [221, 235, 241] } })
+    highRow.push({ content: '—', styles: { fillColor: [238, 246, 241] } })
+    highRow.push({ content: '—', styles: { fillColor: [238, 246, 241] } })
+    lowRow.push({ content: '—', styles: { fillColor: [253, 242, 242] } })
+    lowRow.push({ content: '—', styles: { fillColor: [253, 242, 242] } })
+  }
 
   if (tests.length > 0) {
     body.push(avgRow)

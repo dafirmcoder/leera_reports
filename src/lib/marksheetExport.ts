@@ -36,9 +36,15 @@ function sanitizeSheetName(name: string): string {
 function formatScore(
   rawScore: number | null | undefined,
   maxMark: number,
-  displayMode: 'pct' | 'raw' | 'both'
+  displayMode: 'pct' | 'raw' | 'both',
+  isAbsent = false,
+  isPending = false
 ): string {
-  if (rawScore === null || rawScore === undefined) return '—'
+  if (rawScore === null || rawScore === undefined) {
+    if (isPending) return '—'
+    if (isAbsent) return '='
+    return '—'
+  }
   const pct = maxMark > 0 ? Math.round((rawScore / maxMark) * 100) : 0
   if (displayMode === 'raw') return `${rawScore}/${maxMark}`
   if (displayMode === 'both') return `${pct}% (${rawScore}/${maxMark})`
@@ -203,6 +209,20 @@ export async function downloadMarksheetExcel(data: MarksheetExportData): Promise
   aggHeader.border = borderThin
   ws.getCell(6, aggCol).border = borderThin
 
+  // Discovered administered tests
+  const administeredTestIds = new Set<string>()
+  subjectsWithTests.forEach((sub) => {
+    sub.tests.forEach((t) => {
+      const hasAnyScore = students.some((st) => {
+        const isEnrolled = isStudentEnrolledInSubject ? isStudentEnrolledInSubject(st.id, sub.subject_id) : true
+        if (!isEnrolled) return false
+        const s = scoresMap[t.id]?.[st.id]
+        return s !== undefined && s !== null
+      })
+      if (hasAnyScore) administeredTestIds.add(t.id)
+    })
+  })
+
   // Student Rows (Row 7 onwards)
   let rowIdx = 7
   students.forEach((st, sIdx) => {
@@ -270,10 +290,19 @@ export async function downloadMarksheetExcel(data: MarksheetExportData): Promise
         cell.border = borderThin
         cIdx++
       } else {
+        const hasAnyScoreInSub = sub.tests.some((t) => {
+          const raw = scoresMap[t.id]?.[st.id]
+          return raw !== undefined && raw !== null
+        })
+
         sub.tests.forEach((t) => {
           const rawScore = scoresMap[t.id]?.[st.id]
+          const isTestAdmin = administeredTestIds.has(t.id)
+          const isAbsent = hasAnyScoreInSub && isTestAdmin && (rawScore === null || rawScore === undefined)
+          const isPending = !isTestAdmin && (rawScore === null || rawScore === undefined)
+
           const cell = ws.getCell(rowIdx, cIdx)
-          cell.value = formatScore(rawScore, t.max_mark, displayMode)
+          cell.value = formatScore(rawScore, t.max_mark, displayMode, isAbsent, isPending)
           cell.alignment = { vertical: 'middle', horizontal: 'center' }
           cell.border = borderThin
 
@@ -285,6 +314,8 @@ export async function downloadMarksheetExcel(data: MarksheetExportData): Promise
             } else if (pct >= 80) {
               cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'F0FDF4' } }
             }
+          } else if (isAbsent) {
+            cell.font = { color: { argb: '64748B' }, bold: true }
           }
           cIdx++
         })
@@ -326,9 +357,14 @@ export async function downloadMarksheetExcel(data: MarksheetExportData): Promise
   const avgRow = ws.getRow(avgRowIdx)
   avgRow.height = 24
 
+  const assessedStudentsCount = students.filter((st) => {
+    const m = studentMetrics.get(st.id)
+    return m && m.overallAggregatePct !== null
+  }).length
+
   ws.mergeCells(avgRowIdx, 1, avgRowIdx, 3)
   const avgLabel = ws.getCell(avgRowIdx, 1)
-  avgLabel.value = 'CLASS AVERAGE'
+  avgLabel.value = `CLASS AVERAGE (N=${assessedStudentsCount} / ${students.length})`
   avgLabel.font = { bold: true, size: 10, color: { argb: '0F172A' } }
   avgLabel.alignment = { vertical: 'middle', horizontal: 'right' }
   avgLabel.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'E2E8F0' } }
@@ -435,6 +471,7 @@ export function downloadMarksheetCsv(data: MarksheetExportData): void {
   const escapeCsv = (val: string | number | null | undefined): string => {
     if (val === null || val === undefined) return ''
     const str = String(val)
+    if (str === '=') return '="="'
     if (str.includes(',') || str.includes('"') || str.includes('\n')) {
       return `"${str.replace(/"/g, '""')}"`
     }
@@ -462,6 +499,20 @@ export function downloadMarksheetCsv(data: MarksheetExportData): void {
   headerCols.push('Overall Aggregate %')
   rows.push(headerCols)
 
+  // Discovered administered tests
+  const administeredTestIds = new Set<string>()
+  subjectsWithTests.forEach((sub) => {
+    sub.tests.forEach((t) => {
+      const hasAnyScore = students.some((st) => {
+        const isEnrolled = isStudentEnrolledInSubject ? isStudentEnrolledInSubject(st.id, sub.subject_id) : true
+        if (!isEnrolled) return false
+        const s = scoresMap[t.id]?.[st.id]
+        return s !== undefined && s !== null
+      })
+      if (hasAnyScore) administeredTestIds.add(t.id)
+    })
+  })
+
   // Student rows
   students.forEach((st, sIdx) => {
     const row: string[] = [
@@ -487,9 +538,17 @@ export function downloadMarksheetCsv(data: MarksheetExportData): void {
       if (sub.tests.length === 0) {
         row.push('—')
       } else {
+        const hasAnyScoreInSub = sub.tests.some((t) => {
+          const raw = scoresMap[t.id]?.[st.id]
+          return raw !== undefined && raw !== null
+        })
+
         sub.tests.forEach((t) => {
           const rawScore = scoresMap[t.id]?.[st.id]
-          row.push(formatScore(rawScore, t.max_mark, displayMode))
+          const isTestAdmin = administeredTestIds.has(t.id)
+          const isAbsent = hasAnyScoreInSub && isTestAdmin && (rawScore === null || rawScore === undefined)
+          const isPending = !isTestAdmin && (rawScore === null || rawScore === undefined)
+          row.push(formatScore(rawScore, t.max_mark, displayMode, isAbsent, isPending))
         })
         const subAvg = metrics?.subjectAverages[sub.subject_id] ?? null
         row.push(subAvg !== null ? `${subAvg}%` : '—')
@@ -502,7 +561,12 @@ export function downloadMarksheetCsv(data: MarksheetExportData): void {
   })
 
   // Class Average row
-  const avgRow: string[] = ['CLASS AVERAGE', '', '']
+  const assessedStudentsCount = students.filter((st) => {
+    const m = studentMetrics.get(st.id)
+    return m && m.overallAggregatePct !== null
+  }).length
+
+  const avgRow: string[] = [`CLASS AVERAGE (N=${assessedStudentsCount} / ${students.length})`, '', '']
   subjectsWithTests.forEach((sub) => {
     if (sub.tests.length === 0) {
       avgRow.push('—')
