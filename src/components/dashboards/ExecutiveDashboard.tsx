@@ -15,6 +15,7 @@ import type {
 } from '../../lib/types'
 import LessonPlanComplianceCard from './LessonPlanComplianceCard'
 import TeacherAssignmentTestSummaryTable from '../TeacherAssignmentTestSummaryTable'
+import TeacherPendingTestsModal from '../TeacherPendingTestsModal'
 
 const today = () => new Date().toISOString().slice(0, 10)
 
@@ -72,6 +73,7 @@ export default function ExecutiveDashboard({ section = 'overview' }: DashboardPr
   const [filterSubjectId, setFilterSubjectId] = useState<string>('all')
   const [testSearch, setTestSearch] = useState('')
   const [teacherSearch, setTeacherSearch] = useState('')
+  const [selectedTeacherForPendingModal, setSelectedTeacherForPendingModal] = useState<TeacherTestSummary | null>(null)
 
   // Load initial overall data
   const loadOverallData = async () => {
@@ -987,6 +989,7 @@ export default function ExecutiveDashboard({ section = 'overview' }: DashboardPr
                   <th className="num" title="School exams / midterms">📝 Exams</th>
                   <th className="num">Total Tests</th>
                   <th className="num">Marks Completed</th>
+                  <th className="num">Pending Marks</th>
                   <th className="num">Total Marks Entered</th>
                   <th className="num">Average Score</th>
                   <th>Last Submission</th>
@@ -995,76 +998,143 @@ export default function ExecutiveDashboard({ section = 'overview' }: DashboardPr
               <tbody>
                 {filteredTeachers.length === 0 ? (
                   <tr>
-                    <td colSpan={11} className="muted center" style={{ padding: '24px' }}>
+                    <td colSpan={12} className="muted center" style={{ padding: '24px' }}>
                       No teacher records found.
                     </td>
                   </tr>
                 ) : (
-                  filteredTeachers.map((t) => (
-                    <tr key={t.teacher_id}>
-                      <td><strong>{t.teacher_name}</strong></td>
-                      <td>
-                        <span className="role-tag" style={{ fontSize: '11px' }}>
-                          {ROLE_LABEL[t.role] || t.role}
-                        </span>
-                      </td>
-                      <td>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                          {t.class_names.length > 0 ? (
-                            t.class_names.map((cn) => (
-                              <span key={cn} className="chip" style={{ fontSize: '11px', padding: '2px 6px' }}>
-                                {cn}
-                              </span>
-                            ))
-                          ) : (
-                            <span className="muted">—</span>
-                          )}
-                        </div>
-                      </td>
-                      <td>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                          {t.subjects.length > 0 ? (
-                            t.subjects.map((sn) => (
-                              <span key={sn} className="role-tag" style={{ background: '#e0f2fe', color: '#0369a1', fontSize: '11px' }}>
-                                {sn}
-                              </span>
-                            ))
-                          ) : (
-                            <span className="muted">—</span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="num mono" style={{ fontWeight: 600, color: '#1d4ed8' }}>{t.unit_tests_count ?? 0}</td>
-                      <td className="num mono" style={{ fontWeight: 600, color: '#c2410c' }}>{t.exams_count ?? 0}</td>
-                      <td className="num mono" style={{ fontWeight: 700 }}>{t.tests_count}</td>
-                      <td className="num">
-                        <span className="chip" style={{
-                          background: t.tests_count > 0 && t.tests_with_marks_pct === 100 ? '#dcfce7' : t.tests_with_marks_count > 0 ? '#fef3c7' : '#f1f5f9',
-                          color: t.tests_count > 0 && t.tests_with_marks_pct === 100 ? '#166534' : t.tests_with_marks_count > 0 ? '#92400e' : '#64748b'
-                        }}>
-                          {t.tests_with_marks_count} / {t.tests_count} ({t.tests_with_marks_pct}%)
-                        </span>
-                      </td>
-                      <td className="num mono">{t.total_marks_entered}</td>
-                      <td className="num">
-                        {t.average_score_pct !== null ? (
-                          <span style={{ fontWeight: 700, color: t.average_score_pct >= 65 ? '#1f8a5f' : t.average_score_pct >= 50 ? '#d97706' : '#dc2626' }}>
-                            {t.average_score_pct}%
+                  filteredTeachers.map((t) => {
+                    const pendingTests = Math.max(0, t.tests_count - t.tests_with_marks_count)
+                    return (
+                      <tr key={t.teacher_id}>
+                        <td><strong>{t.teacher_name}</strong></td>
+                        <td>
+                          <span className="role-tag" style={{ fontSize: '11px' }}>
+                            {ROLE_LABEL[t.role] || t.role}
                           </span>
-                        ) : (
-                          <span className="muted">—</span>
-                        )}
-                      </td>
-                      <td className="mono" style={{ fontSize: '12px' }}>
-                        {t.last_submission_date ? fmtDate(t.last_submission_date) : <span className="muted">No marks yet</span>}
-                      </td>
-                    </tr>
-                  ))
+                        </td>
+                        <td>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                            {t.class_names.length > 0 ? (
+                              t.class_names.map((cn) => (
+                                <span key={cn} className="chip" style={{ fontSize: '11px', padding: '2px 6px' }}>
+                                  {cn}
+                                </span>
+                              ))
+                            ) : (
+                              <span className="muted">—</span>
+                            )}
+                          </div>
+                        </td>
+                        <td>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                            {t.subjects.length > 0 ? (
+                              t.subjects.map((sn) => (
+                                <span key={sn} className="role-tag" style={{ background: '#e0f2fe', color: '#0369a1', fontSize: '11px' }}>
+                                  {sn}
+                                </span>
+                              ))
+                            ) : (
+                              <span className="muted">—</span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="num mono" style={{ fontWeight: 600, color: '#1d4ed8' }}>{t.unit_tests_count ?? 0}</td>
+                        <td className="num mono" style={{ fontWeight: 600, color: '#c2410c' }}>{t.exams_count ?? 0}</td>
+                        <td className="num mono" style={{ fontWeight: 700 }}>{t.tests_count}</td>
+                        <td className="num">
+                          <span className="chip" style={{
+                            background: t.tests_count > 0 && t.tests_with_marks_pct === 100 ? '#dcfce7' : t.tests_with_marks_count > 0 ? '#fef3c7' : '#f1f5f9',
+                            color: t.tests_count > 0 && t.tests_with_marks_pct === 100 ? '#166534' : t.tests_with_marks_count > 0 ? '#92400e' : '#64748b'
+                          }}>
+                            {t.tests_with_marks_count} / {t.tests_count} ({t.tests_with_marks_pct}%)
+                          </span>
+                        </td>
+                        <td className="num">
+                          {pendingTests > 0 ? (
+                            <button
+                              type="button"
+                              className="btn btn-small"
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '5px',
+                                padding: '2px 8px',
+                                fontSize: '11.5px',
+                                background: '#fef3c7',
+                                color: '#92400e',
+                                border: '1px solid #f59e0b',
+                                fontWeight: 700,
+                                borderRadius: '6px',
+                                cursor: 'pointer'
+                              }}
+                              onClick={() => setSelectedTeacherForPendingModal(t)}
+                              title={`Click to view all ${pendingTests} pending tests/exams for ${t.teacher_name}`}
+                            >
+                              <span>⏳ {pendingTests}</span>
+                              <span style={{ fontSize: '10.5px', textDecoration: 'underline' }}>View 🔍</span>
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className="btn btn-small btn-ghost"
+                              style={{
+                                color: '#166534',
+                                fontWeight: 600,
+                                fontSize: '11.5px',
+                                padding: '2px 6px',
+                                cursor: t.tests_count > 0 ? 'pointer' : 'default'
+                              }}
+                              onClick={() => {
+                                if (t.tests_count > 0) setSelectedTeacherForPendingModal(t)
+                              }}
+                              disabled={t.tests_count === 0}
+                              title={t.tests_count > 0 ? `Click to view all tests for ${t.teacher_name}` : 'No tests created'}
+                            >
+                              ✓ 0 {t.tests_count > 0 && <span style={{ fontSize: '10.5px', color: '#64748b' }}>(View)</span>}
+                            </button>
+                          )}
+                        </td>
+                        <td className="num mono">{t.total_marks_entered}</td>
+                        <td className="num">
+                          {t.average_score_pct !== null ? (
+                            <span style={{ fontWeight: 700, color: t.average_score_pct >= 65 ? '#1f8a5f' : t.average_score_pct >= 50 ? '#d97706' : '#dc2626' }}>
+                              {t.average_score_pct}%
+                            </span>
+                          ) : (
+                            <span className="muted">—</span>
+                          )}
+                        </td>
+                        <td className="mono" style={{ fontSize: '12px' }}>
+                          {t.last_submission_date ? fmtDate(t.last_submission_date) : <span className="muted">No marks yet</span>}
+                        </td>
+                      </tr>
+                    )
+                  })
                 )}
               </tbody>
             </table>
           </div>
         </section>
+      )}
+
+      {/* Teacher Pending / Active Tests Inspection Modal */}
+      {selectedTeacherForPendingModal && testOverview && (
+        <TeacherPendingTestsModal
+          teacher={selectedTeacherForPendingModal}
+          allTests={testOverview.all_tests}
+          teacherAssignments={testOverview.teacher_assignment_summaries || []}
+          initialTab={
+            Math.max(
+              0,
+              selectedTeacherForPendingModal.tests_count -
+                selectedTeacherForPendingModal.tests_with_marks_count
+            ) > 0
+              ? 'pending'
+              : 'all'
+          }
+          onClose={() => setSelectedTeacherForPendingModal(null)}
+        />
       )}
     </div>
   )

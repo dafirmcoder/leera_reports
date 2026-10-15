@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../lib/api'
 import { fmtDate } from '../lib/report'
-import type { ClassInfo, EndOfUnitTestOverview, Subject } from '../lib/types'
+import type { ClassInfo, EndOfUnitTestOverview, Subject, TeacherTestSummary } from '../lib/types'
 import TeacherAssignmentTestSummaryTable from './TeacherAssignmentTestSummaryTable'
+import TeacherPendingTestsModal from './TeacherPendingTestsModal'
 
 interface CoordinatorMarksOverviewProps {
   classes: ClassInfo[]
@@ -24,6 +25,7 @@ export default function CoordinatorMarksOverview({
   const [filterSubjectId, setFilterSubjectId] = useState('all')
   const [onlyWithMarks, setOnlyWithMarks] = useState(false)
   const [teacherSearch, setTeacherSearch] = useState('')
+  const [selectedTeacherForPendingModal, setSelectedTeacherForPendingModal] = useState<TeacherTestSummary | null>(null)
 
   const loadData = async () => {
     setLoading(true)
@@ -294,11 +296,47 @@ export default function CoordinatorMarksOverview({
                         </td>
                         <td className="num">
                           {pendingTests > 0 ? (
-                            <span style={{ color: '#d97706', fontWeight: 700 }}>
-                              ⏳ {pendingTests}
-                            </span>
+                            <button
+                              type="button"
+                              className="btn btn-small"
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                padding: '3px 8px',
+                                fontSize: '12px',
+                                background: '#fef3c7',
+                                color: '#92400e',
+                                border: '1px solid #f59e0b',
+                                fontWeight: 700,
+                                borderRadius: '6px',
+                                cursor: 'pointer'
+                              }}
+                              onClick={() => setSelectedTeacherForPendingModal(t)}
+                              title={`Click to view all ${pendingTests} pending tests/exams for ${t.teacher_name}`}
+                            >
+                              <span>⏳ {pendingTests} Pending</span>
+                              <span style={{ fontSize: '11px', textDecoration: 'underline' }}>View 🔍</span>
+                            </button>
                           ) : (
-                            <span style={{ color: '#10b981' }}>✓ 0</span>
+                            <button
+                              type="button"
+                              className="btn btn-small btn-ghost"
+                              style={{
+                                color: '#10b981',
+                                fontWeight: 600,
+                                fontSize: '12px',
+                                padding: '2px 6px',
+                                cursor: t.tests_count > 0 ? 'pointer' : 'default'
+                              }}
+                              onClick={() => {
+                                if (t.tests_count > 0) setSelectedTeacherForPendingModal(t)
+                              }}
+                              disabled={t.tests_count === 0}
+                              title={t.tests_count > 0 ? `Click to view all tests for ${t.teacher_name}` : 'No tests created'}
+                            >
+                              ✓ 0 {t.tests_count > 0 && <span style={{ fontSize: '11px', color: '#64748b' }}>(View)</span>}
+                            </button>
                           )}
                         </td>
                         <td>
@@ -314,6 +352,25 @@ export default function CoordinatorMarksOverview({
             </table>
           </div>
         </section>
+      )}
+
+      {/* Teacher Pending / Active Tests Inspection Modal */}
+      {selectedTeacherForPendingModal && data && (
+        <TeacherPendingTestsModal
+          teacher={selectedTeacherForPendingModal}
+          allTests={data.all_tests}
+          teacherAssignments={data.teacher_assignment_summaries || []}
+          initialTab={
+            Math.max(
+              0,
+              selectedTeacherForPendingModal.tests_count -
+                selectedTeacherForPendingModal.tests_with_marks_count
+            ) > 0
+              ? 'pending'
+              : 'all'
+          }
+          onClose={() => setSelectedTeacherForPendingModal(null)}
+        />
       )}
 
       {/* School-Wide Detailed Tests Registry */}

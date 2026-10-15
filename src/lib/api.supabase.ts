@@ -56,6 +56,12 @@ async function uid(): Promise<string> {
   return data.user.id
 }
 
+function isCoordOrLeadershipProfile(p?: { role?: string; additional_roles?: string[] } | null): boolean {
+  if (!p) return false
+  const roles = new Set<string>([p.role || '', ...(p.additional_roles || [])].filter(Boolean))
+  return roles.has('curriculum_coordinator') || roles.has('head_of_school') || roles.has('admin') || roles.has('director')
+}
+
 function toSchool(r: any): School {
   const semester = r.semester ?? r.term ?? '1'
   return {
@@ -1974,11 +1980,17 @@ export const supabaseApi: Api = {
 
     const assignmentMap = new Map<string, string>()
     const assignmentIdMap = new Map<string, string>()
+    const assignmentsByClassSubject = new Map<string, Array<{ teacher_id: string; teacher_name: string }>>()
     for (const a of (assignmentsData ?? []) as any[]) {
       const key = `${a.class_id}_${a.subject_id}`
-      const name = a.profiles?.full_name
+      const name = a.profiles?.full_name || profiles.find((p) => p.id === a.teacher_id)?.full_name
       if (name) assignmentMap.set(key, name)
       if (a.teacher_id) assignmentIdMap.set(key, a.teacher_id)
+      if (a.teacher_id && name) {
+        const list = assignmentsByClassSubject.get(key) || []
+        list.push({ teacher_id: a.teacher_id, teacher_name: name })
+        assignmentsByClassSubject.set(key, list)
+      }
     }
 
     const studentsByClass = new Map<string, number>()
@@ -2008,14 +2020,28 @@ export const supabaseApi: Api = {
       const highest = hasMarks ? Math.max(...enteredMarks) : null
       const lowest = hasMarks ? Math.min(...enteredMarks) : null
       const creator = profiles.find((pr) => pr.id === t.created_by)
-      const creatorIsCoordOrLead = creator?.role === 'curriculum_coordinator' || creator?.role === 'director' || creator?.role === 'admin' || creator?.role === 'head_of_school'
-      const assignedTeacherId = assignmentIdMap.get(`${t.class_id}_${t.subject_id}`)
-      const assignedTeacherName = assignmentMap.get(`${t.class_id}_${t.subject_id}`)
+      const creatorIsCoordOrLead = isCoordOrLeadershipProfile(creator)
+      const key = `${t.class_id}_${t.subject_id}`
+      const assignedTeachers = assignmentsByClassSubject.get(key) || []
 
-      const teacherId = assignedTeacherId || (!creatorIsCoordOrLead ? t.created_by : undefined)
-      const teacherName = assignedTeacherName
-        || (!creatorIsCoordOrLead && creator?.full_name ? creator.full_name : null)
-        || 'Unassigned'
+      // If test creator is one of the assigned teachers for this subject, attribute strictly to them
+      const creatorAssigned = assignedTeachers.find((at) => at.teacher_id === t.created_by)
+      let teacherId: string | undefined
+      let teacherName: string
+
+      if (creatorAssigned) {
+        teacherId = creatorAssigned.teacher_id
+        teacherName = creatorAssigned.teacher_name
+      } else if (assignedTeachers.length > 0) {
+        teacherId = assignedTeachers[0].teacher_id
+        teacherName = assignedTeachers[0].teacher_name
+      } else if (!creatorIsCoordOrLead && creator) {
+        teacherId = t.created_by
+        teacherName = creator.full_name || 'Teacher'
+      } else {
+        teacherId = undefined
+        teacherName = 'Unassigned'
+      }
 
       return {
         test_id: t.id,
@@ -2139,14 +2165,16 @@ export const supabaseApi: Api = {
 
       const teacherTests = all_tests.filter((t) => {
         const key = `${t.class_id}_${t.subject_id}`
-        const assignedTeacherId = assignmentIdMap.get(key)
-        // 1. If this subject has an assigned teacher in class_subject_teachers,
-        // the test strictly belongs to the assigned teacher (NOT the coordinator who created it)
-        if (assignedTeacherId) {
-          return assignedTeacherId === p.id
+        const assignedTeachers = assignmentsByClassSubject.get(key) || []
+        const isAssigned = assignedTeachers.some((at) => at.teacher_id === p.id)
+        if (isAssigned) {
+          // If creator is another assigned teacher for this class-subject, it belongs to that other creator
+          const otherAssignedCreator = assignedTeachers.some((at) => at.teacher_id === t.created_by && at.teacher_id !== p.id)
+          if (otherAssignedCreator) return false
+          return true
         }
-        // 2. Direct teacher_id match (for tests created by ordinary teachers)
-        const isCoordOrLead = p.role === 'curriculum_coordinator' || p.role === 'director' || p.role === 'admin' || p.role === 'head_of_school'
+        // Direct teacher_id match (for tests created by ordinary teachers)
+        const isCoordOrLead = isCoordOrLeadershipProfile(p)
         if (!isCoordOrLead && (t.teacher_id === p.id || t.created_by === p.id)) {
           return true
         }
@@ -2226,62 +2254,84 @@ export const supabaseApi: Api = {
 
     // 2. Aggregate tests into combinations
     for (const t of all_tests) {
-      const assignedTeacherId = assignmentIdMap.get(`${t.class_id}_${t.subject_id}`)
-      const teacherId = assignedTeacherId || t.teacher_id
-      if (!teacherId || t.teacher_name === 'Unassigned') continue
+      if (!t.subject_name || !t.class_name || t.teacher_name === 'Unassigned') continue
+      const key = `${t.class_id}_${t.subject_id}`
+      const assignedTeachers = assignmentsByClassSubject.get(key) || []
 
-      const key = `${teacherId}_${t.class_id}_${t.subject_id}`
-      let item = assignmentSummariesMap.get(key)
-      if (!item) {
-        if (!t.subject_name || !t.class_name) continue
-        const teacherProfile = profiles.find((p) => p.id === teacherId)
-        item = {
-          teacher_id: teacherId,
-          teacher_name: t.teacher_name || teacherProfile?.full_name || 'Teacher',
-          role: teacherProfile?.role,
-          class_id: t.class_id,
-          class_name: t.class_name,
-          subject_id: t.subject_id,
-          subject_name: t.subject_name,
-          unit_tests_count: 0,
-          exams_count: 0,
-          total_tests_count: 0,
-          tests_with_marks_count: 0,
-          tests_with_marks_pct: 0,
-          total_marks_entered: 0,
-          average_score_pct: null,
-          last_submission_date: null
+      const creatorAssigned = assignedTeachers.find((at) => at.teacher_id === t.created_by)
+      let targetTeacherIds: string[] = []
+
+      if (creatorAssigned) {
+        targetTeacherIds = [creatorAssigned.teacher_id]
+      } else if (assignedTeachers.length > 0) {
+        targetTeacherIds = assignedTeachers.map((at) => at.teacher_id)
+      } else if (t.teacher_id) {
+        targetTeacherIds = [t.teacher_id]
+      }
+
+      for (const teacherId of targetTeacherIds) {
+        const itemKey = `${teacherId}_${t.class_id}_${t.subject_id}`
+        let item = assignmentSummariesMap.get(itemKey)
+        if (!item) {
+          const teacherProfile = profiles.find((p) => p.id === teacherId)
+          item = {
+            teacher_id: teacherId,
+            teacher_name: teacherProfile?.full_name || t.teacher_name || 'Teacher',
+            role: teacherProfile?.role,
+            class_id: t.class_id,
+            class_name: t.class_name,
+            subject_id: t.subject_id,
+            subject_name: t.subject_name,
+            unit_tests_count: 0,
+            exams_count: 0,
+            total_tests_count: 0,
+            tests_with_marks_count: 0,
+            tests_with_marks_pct: 0,
+            total_marks_entered: 0,
+            average_score_pct: null,
+            last_submission_date: null
+          }
+          assignmentSummariesMap.set(itemKey, item)
         }
-        assignmentSummariesMap.set(key, item)
-      }
 
-      const isExam = t.assessment_type === 'exam' || t.assessment_type === 'midterm'
-      if (isExam) {
-        item.exams_count += 1
-      } else {
-        item.unit_tests_count += 1
-      }
-      item.total_tests_count += 1
+        const isExam = t.assessment_type === 'exam' || t.assessment_type === 'midterm'
+        if (isExam) {
+          item.exams_count += 1
+        } else {
+          item.unit_tests_count += 1
+        }
+        item.total_tests_count += 1
 
-      if (t.has_marks_entered) {
-        item.tests_with_marks_count += 1
-        item.total_marks_entered += t.marks_entered_count
-        if (!item.last_submission_date || (t.test_date && t.test_date > item.last_submission_date)) {
-          item.last_submission_date = t.test_date
+        if (t.has_marks_entered) {
+          item.tests_with_marks_count += 1
+          item.total_marks_entered += t.marks_entered_count
+          if (!item.last_submission_date || (t.test_date && t.test_date > item.last_submission_date)) {
+            item.last_submission_date = t.test_date
+          }
         }
       }
     }
 
     // 3. Finalize percentages and averages for each assignment summary
     const teacher_assignment_summaries: TeacherAssignmentTestSummary[] = Array.from(assignmentSummariesMap.values()).map((item) => {
-      const testsForThisCombo = all_tests.filter((t) => t.class_id === item.class_id && t.subject_id === item.subject_id)
+      // If this teacher has no tests set for this combination, completion rate is 0 and average_score_pct is null
+      if (item.total_tests_count === 0) {
+        return {
+          ...item,
+          tests_with_marks_pct: 0,
+          average_score_pct: null
+        }
+      }
+
+      const testsForThisCombo = all_tests.filter((t) => {
+        if (t.class_id !== item.class_id || t.subject_id !== item.subject_id) return false
+        return t.created_by === item.teacher_id || t.teacher_id === item.teacher_id
+      })
       const scoredTests = testsForThisCombo.filter((t) => t.has_marks_entered && t.average_pct !== null)
       const avgPct = scoredTests.length > 0
         ? Number((scoredTests.reduce((sum, t) => sum + t.average_pct!, 0) / scoredTests.length).toFixed(1))
         : null
-      const completionPct = item.total_tests_count > 0
-        ? Number(((item.tests_with_marks_count / item.total_tests_count) * 100).toFixed(1))
-        : 0
+      const completionPct = Number(((item.tests_with_marks_count / item.total_tests_count) * 100).toFixed(1))
 
       return {
         ...item,
