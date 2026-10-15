@@ -2011,12 +2011,9 @@ export const supabaseApi: Api = {
       const creatorIsCoordOrLead = creator?.role === 'curriculum_coordinator' || creator?.role === 'director' || creator?.role === 'admin' || creator?.role === 'head_of_school'
       const assignedTeacherId = assignmentIdMap.get(`${t.class_id}_${t.subject_id}`)
       const assignedTeacherName = assignmentMap.get(`${t.class_id}_${t.subject_id}`)
-      const homeroomTeacherId = classHomeroomIdMap.get(t.class_id)
-      const homeroomTeacherName = classHomeroomMap.get(t.class_id)
 
-      const teacherId = assignedTeacherId || homeroomTeacherId || (!creatorIsCoordOrLead ? t.created_by : undefined)
+      const teacherId = assignedTeacherId || (!creatorIsCoordOrLead ? t.created_by : undefined)
       const teacherName = assignedTeacherName
-        || homeroomTeacherName
         || (!creatorIsCoordOrLead && creator?.full_name ? creator.full_name : null)
         || 'Unassigned'
 
@@ -2148,21 +2145,12 @@ export const supabaseApi: Api = {
         if (assignedTeacherId) {
           return assignedTeacherId === p.id
         }
-        // 2. Direct teacher_id match
-        if (t.teacher_id) {
-          return t.teacher_id === p.id
-        }
-        // 3. Class homeroom teacher fallback
-        const hrId = classHomeroomIdMap.get(t.class_id)
-        if (hrId) {
-          return hrId === p.id
-        }
-        // 4. Fallback to creator only if unassigned and creator is an ordinary teacher (not coordinator/leadership)
+        // 2. Direct teacher_id match (for tests created by ordinary teachers)
         const isCoordOrLead = p.role === 'curriculum_coordinator' || p.role === 'director' || p.role === 'admin' || p.role === 'head_of_school'
-        if (!isCoordOrLead && t.created_by === p.id) {
+        if (!isCoordOrLead && (t.teacher_id === p.id || t.created_by === p.id)) {
           return true
         }
-        return t.teacher_name === teacherName
+        return false
       })
 
       const unitTestsCount = teacherTests.filter((t) => (t.assessment_type || 'unit_test') === 'unit_test').length
@@ -2210,8 +2198,9 @@ export const supabaseApi: Api = {
       if (!a.teacher_id || !a.class_id || !a.subject_id) continue
       const teacherProfile = profiles.find((p) => p.id === a.teacher_id)
       const teacherName = teacherProfile?.full_name || a.profiles?.full_name || 'Teacher'
-      const cName = classMap.get(a.class_id) || 'Class'
-      const sName = subjectMapById.get(a.subject_id) || 'Subject'
+      const cName = classMap.get(a.class_id)
+      const sName = subjectMapById.get(a.subject_id)
+      if (!cName || !sName) continue
       const key = `${a.teacher_id}_${a.class_id}_${a.subject_id}`
 
       if (!assignmentSummariesMap.has(key)) {
@@ -2239,11 +2228,12 @@ export const supabaseApi: Api = {
     for (const t of all_tests) {
       const assignedTeacherId = assignmentIdMap.get(`${t.class_id}_${t.subject_id}`)
       const teacherId = assignedTeacherId || t.teacher_id
-      if (!teacherId) continue
+      if (!teacherId || t.teacher_name === 'Unassigned') continue
 
       const key = `${teacherId}_${t.class_id}_${t.subject_id}`
       let item = assignmentSummariesMap.get(key)
       if (!item) {
+        if (!t.subject_name || !t.class_name) continue
         const teacherProfile = profiles.find((p) => p.id === teacherId)
         item = {
           teacher_id: teacherId,
