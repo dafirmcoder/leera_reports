@@ -74,7 +74,8 @@ export default function ReportSheet({ student, school, className, teacherName, r
             </tr>
           )}
           {report.subjects.map((s, idx) => {
-            const rowSpan = s.rows.length + (s.count > 1 ? 1 : 0)
+            // rowSpan always includes the average row (shown for all subjects, even single-test)
+            const rowSpan = s.rows.length + 1
             return (
               <Fragment key={s.name}>
                 {s.rows.map((r, ri) => (
@@ -89,14 +90,13 @@ export default function ReportSheet({ student, school, className, teacherName, r
                     <td className="c">{r.score !== null && r.score !== undefined ? fmtPct((r.score / r.max_mark) * 100) : '—'}</td>
                   </tr>
                 ))}
-                {s.count > 1 && (
-                  <tr className="avg-row">
-                    <td colSpan={2}>Subject Average</td>
-                    <td className="c">{s.totalScore}</td>
-                    <td className="c">{s.totalMax}</td>
-                    <td className="c">{fmtPct(s.average)}</td>
-                  </tr>
-                )}
+                {/* Subject Average row — always shown, even when there is only one test */}
+                <tr className="avg-row">
+                  <td colSpan={2}>Subject Average</td>
+                  <td className="c">{s.totalScore}</td>
+                  <td className="c">{s.totalMax}</td>
+                  <td className="c">{fmtPct(s.average)}</td>
+                </tr>
                 {idx < report.subjects.length - 1 && (
                   <tr className="spacer-row"><td colSpan={6} /></tr>
                 )}

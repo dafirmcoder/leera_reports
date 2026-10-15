@@ -223,6 +223,7 @@ export default function ClassMarksheetPage() {
   }, [tests, students, scoresMap, isStudentEnrolledInSubject])
 
   // Compute student scores, subject averages, and aggregate under Case A: Unexcused (ABS)
+  // Subject average = mean of per-test percentages (sum of each test's % / administered test count)
   const studentMetrics = useMemo(() => {
     const map = new Map<string, {
       subjectAverages: Record<string, number | null>
@@ -252,8 +253,9 @@ export default function ClassMarksheetPage() {
           return
         }
 
-        let earnedSum = 0
-        let possibleSum = 0
+        // Mean-of-percentages: sum each administered test's % then divide by administered count
+        let pctSum = 0
+        let administeredCount = 0
 
         sub.tests.forEach((t) => {
           if (!administeredTestIds.has(t.id)) {
@@ -261,18 +263,15 @@ export default function ClassMarksheetPage() {
             return
           }
           const raw = scoresMap[t.id]?.[st.id]
-          if (raw !== undefined && raw !== null) {
-            earnedSum += Number(raw)
-            possibleSum += t.max_mark
-          } else {
-            // Case A: Unexcused (ABS) - student gets 0 marks, max_mark stays in denominator
-            earnedSum += 0
-            possibleSum += t.max_mark
-          }
+          const testPct = (raw !== undefined && raw !== null)
+            ? (t.max_mark > 0 ? (Number(raw) / t.max_mark) * 100 : 0)
+            : 0 // Case A: Unexcused (ABS) — 0% for this test
+          pctSum += testPct
+          administeredCount += 1
         })
 
-        if (possibleSum > 0) {
-          const avg = Number(((earnedSum / possibleSum) * 100).toFixed(1))
+        if (administeredCount > 0) {
+          const avg = Number((pctSum / administeredCount).toFixed(1))
           subjectAverages[sub.subject_id] = avg
           validSubjectAverages.push(avg)
         } else {
@@ -291,6 +290,7 @@ export default function ClassMarksheetPage() {
   }, [students, subjectsWithTests, scoresMap, isStudentEnrolledInSubject, administeredTestIds])
 
   // Class unit test averages and overall subject averages under Case A: Unexcused (ABS)
+  // Subject averages use mean-of-per-test-percentages (consistent with studentMetrics).
   const classAverages = useMemo(() => {
     const unitAverages: Record<string, number | null> = {}
     const subjectAverages: Record<string, number | null> = {}
@@ -327,33 +327,18 @@ export default function ClassMarksheetPage() {
         : null
     })
 
+    // Subject class average = mean of each assessed student's subject average
+    // (each student's avg is already mean-of-per-test-%, so this stays consistent)
     subjectsWithTests.forEach((sub) => {
-      let subEarnedTotal = 0
-      let subPossibleTotal = 0
+      const studentSubjectAvgs: number[] = []
       students.forEach((st) => {
-        if (!isStudentEnrolledInSubject(st.id, sub.subject_id)) return
-        const hasAnyScoreInSub = sub.tests.some((t) => {
-          const raw = scoresMap[t.id]?.[st.id]
-          return raw !== undefined && raw !== null
-        })
-        if (!hasAnyScoreInSub) return // exclude unassessed students
-
-        sub.tests.forEach((t) => {
-          if (!administeredTestIds.has(t.id)) return // skip pending
-          const raw = scoresMap[t.id]?.[st.id]
-          if (raw !== undefined && raw !== null) {
-            subEarnedTotal += Number(raw)
-            subPossibleTotal += t.max_mark
-          } else {
-            // Case A: Unexcused (ABS)
-            subEarnedTotal += 0
-            subPossibleTotal += t.max_mark
-          }
-        })
+        const avg = studentMetrics.get(st.id)?.subjectAverages[sub.subject_id]
+        if (avg !== undefined && avg !== null) {
+          studentSubjectAvgs.push(avg)
+        }
       })
-
-      subjectAverages[sub.subject_id] = subPossibleTotal > 0
-        ? Number(((subEarnedTotal / subPossibleTotal) * 100).toFixed(1))
+      subjectAverages[sub.subject_id] = studentSubjectAvgs.length > 0
+        ? Number((studentSubjectAvgs.reduce((a, b) => a + b, 0) / studentSubjectAvgs.length).toFixed(1))
         : null
     })
 

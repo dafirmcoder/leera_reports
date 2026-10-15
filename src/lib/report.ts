@@ -91,36 +91,49 @@ export function isYear10OrAbove(className: string | undefined | null): boolean {
  * Build the report for End of Unit Tests:
  *  - subjects arranged by test date with the newest date first
  *  - individual tests within each subject arranged with the newest date first
- *  - subject average = total score / total max x 100 (subject row shown
- *    separately when a subject has more than one test)
+ *  - subject average = mean of per-test percentages for administered tests
+ *    (sum of each test's %, divided by the number of administered tests).
+ *    Missed administered tests count as 0%.
+ *    The average row is always shown, even when a subject has only one test.
  *  - overall average = mean of the subject averages
  */
 export function buildReport(rows: StudentReportRow[]): ReportData {
-  const map = new Map<string, { rows: StudentReportRow[]; totalScore: number; totalMax: number; scoredCount: number }>()
+  /**
+   * Track, per subject:
+   *  - pctSum: running sum of each administered test's % score
+   *  - administeredCount: tests administered to the class (scored OR absent-but-administered)
+   *  - scoredCount: tests where the student has a recorded score
+   *
+   * Average = pctSum / administeredCount  ("mean of per-test %")
+   * A missed administered test contributes 0% to pctSum.
+   */
+  const map = new Map<string, { rows: StudentReportRow[]; pctSum: number; administeredCount: number; scoredCount: number }>()
 
   for (const r of rows) {
     const key = r.subject.toLowerCase()
     let entry = map.get(key)
     if (!entry) {
-      entry = { rows: [], totalScore: 0, totalMax: 0, scoredCount: 0 }
+      entry = { rows: [], pctSum: 0, administeredCount: 0, scoredCount: 0 }
       map.set(key, entry)
     }
     entry.rows.push(r)
     if (r.score !== null && r.score !== undefined) {
-      entry.totalScore += Number(r.score)
-      entry.totalMax += Number(r.max_mark)
+      const testPct = r.max_mark > 0 ? (Number(r.score) / Number(r.max_mark)) * 100 : 0
+      entry.pctSum += testPct
+      entry.administeredCount += 1
       entry.scoredCount += 1
     }
   }
 
   // Case A: Unexcused (ABS)
   // For subjects where the student has actively sat at least one assessment (scoredCount > 0),
-  // any missed administered test carries 0 marks, and its max_mark is retained in the denominator.
+  // any missed administered test contributes 0% to pctSum and still counts toward administeredCount.
   for (const entry of map.values()) {
     if (entry.scoredCount > 0) {
       for (const r of entry.rows) {
         if (r.score === null || r.score === undefined) {
-          entry.totalMax += Number(r.max_mark)
+          // 0% for this test — pctSum stays unchanged, but count goes up
+          entry.administeredCount += 1
         }
       }
     }
@@ -142,14 +155,21 @@ export function buildReport(rows: StudentReportRow[]): ReportData {
   // Arrange subjects by date with newest date first (using the subject's latest test date)
   const subjects: ReportSubject[] = [...map.values()]
     .map((e) => {
-      const hasScores = e.scoredCount > 0 && e.totalMax > 0
+      const hasScores = e.scoredCount > 0 && e.administeredCount > 0
+      // average = mean of per-test percentages (pctSum / administeredCount)
+      const average = hasScores ? e.pctSum / e.administeredCount : 0
+      // totalScore / totalMax: kept for display in the score column cells
+      const totalScore = e.rows
+        .filter((r) => r.score !== null && r.score !== undefined)
+        .reduce((a, r) => a + Number(r.score), 0)
+      const totalMax = e.rows.reduce((a, r) => a + Number(r.max_mark), 0)
       return {
         name: e.rows[0].subject,
         rows: e.rows,
         count: e.rows.length,
-        totalScore: e.totalScore,
-        totalMax: e.totalMax,
-        average: hasScores ? pct(e.totalScore, e.totalMax) : 0
+        totalScore,
+        totalMax,
+        average
       }
     })
     .sort((a, b) => {
@@ -166,7 +186,7 @@ export function buildReport(rows: StudentReportRow[]): ReportData {
   // Subjects with 0 scored tests should not drag down the student's overall average to 0.
   const scoredSubjects = subjects.filter((s) => {
     const entry = map.get(s.name.toLowerCase())
-    return entry && entry.scoredCount > 0 && entry.totalMax > 0
+    return entry && entry.scoredCount > 0 && entry.administeredCount > 0
   })
 
   const overall =
