@@ -529,7 +529,7 @@ export default function HomeroomTeacherDashboard() {
                           fontWeight: 700,
                           fontSize: '16px',
                           color: asgn.average_pct !== null
-                            ? (asgn.average_pct >= 70 ? '#10b981' : asgn.average_pct >= 50 ? '#f59e0b' : '#ef4444')
+                            ? (asgn.average_pct >= 65 ? '#10b981' : asgn.average_pct >= 50 ? '#f59e0b' : '#ef4444')
                             : '#94a3b8'
                         }}>
                           {asgn.average_pct !== null ? `${asgn.average_pct}%` : '—'}

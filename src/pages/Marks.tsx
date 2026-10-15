@@ -904,6 +904,15 @@ export default function Marks() {
                       🔓 Open
                     </span>
                   )}
+                  {t.is_active === false ? (
+                    <span style={{ fontSize: 11, padding: '1px 6px', borderRadius: 4, background: '#f8fafc', color: '#64748b', fontWeight: 600, border: '1px solid #e2e8f0' }} title="Inactive: No marks entered yet">
+                      ⏸ Inactive (No marks)
+                    </span>
+                  ) : t.is_active === true ? (
+                    <span style={{ fontSize: 11, padding: '1px 6px', borderRadius: 4, background: '#f0fdf4', color: '#15803d', fontWeight: 600, border: '1px solid #bbf7d0' }} title="Active: Marks recorded">
+                      ✓ Active
+                    </span>
+                  ) : null}
                 </div>
                 <span className="muted"> {fmtDate(t.test_date)} · Max {t.max_mark}</span>
               </div>

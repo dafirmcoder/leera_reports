@@ -5,7 +5,7 @@ import { useSchool } from '../context/SchoolContext'
 import { useAuth } from '../context/AuthContext'
 import { can, getTeacherHomeroomClasses, isCoordinatorOrLeadership, isHomeroomTeacher } from '../lib/permissions'
 import LeeraLoader from '../components/LeeraLoader'
-import { downloadMarksheetExcel, downloadMarksheetCsv } from '../lib/marksheetExport'
+import { downloadMarksheetExcel, downloadMarksheetCsv, downloadMarksheetPdf } from '../lib/marksheetExport'
 import { isYear10OrAbove } from '../lib/report'
 import SubjectAllocationModal from '../components/SubjectAllocationModal'
 import type { Assignment, ClassMarksLock, Student, UnitTest } from '../lib/types'
@@ -71,7 +71,7 @@ export default function ClassMarksheetPage() {
   const [studentSearch, setStudentSearch] = useState('')
   const [displayMode, setDisplayMode] = useState<'pct' | 'raw' | 'both'>('pct')
   const [assessmentFilter, setAssessmentFilter] = useState<'all' | 'unit_test' | 'midterm' | 'exam'>('all')
-  const [exporting, setExporting] = useState<'excel' | 'csv' | null>(null)
+  const [exporting, setExporting] = useState<'excel' | 'csv' | 'pdf' | null>(null)
 
   const isDirector = profile?.role === 'director'
   const isSenior = isYear10OrAbove(currentClass?.name)
@@ -136,11 +136,68 @@ export default function ClassMarksheetPage() {
     loadClassData()
   }, [currentClassId])
 
+  // Filter students if searching
+  const filteredStudents = useMemo(() => {
+    if (!studentSearch.trim()) return students
+    const q = studentSearch.toLowerCase()
+    return students.filter((s) =>
+      s.full_name.toLowerCase().includes(q) ||
+      (s.roll_no && s.roll_no.toLowerCase().includes(q)) ||
+      (s.admission_no && s.admission_no.toLowerCase().includes(q)) ||
+      (s.student_no && s.student_no.toLowerCase().includes(q))
+    )
+  }, [students, studentSearch])
+
+  const hasAllocationsConfigured = useMemo(() => {
+    return Object.values(allocations).some((arr) => Array.isArray(arr) && arr.length > 0)
+  }, [allocations])
+
+  const isStudentEnrolledInSubject = useMemo(() => {
+    return (studentId: string, subjectId: string): boolean => {
+      if (!isSenior) return true
+      const studentAllocs = allocations[studentId]
+      if (hasAllocationsConfigured) {
+        return Array.isArray(studentAllocs) && studentAllocs.includes(subjectId)
+      }
+      // If allocations have not been configured at all for this Year 10+ class,
+      // fallback to whether the student has scores recorded in the subject
+      return tests.some((t) => {
+        if (t.subject_id !== subjectId) return false
+        const s = scoresMap[t.id]?.[studentId]
+        return s !== undefined && s !== null
+      })
+    }
+  }, [isSenior, allocations, hasAllocationsConfigured, tests, scoresMap])
+
+  // Only consider tests where students have marks uploaded (marked active)
+  const administeredTestIds = useMemo(() => {
+    const set = new Set<string>()
+    tests.forEach((t) => {
+      if (t.is_active === true) {
+        set.add(t.id)
+        return
+      }
+      if (t.is_active === false) {
+        return // Inactive until first score is entered
+      }
+      // Fallback if is_active is undefined in legacy records
+      const hasAnyScore = students.some((st) => {
+        if (!isStudentEnrolledInSubject(st.id, t.subject_id)) return false
+        const s = scoresMap[t.id]?.[st.id]
+        return s !== undefined && s !== null
+      })
+      if (hasAnyScore) set.add(t.id)
+    })
+    return set
+  }, [tests, students, scoresMap, isStudentEnrolledInSubject])
+
   // Group tests by subject and combine with assignments
+  // Strictly only include tests where marks have been uploaded across the cohort
   const subjectsWithTests = useMemo(() => {
+    const testsWithMarks = tests.filter((t) => administeredTestIds.has(t.id))
     const filteredTests = assessmentFilter === 'all'
-      ? tests
-      : tests.filter((t) => (t.assessment_type || 'unit_test') === assessmentFilter)
+      ? testsWithMarks
+      : testsWithMarks.filter((t) => (t.assessment_type || 'unit_test') === assessmentFilter)
 
     // Collect all unique subject IDs from assignments and tests
     const subjectMap = new Map<string, {
@@ -180,50 +237,11 @@ export default function ClassMarksheetPage() {
     // Sort subjects alphabetically
     const list = Array.from(subjectMap.values()).filter((s) => s.tests.length > 0 || assignments.some((a) => a.subject_id === s.subject_id))
     return list.sort((a, b) => a.subject_name.localeCompare(b.subject_name, undefined, { sensitivity: 'base' }))
-  }, [assignments, tests])
-
-  // Filter students if searching
-  const filteredStudents = useMemo(() => {
-    if (!studentSearch.trim()) return students
-    const q = studentSearch.toLowerCase()
-    return students.filter((s) =>
-      s.full_name.toLowerCase().includes(q) ||
-      (s.roll_no && s.roll_no.toLowerCase().includes(q)) ||
-      (s.admission_no && s.admission_no.toLowerCase().includes(q)) ||
-      (s.student_no && s.student_no.toLowerCase().includes(q))
-    )
-  }, [students, studentSearch])
-
-  const hasAllocationsConfigured = useMemo(() => {
-    return Object.values(allocations).some((arr) => Array.isArray(arr) && arr.length > 0)
-  }, [allocations])
-
-  const isStudentEnrolledInSubject = useMemo(() => {
-    return (studentId: string, subjectId: string): boolean => {
-      if (!isSenior) return true
-      const studentAllocs = allocations[studentId]
-      if (hasAllocationsConfigured && studentAllocs && studentAllocs.length > 0) {
-        return studentAllocs.includes(subjectId)
-      }
-      return !hasAllocationsConfigured
-    }
-  }, [isSenior, allocations, hasAllocationsConfigured])
-
-  const administeredTestIds = useMemo(() => {
-    const set = new Set<string>()
-    tests.forEach((t) => {
-      const hasAnyScore = students.some((st) => {
-        if (!isStudentEnrolledInSubject(st.id, t.subject_id)) return false
-        const s = scoresMap[t.id]?.[st.id]
-        return s !== undefined && s !== null
-      })
-      if (hasAnyScore) set.add(t.id)
-    })
-    return set
-  }, [tests, students, scoresMap, isStudentEnrolledInSubject])
+  }, [assignments, tests, assessmentFilter, administeredTestIds])
 
   // Compute student scores, subject averages, and aggregate under Case A: Unexcused (ABS)
   // Subject average = mean of per-test percentages (sum of each test's % / administered test count)
+  // Consistent across unit tests and school exams.
   const studentMetrics = useMemo(() => {
     const map = new Map<string, {
       subjectAverages: Record<string, number | null>
@@ -239,18 +257,6 @@ export default function ClassMarksheetPage() {
         if (!isEnrolled) {
           subjectAverages[sub.subject_id] = null
           return // Excluded from student's overall aggregate
-        }
-
-        // Check if student has at least one recorded mark across this subject's tests (active assessed student)
-        const hasAnyScoreInSub = sub.tests.some((t) => {
-          const raw = scoresMap[t.id]?.[st.id]
-          return raw !== undefined && raw !== null
-        })
-
-        if (!hasAnyScoreInSub) {
-          // Unassessed student in this subject
-          subjectAverages[sub.subject_id] = null
-          return
         }
 
         // Mean-of-percentages: sum each administered test's % then divide by administered count
@@ -305,12 +311,6 @@ export default function ClassMarksheetPage() {
       let tMaxTotal = 0
       students.forEach((st) => {
         if (!isStudentEnrolledInSubject(st.id, t.subject_id)) return
-        const hasAnyScoreInSub = tests.some((otherT) => {
-          if (otherT.subject_id !== t.subject_id) return false
-          const raw = scoresMap[otherT.id]?.[st.id]
-          return raw !== undefined && raw !== null
-        })
-        if (!hasAnyScoreInSub) return
 
         const raw = scoresMap[t.id]?.[st.id]
         if (raw !== undefined && raw !== null) {
@@ -397,6 +397,30 @@ export default function ClassMarksheetPage() {
     } catch (err: any) {
       console.error('Failed to export CSV marksheet:', err)
       setError(err?.message || 'Failed to generate CSV export.')
+    } finally {
+      setExporting(null)
+    }
+  }
+
+  const handleExportPdf = async () => {
+    try {
+      setExporting('pdf')
+      await downloadMarksheetPdf({
+        className: currentClass?.name || 'Class',
+        schoolName: school?.name || 'Leera International School',
+        academicYear: school?.academic_year || '2026/2027',
+        semester: school?.semester || '1',
+        students,
+        subjectsWithTests,
+        scoresMap,
+        studentMetrics,
+        classAverages,
+        displayMode,
+        isStudentEnrolledInSubject
+      })
+    } catch (err: any) {
+      console.error('Failed to export PDF marksheet:', err)
+      setError(err?.message || 'Failed to generate PDF export.')
     } finally {
       setExporting(null)
     }
@@ -560,6 +584,19 @@ export default function ClassMarksheetPage() {
             <span>{exporting === 'csv' ? 'Exporting…' : 'Export CSV'}</span>
           </button>
 
+          {/* Export to PDF */}
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            disabled={exporting !== null || loading || subjectsWithTests.length === 0}
+            onClick={handleExportPdf}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: '#fef2f2', borderColor: '#fca5a5', color: '#991b1b' }}
+            title="Download landscape PDF tabulated broadsheet (.pdf)"
+          >
+            <span>📑</span>
+            <span>{exporting === 'pdf' ? 'Exporting…' : 'Export PDF'}</span>
+          </button>
+
           {/* Print Sheet */}
           <button
             type="button"
@@ -671,16 +708,16 @@ export default function ClassMarksheetPage() {
         </div>
 
         <div className="card stat-box">
-          <div className="stat-label">Total Unit Tests</div>
-          <div className="stat-value" style={{ color: 'var(--brand)' }}>{tests.length}</div>
-          <div className="stat-meta">End of unit tests set to date</div>
+          <div className="stat-label">Total Tests (With Marks)</div>
+          <div className="stat-value" style={{ color: 'var(--brand)' }}>{tests.filter((t) => administeredTestIds.has(t.id)).length}</div>
+          <div className="stat-meta">Tests with marks uploaded</div>
         </div>
 
         <div className="card stat-box">
           <div className="stat-label">Class Overall Average</div>
           <div className="stat-value" style={{
             color: classAverages.classOverall !== null
-              ? (classAverages.classOverall >= 70 ? '#10b981' : classAverages.classOverall >= 50 ? '#f59e0b' : '#ef4444')
+              ? (classAverages.classOverall >= 65 ? '#10b981' : classAverages.classOverall >= 50 ? '#f59e0b' : '#ef4444')
               : '#94a3b8'
           }}>
             {classAverages.classOverall !== null ? `${classAverages.classOverall}%` : '—'}
@@ -1108,11 +1145,7 @@ export default function ClassMarksheetPage() {
                                     : null
 
                                   const isTestAdmin = administeredTestIds.has(t.id)
-                                  const isStudentAssessedInSub = sub.tests.some((ot) => {
-                                    const r = scoresMap[ot.id]?.[st.id]
-                                    return r !== undefined && r !== null
-                                  })
-                                  const isAbsent = !hasScore && isTestAdmin && isStudentAssessedInSub
+                                  const isAbsent = !hasScore && isTestAdmin && isEnrolled
 
                                   return (
                                     <td
@@ -1121,10 +1154,10 @@ export default function ClassMarksheetPage() {
                                         padding: '6px 4px',
                                         fontSize: '11px',
                                         fontWeight: hasScore ? 600 : isAbsent ? 700 : 400,
-                                        color: hasScore ? '#0f172a' : isAbsent ? '#dc2626' : '#cbd5e1',
+                                        color: hasScore ? (pct! >= 65 ? '#15803d' : '#0f172a') : isAbsent ? '#dc2626' : '#cbd5e1',
                                         borderRight: '1px solid #f1f5f9',
                                         background: hasScore
-                                          ? (pct! >= 70 ? 'rgba(16, 185, 129, 0.05)' : pct! >= 50 ? 'rgba(245, 158, 11, 0.05)' : 'rgba(239, 68, 68, 0.05)')
+                                          ? (pct! >= 65 ? 'rgba(21, 128, 61, 0.08)' : pct! >= 50 ? 'rgba(245, 158, 11, 0.05)' : 'rgba(239, 68, 68, 0.05)')
                                           : isAbsent
                                           ? 'rgba(100, 116, 139, 0.04)'
                                           : 'transparent'
@@ -1170,7 +1203,7 @@ export default function ClassMarksheetPage() {
                                   fontSize: '11px',
                                   fontWeight: 700,
                                   color: subAvg !== null
-                                    ? (subAvg >= 70 ? '#047857' : subAvg >= 50 ? '#b45309' : '#b91c1c')
+                                    ? (subAvg >= 65 ? '#15803d' : subAvg >= 50 ? '#b45309' : '#b91c1c')
                                     : '#94a3b8',
                                   background: '#f8fafc',
                                   borderRight: '2px solid #94a3b8'
@@ -1191,7 +1224,7 @@ export default function ClassMarksheetPage() {
                             fontSize: '12px',
                             fontWeight: 800,
                             color: overallPct !== null
-                              ? (overallPct >= 70 ? '#15803d' : overallPct >= 50 ? '#b45309' : '#b91c1c')
+                              ? (overallPct >= 65 ? '#15803d' : overallPct >= 50 ? '#b45309' : '#b91c1c')
                               : '#94a3b8',
                             borderLeft: '2px solid #94a3b8',
                             textAlign: 'center'
@@ -1263,7 +1296,7 @@ export default function ClassMarksheetPage() {
                             fontSize: '11px',
                             fontWeight: 800,
                             color: subClassAvg !== null
-                              ? (subClassAvg >= 70 ? '#047857' : subClassAvg >= 50 ? '#b45309' : '#b91c1c')
+                              ? (subClassAvg >= 65 ? '#15803d' : subClassAvg >= 50 ? '#b45309' : '#b91c1c')
                               : '#94a3b8',
                             background: '#e2e8f0',
                             borderRight: '2px solid #94a3b8'
@@ -1280,7 +1313,9 @@ export default function ClassMarksheetPage() {
                     className="col-sticky col-sticky-agg"
                     style={{
                       background: '#c7d2fe',
-                      color: '#1e1b4b',
+                      color: classAverages.classOverall !== null
+                        ? (classAverages.classOverall >= 65 ? '#15803d' : '#1e1b4b')
+                        : '#94a3b8',
                       padding: '8px',
                       fontSize: '13px',
                       fontWeight: 800,

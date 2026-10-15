@@ -217,7 +217,8 @@ export async function generateStudentPdf(ctx: PdfContext): Promise<jsPDF> {
 
   const body: any[] = []
   report.subjects.forEach((s, idx) => {
-    const rowSpan = s.rows.length + (s.count > 1 ? 1 : 0)
+    // rowSpan always includes the average row (shown for all subjects, even single-test)
+    const rowSpan = s.rows.length + 1
     s.rows.forEach((r, ri) => {
       const cells: any[] = []
       if (ri === 0) {
@@ -244,14 +245,13 @@ export async function generateStudentPdf(ctx: PdfContext): Promise<jsPDF> {
       )
       body.push(cells)
     })
-    if (s.count > 1) {
-      body.push([
-        { content: 'Subject Average', colSpan: 2, styles: { ...avgStyle, halign: 'left' } },
-        { content: String(s.totalScore), styles: avgStyle },
-        { content: String(s.totalMax), styles: avgStyle },
-        { content: fmtPct(s.average), styles: avgStyle }
-      ])
-    }
+    // Subject Average row — always shown, even when there is only one test
+    body.push([
+      { content: 'Subject Average', colSpan: 2, styles: { ...avgStyle, halign: 'left' } },
+      { content: String(s.totalScore), styles: avgStyle },
+      { content: String(s.totalMax), styles: avgStyle },
+      { content: fmtPct(s.average), styles: avgStyle }
+    ])
     if (idx < report.subjects.length - 1) {
       body.push(['__SPACER__', '', '', '', '', ''])
     }
@@ -324,6 +324,24 @@ export async function generateStudentPdf(ctx: PdfContext): Promise<jsPDF> {
         data.cell.styles.lineWidth = 0
         data.cell.styles.cellPadding = { top: 1.0, bottom: 1.0, left: 0, right: 0 }
         data.cell.text = ['']
+      }
+
+      // Green text color starts at 65% (pass mark)
+      if (data.section === 'body') {
+        const textVal = data.cell.text?.[0] || ''
+        if (textVal.startsWith('Overall Average:')) {
+          const match = textVal.match(/(\d+(?:\.\d+)?)\s*%/)
+          if (match && parseFloat(match[1]) >= 65) {
+            data.cell.styles.textColor = [21, 128, 61] // #15803d
+            data.cell.styles.fontStyle = 'bold'
+          }
+        } else if ((data.column.index === 5 || data.column.index === 4) && textVal.includes('%')) {
+          const num = parseFloat(textVal.replace('%', ''))
+          if (!isNaN(num) && num >= 65) {
+            data.cell.styles.textColor = [21, 128, 61] // #15803d
+            data.cell.styles.fontStyle = 'bold'
+          }
+        }
       }
     }
   })
@@ -675,6 +693,21 @@ export async function generateSubjectMarksheetPdf(ctx: SubjectMarksheetContext):
       0: { cellWidth: 8, halign: 'center' },
       1: { cellWidth: 18, halign: 'center' },
       2: { cellWidth: 48, halign: 'left' }
+    },
+    didParseCell: (data) => {
+      if (data.section === 'body') {
+        const textVal = data.cell.text?.[0] || ''
+        if (textVal === '=') {
+          data.cell.styles.textColor = [220, 38, 38]
+          data.cell.styles.fontStyle = 'bold'
+        } else if (textVal.includes('%')) {
+          const match = textVal.match(/(\d+(?:\.\d+)?)\s*%/)
+          if (match && parseFloat(match[1]) >= 65) {
+            data.cell.styles.textColor = [21, 128, 61] // #15803d
+            data.cell.styles.fontStyle = 'bold'
+          }
+        }
+      }
     }
   })
 

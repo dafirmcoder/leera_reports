@@ -1,4 +1,6 @@
 import ExcelJS from 'exceljs'
+import { jsPDF } from 'jspdf'
+import autoTable from 'jspdf-autotable'
 import type { Student, UnitTest } from './types'
 
 export interface SubjectWithTests {
@@ -308,11 +310,12 @@ export async function downloadMarksheetExcel(data: MarksheetExportData): Promise
 
           if (rawScore !== null && rawScore !== undefined && t.max_mark > 0) {
             const pct = Math.round((rawScore / t.max_mark) * 100)
-            if (pct < 50) {
+            if (pct >= 65) {
+              cell.font = { color: { argb: '15803D' }, bold: true }
+              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'F0FDF4' } }
+            } else if (pct < 50) {
               cell.font = { color: { argb: 'B91C1C' }, bold: true }
               cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FEF2F2' } }
-            } else if (pct >= 80) {
-              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'F0FDF4' } }
             }
           } else if (isAbsent) {
             cell.font = { color: { argb: '64748B' }, bold: true }
@@ -324,7 +327,7 @@ export async function downloadMarksheetExcel(data: MarksheetExportData): Promise
         const subAvg = metrics?.subjectAverages[sub.subject_id] ?? null
         const avgCell = ws.getCell(rowIdx, cIdx)
         avgCell.value = subAvg !== null ? `${subAvg}%` : '—'
-        avgCell.font = { bold: true, color: { argb: '0F172A' } }
+        avgCell.font = { bold: true, color: { argb: subAvg !== null && subAvg >= 65 ? '15803D' : '0F172A' } }
         avgCell.alignment = { vertical: 'middle', horizontal: 'center' }
         avgCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'F1F5F9' } }
         avgCell.border = borderThin
@@ -336,7 +339,7 @@ export async function downloadMarksheetExcel(data: MarksheetExportData): Promise
     const aggCell = ws.getCell(rowIdx, aggCol)
     const aggVal = metrics?.overallAggregatePct ?? null
     aggCell.value = aggVal !== null ? `${aggVal}%` : '—'
-    aggCell.font = { bold: true, color: { argb: aggText } }
+    aggCell.font = { bold: true, color: { argb: aggVal !== null && aggVal >= 65 ? '15803D' : aggText } }
     aggCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: aggHeaderBg } }
     aggCell.alignment = { vertical: 'middle', horizontal: 'center' }
     aggCell.border = borderThin
@@ -396,7 +399,7 @@ export async function downloadMarksheetExcel(data: MarksheetExportData): Promise
       const subClassAvg = classAverages.subjectAverages[sub.subject_id] ?? null
       const cell = ws.getCell(avgRowIdx, cIdx)
       cell.value = subClassAvg !== null ? `${subClassAvg}%` : '—'
-      cell.font = { bold: true, color: { argb: primaryBlue } }
+      cell.font = { bold: true, color: { argb: subClassAvg !== null && subClassAvg >= 65 ? '15803D' : primaryBlue } }
       cell.alignment = { vertical: 'middle', horizontal: 'center' }
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'E2E8F0' } }
       cell.border = borderThin
@@ -407,7 +410,7 @@ export async function downloadMarksheetExcel(data: MarksheetExportData): Promise
   // Aggregate class overall
   const overallCell = ws.getCell(avgRowIdx, aggCol)
   overallCell.value = classAverages.classOverall !== null ? `${classAverages.classOverall}%` : '—'
-  overallCell.font = { bold: true, size: 11, color: { argb: aggText } }
+  overallCell.font = { bold: true, size: 11, color: { argb: classAverages.classOverall !== null && classAverages.classOverall >= 65 ? '15803D' : aggText } }
   overallCell.alignment = { vertical: 'middle', horizontal: 'center' }
   overallCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: aggHeaderBg } }
   overallCell.border = borderThin
@@ -596,4 +599,258 @@ export function downloadMarksheetCsv(data: MarksheetExportData): void {
   a.click()
   document.body.removeChild(a)
   URL.revokeObjectURL(url)
+}
+
+export async function downloadMarksheetPdf(data: MarksheetExportData): Promise<void> {
+  const {
+    className,
+    schoolName,
+    academicYear,
+    semester,
+    students,
+    subjectsWithTests,
+    scoresMap,
+    studentMetrics,
+    classAverages,
+    displayMode,
+    isStudentEnrolledInSubject
+  } = data
+
+  const totalCols = 3 + subjectsWithTests.reduce((sum, s) => sum + Math.max(1, s.tests.length) + 1, 0) + 1
+  const doc = new jsPDF({
+    orientation: 'landscape',
+    unit: 'mm',
+    format: totalCols > 25 ? 'a3' : 'a4'
+  })
+
+  const pageWidth = doc.internal.pageSize.getWidth()
+  const pageHeight = doc.internal.pageSize.getHeight()
+  const margin = 10
+
+  // 1. Header Band
+  doc.setFillColor(30, 58, 138) // Deep Navy
+  doc.rect(margin, 8, pageWidth - 2 * margin, 11, 'F')
+  doc.setTextColor(255, 255, 255)
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(13)
+  doc.text(schoolName.toUpperCase(), pageWidth / 2, 15, { align: 'center', baseline: 'middle' })
+
+  // 2. Title & Subtitle
+  doc.setTextColor(15, 23, 42)
+  doc.setFontSize(11)
+  doc.setFont('helvetica', 'bold')
+  doc.text(`${className.toUpperCase()} — TABULATED CLASS MARKSHEET (BROADSHEET)`, margin, 24)
+
+  // 3. Metadata
+  doc.setFontSize(8.5)
+  doc.setFont('helvetica', 'normal')
+  doc.setTextColor(100, 116, 139)
+  const metaText = `Academic Year: ${academicYear}   |   Semester: ${semester}   |   Learners: ${students.length}   |   Pass Mark: 65%   |   Generated: ${new Date().toLocaleDateString('en-GB')}`
+  doc.text(metaText, margin, 29)
+
+  // Discovered administered tests
+  const administeredTestIds = new Set<string>()
+  subjectsWithTests.forEach((sub) => {
+    sub.tests.forEach((t) => {
+      const hasAnyScore = students.some((st) => {
+        const isEnrolled = isStudentEnrolledInSubject ? isStudentEnrolledInSubject(st.id, sub.subject_id) : true
+        if (!isEnrolled) return false
+        const s = scoresMap[t.id]?.[st.id]
+        return s !== undefined && s !== null
+      })
+      if (hasAnyScore) administeredTestIds.add(t.id)
+    })
+  })
+
+  // Two-level headers
+  // Level 1:
+  const headRow1: any[] = [
+    { content: 'S/N', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } },
+    { content: 'Roll No.', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } },
+    { content: 'Student Name', rowSpan: 2, styles: { halign: 'left', valign: 'middle' } }
+  ]
+
+  // Level 2:
+  const headRow2: any[] = []
+
+  subjectsWithTests.forEach((sub) => {
+    const colSpan = Math.max(1, sub.tests.length) + 1
+    headRow1.push({
+      content: sub.subject_name + (sub.teacher_name ? `\n(Tr: ${sub.teacher_name})` : ''),
+      colSpan,
+      styles: { halign: 'center', valign: 'middle' }
+    })
+
+    if (sub.tests.length === 0) {
+      headRow2.push({ content: 'No tests', styles: { halign: 'center' } })
+    } else {
+      sub.tests.forEach((t, tIdx) => {
+        const isExam = t.assessment_type === 'exam' || t.assessment_type === 'midterm'
+        headRow2.push({
+          content: `${isExam ? 'Exam' : tIdx + 1}${displayMode !== 'pct' ? `\n/${t.max_mark}` : ''}`,
+          styles: { halign: 'center', textColor: isExam ? [194, 65, 12] : [51, 65, 85] }
+        })
+      })
+    }
+    headRow2.push({ content: 'Avg %', styles: { halign: 'center', fontStyle: 'bold', fillColor: [240, 253, 244] } })
+  })
+
+  headRow1.push({
+    content: 'Aggregate\n(Overall %)',
+    rowSpan: 2,
+    styles: { halign: 'center', valign: 'middle', fillColor: [224, 231, 255], textColor: [55, 48, 163] }
+  })
+
+  // Body rows
+  const bodyRows: any[] = []
+  students.forEach((st, sIdx) => {
+    const metrics = studentMetrics.get(st.id)
+    const row: any[] = [
+      String(sIdx + 1),
+      st.roll_no || st.student_no || st.admission_no || '—',
+      st.full_name
+    ]
+
+    subjectsWithTests.forEach((sub) => {
+      const isEnrolled = isStudentEnrolledInSubject ? isStudentEnrolledInSubject(st.id, sub.subject_id) : true
+      if (!isEnrolled) {
+        if (sub.tests.length === 0) {
+          row.push('N/A')
+        } else {
+          sub.tests.forEach(() => row.push('N/A'))
+          row.push('N/A')
+        }
+        return
+      }
+
+      if (sub.tests.length === 0) {
+        row.push('—')
+        row.push('—')
+      } else {
+        const hasAnyScoreInSub = sub.tests.some((t) => {
+          const raw = scoresMap[t.id]?.[st.id]
+          return raw !== undefined && raw !== null
+        })
+
+        sub.tests.forEach((t) => {
+          const rawScore = scoresMap[t.id]?.[st.id]
+          const isTestAdmin = administeredTestIds.has(t.id)
+          const isAbsent = hasAnyScoreInSub && isTestAdmin && (rawScore === null || rawScore === undefined)
+          const isPending = !isTestAdmin && (rawScore === null || rawScore === undefined)
+          row.push(formatScore(rawScore, t.max_mark, displayMode, isAbsent, isPending))
+        })
+        const subAvg = metrics?.subjectAverages[sub.subject_id] ?? null
+        row.push(subAvg !== null ? `${subAvg}%` : '—')
+      }
+    })
+
+    const aggVal = metrics?.overallAggregatePct ?? null
+    row.push(aggVal !== null ? `${aggVal}%` : '—')
+    bodyRows.push(row)
+  })
+
+  // Footer Row
+  const assessedStudentsCount = students.filter((st) => {
+    const m = studentMetrics.get(st.id)
+    return m && m.overallAggregatePct !== null
+  }).length
+
+  const footRow: any[] = [
+    { content: `CLASS AVERAGE (N=${assessedStudentsCount} / ${students.length})`, colSpan: 3, styles: { halign: 'right', fontStyle: 'bold', fillColor: [241, 245, 249] } }
+  ]
+
+  subjectsWithTests.forEach((sub) => {
+    if (sub.tests.length === 0) {
+      footRow.push('—')
+      footRow.push('—')
+    } else {
+      sub.tests.forEach((t) => {
+        const unitAvg = classAverages.unitAverages[t.id] ?? null
+        footRow.push({ content: unitAvg !== null ? `${unitAvg}%` : '—', styles: { halign: 'center', fontStyle: 'bold', fillColor: [248, 250, 252] } })
+      })
+      const subClassAvg = classAverages.subjectAverages[sub.subject_id] ?? null
+      footRow.push({ content: subClassAvg !== null ? `${subClassAvg}%` : '—', styles: { halign: 'center', fontStyle: 'bold', fillColor: [226, 232, 240] } })
+    }
+  })
+
+  footRow.push({
+    content: classAverages.classOverall !== null ? `${classAverages.classOverall}%` : '—',
+    styles: { halign: 'center', fontStyle: 'bold', fillColor: [199, 210, 254], textColor: [30, 27, 75] }
+  })
+
+  autoTable(doc, {
+    startY: 32,
+    margin: { left: margin, right: margin, top: 12, bottom: 12 },
+    head: [headRow1, headRow2],
+    body: bodyRows,
+    foot: [footRow],
+    theme: 'grid',
+    styles: {
+      font: 'helvetica',
+      fontSize: totalCols > 25 ? 7 : 7.5,
+      cellPadding: { top: 1.5, bottom: 1.5, left: 1.2, right: 1.2 },
+      textColor: [30, 41, 59],
+      lineColor: [203, 213, 225],
+      lineWidth: 0.15,
+      valign: 'middle',
+      halign: 'center'
+    },
+    headStyles: {
+      fillColor: [30, 58, 138],
+      textColor: 255,
+      fontStyle: 'bold',
+      fontSize: totalCols > 25 ? 7 : 7.5,
+      lineWidth: 0.2,
+      lineColor: [148, 163, 184]
+    },
+    columnStyles: {
+      0: { cellWidth: 10, halign: 'center' },
+      1: { cellWidth: 18, halign: 'center' },
+      2: { cellWidth: totalCols > 25 ? 32 : 36, halign: 'left' }
+    },
+    didParseCell: (hookData) => {
+      const textVal = hookData.cell.text?.[0] || ''
+      if (hookData.section === 'body') {
+        if (textVal === 'N/A') {
+          hookData.cell.styles.textColor = [148, 163, 184]
+          hookData.cell.styles.fillColor = [248, 250, 252]
+        } else if (textVal === '=') {
+          hookData.cell.styles.textColor = [220, 38, 38] // Absence
+          hookData.cell.styles.fontStyle = 'bold'
+        } else if (textVal.includes('%')) {
+          const match = textVal.match(/(\d+(?:\.\d+)?)\s*%/)
+          if (match) {
+            const num = parseFloat(match[1])
+            if (num >= 65) {
+              hookData.cell.styles.textColor = [21, 128, 61] // Pass mark >= 65% green
+              hookData.cell.styles.fontStyle = 'bold'
+            } else if (num < 50) {
+              hookData.cell.styles.textColor = [185, 28, 28] // Fail mark red
+              hookData.cell.styles.fontStyle = 'bold'
+            }
+          }
+        }
+      } else if (hookData.section === 'foot') {
+        if (textVal.includes('%')) {
+          const match = textVal.match(/(\d+(?:\.\d+)?)\s*%/)
+          if (match) {
+            const num = parseFloat(match[1])
+            if (num >= 65) {
+              hookData.cell.styles.textColor = [21, 128, 61] // Class avg >= 65% green
+            }
+          }
+        }
+      }
+    },
+    didDrawPage: (hookData) => {
+      doc.setFontSize(8)
+      doc.setTextColor(148, 163, 184)
+      const pageStr = `Page ${hookData.pageNumber} of ${doc.getNumberOfPages()}`
+      doc.text(pageStr, pageWidth - margin, pageHeight - 6, { align: 'right' })
+    }
+  })
+
+  const cleanClassName = className.replace(/[^a-zA-Z0-9_-]/g, '_')
+  const fileName = `Leera_${cleanClassName}_Marksheet_Broadsheet_${academicYear.replace(/[^a-zA-Z0-9_-]/g, '_')}.pdf`
+  doc.save(fileName)
 }

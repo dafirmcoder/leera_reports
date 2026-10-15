@@ -14,6 +14,7 @@ import type {
   Assignment
 } from '../../lib/types'
 import LessonPlanComplianceCard from './LessonPlanComplianceCard'
+import TeacherAssignmentTestSummaryTable from '../TeacherAssignmentTestSummaryTable'
 
 const today = () => new Date().toISOString().slice(0, 10)
 
@@ -942,6 +943,18 @@ export default function ExecutiveDashboard({ section = 'overview' }: DashboardPr
       )}
 
       {/* SECTION 4: TEACHERS SUMMARY */}
+      {/* SECTION: Tests Count Summary per Teacher (Class-Subject Combinations) */}
+      {(activeSection === 'overview' || activeSection === 'teachers') && testOverview?.teacher_assignment_summaries && testOverview.teacher_assignment_summaries.length > 0 && (
+        <TeacherAssignmentTestSummaryTable
+          summaries={testOverview.teacher_assignment_summaries}
+          classes={classes}
+          subjects={subjects}
+          title="👨‍🏫 Coordinator Tests Count Summary (Class-Subject Combinations)"
+          subtitle="Overview of Unit Tests and School Exams count per teacher for each assigned class and subject combination."
+        />
+      )}
+
+      {/* SECTION 3: TEACHERS SUMMARY */}
       {(activeSection === 'overview' || activeSection === 'teachers') && (
         <section className="card stack">
           <div className="page-head" style={{ marginBottom: 0 }}>
@@ -970,7 +983,9 @@ export default function ExecutiveDashboard({ section = 'overview' }: DashboardPr
                   <th>Role</th>
                   <th>Assigned Classes</th>
                   <th>Subjects</th>
-                  <th className="num">Tests Set</th>
+                  <th className="num" title="End-of-unit tests">📘 Unit Tests</th>
+                  <th className="num" title="School exams / midterms">📝 Exams</th>
+                  <th className="num">Total Tests</th>
                   <th className="num">Marks Completed</th>
                   <th className="num">Total Marks Entered</th>
                   <th className="num">Average Score</th>
@@ -980,7 +995,7 @@ export default function ExecutiveDashboard({ section = 'overview' }: DashboardPr
               <tbody>
                 {filteredTeachers.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="muted center" style={{ padding: '24px' }}>
+                    <td colSpan={11} className="muted center" style={{ padding: '24px' }}>
                       No teacher records found.
                     </td>
                   </tr>
@@ -1019,7 +1034,9 @@ export default function ExecutiveDashboard({ section = 'overview' }: DashboardPr
                           )}
                         </div>
                       </td>
-                      <td className="num mono" style={{ fontWeight: 600 }}>{t.tests_count}</td>
+                      <td className="num mono" style={{ fontWeight: 600, color: '#1d4ed8' }}>{t.unit_tests_count ?? 0}</td>
+                      <td className="num mono" style={{ fontWeight: 600, color: '#c2410c' }}>{t.exams_count ?? 0}</td>
+                      <td className="num mono" style={{ fontWeight: 700 }}>{t.tests_count}</td>
                       <td className="num">
                         <span className="chip" style={{
                           background: t.tests_count > 0 && t.tests_with_marks_pct === 100 ? '#dcfce7' : t.tests_with_marks_count > 0 ? '#fef3c7' : '#f1f5f9',
@@ -1031,7 +1048,7 @@ export default function ExecutiveDashboard({ section = 'overview' }: DashboardPr
                       <td className="num mono">{t.total_marks_entered}</td>
                       <td className="num">
                         {t.average_score_pct !== null ? (
-                          <span style={{ fontWeight: 700, color: t.average_score_pct >= 70 ? '#1f8a5f' : t.average_score_pct >= 50 ? '#d97706' : '#dc2626' }}>
+                          <span style={{ fontWeight: 700, color: t.average_score_pct >= 65 ? '#1f8a5f' : t.average_score_pct >= 50 ? '#d97706' : '#dc2626' }}>
                             {t.average_score_pct}%
                           </span>
                         ) : (

@@ -181,6 +181,7 @@ export interface UnitTestSummaryItem {
   exam_paper_url?: string | null
   exam_paper_name?: string | null
   assessment_type?: AssessmentType
+  is_active?: boolean
 }
 
 export interface SubjectTestSummary {
@@ -199,7 +200,27 @@ export interface TeacherTestSummary {
   role: Role
   class_names: string[]
   subjects: string[]
+  unit_tests_count?: number
+  exams_count?: number
   tests_count: number
+  tests_with_marks_count: number
+  tests_with_marks_pct: number
+  total_marks_entered: number
+  average_score_pct: number | null
+  last_submission_date: string | null
+}
+
+export interface TeacherAssignmentTestSummary {
+  teacher_id: string
+  teacher_name: string
+  role?: Role
+  class_id: string
+  class_name: string
+  subject_id: string
+  subject_name: string
+  unit_tests_count: number
+  exams_count: number
+  total_tests_count: number
   tests_with_marks_count: number
   tests_with_marks_pct: number
   total_marks_entered: number
@@ -215,6 +236,7 @@ export interface EndOfUnitTestOverview {
   all_tests: UnitTestSummaryItem[]
   subject_summaries: SubjectTestSummary[]
   teacher_summaries: TeacherTestSummary[]
+  teacher_assignment_summaries?: TeacherAssignmentTestSummary[]
 }
 
 export interface TeacherAssignmentOverview {
@@ -312,6 +334,7 @@ export interface UnitTest {
   is_locked?: boolean
   locked_at?: string | null
   locked_by_name?: string | null
+  is_active?: boolean
   created_by?: string | null
   created_at?: string
 }
@@ -323,6 +346,7 @@ export interface UpdateUnitTestInput {
   assessment_type?: AssessmentType
   examPaperFile?: File | null
   is_locked?: boolean
+  is_active?: boolean
 }
 
 export interface ScoreRow {

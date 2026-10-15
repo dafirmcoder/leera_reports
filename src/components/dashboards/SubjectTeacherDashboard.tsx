@@ -235,7 +235,7 @@ export default function SubjectTeacherDashboard() {
             fontSize: '28px',
             fontWeight: 800,
             color: data?.overallSubjectAveragePct !== null
-              ? ((data?.overallSubjectAveragePct ?? 0) >= 70 ? '#047857' : (data?.overallSubjectAveragePct ?? 0) >= 50 ? '#b45309' : '#b91c1c')
+              ? ((data?.overallSubjectAveragePct ?? 0) >= 65 ? '#047857' : (data?.overallSubjectAveragePct ?? 0) >= 50 ? '#b45309' : '#b91c1c')
               : '#0f172a'
           }}>
             {data?.overallSubjectAveragePct !== null ? `${data?.overallSubjectAveragePct}%` : '—'}
@@ -402,7 +402,7 @@ export default function SubjectTeacherDashboard() {
                           fontWeight: 700,
                           fontSize: '16px',
                           color: asgn.average_pct !== null
-                            ? (asgn.average_pct >= 70 ? '#047857' : asgn.average_pct >= 50 ? '#b45309' : '#b91c1c')
+                            ? (asgn.average_pct >= 65 ? '#047857' : asgn.average_pct >= 50 ? '#b45309' : '#b91c1c')
                             : '#94a3b8'
                         }}>
                           {asgn.average_pct !== null ? `${asgn.average_pct}%` : '—'}

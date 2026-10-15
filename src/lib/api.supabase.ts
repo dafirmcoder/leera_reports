@@ -9,7 +9,7 @@ import {
   type ClassAttendanceExportData, type ClassInfo, type ClassMarksLock, type ClassPopulationSummary, type DetailedAttendanceExport,
   type EndOfUnitTestOverview, type Profile, type Role, type School,
   type SchoolPopulationSummary, type ScoreRow, type Student, type StudentReportRow, type Subject,
-  type SubjectTestSummary, type TeacherAssignmentOverview, type TeacherDashboardData, type TeacherTestSummary, type UnitTest, type UnitTestSummaryItem, type UpdateUnitTestInput,
+  type SubjectTestSummary, type TeacherAssignmentOverview, type TeacherAssignmentTestSummary, type TeacherDashboardData, type TeacherTestSummary, type UnitTest, type UnitTestSummaryItem, type UpdateUnitTestInput,
   type AssessmentType,
   type CurriculumScheme, type CurriculumTopic, type CurriculumObjective, type TeacherTimetable, type TeacherScheduleSlot, type WorkPlan, type WorkPlanWeek, type WorkPlanWeekObjective, type LessonPlan,
   type ImportWorkPlanInput, type ImportWorkPlanResult, type ParsedWorkPlanWeek, type WorkPlanIngestProgressCallback
@@ -856,13 +856,13 @@ export const supabaseApi: Api = {
     let data: any = null
     let error: any = null
 
-    // Try selecting all fields including lock fields
+    // Try selecting all fields including lock and active fields
     const res = await db()
       .from('unit_tests')
-      .select('id, class_id, subject_id, title, test_date, max_mark, assessment_type, is_locked, locked_at, locked_by_name, created_by, created_at, exam_paper_url, exam_paper_path, exam_paper_name, subjects(name)')
+      .select('id, class_id, subject_id, title, test_date, max_mark, assessment_type, is_locked, locked_at, locked_by_name, is_active, created_by, created_at, exam_paper_url, exam_paper_path, exam_paper_name, subjects(name)')
       .eq('class_id', classId)
 
-    if (res.error && (res.error.code === '42703' || res.error.message?.includes('is_locked') || res.error.message?.includes('assessment_type'))) {
+    if (res.error && (res.error.code === '42703' || res.error.message?.includes('is_locked') || res.error.message?.includes('assessment_type') || res.error.message?.includes('is_active'))) {
       const fallback = await db()
         .from('unit_tests')
         .select('id, class_id, subject_id, title, test_date, max_mark, created_by, created_at, exam_paper_url, exam_paper_path, exam_paper_name, subjects(name)')
@@ -900,6 +900,7 @@ export const supabaseApi: Api = {
         is_locked: isLocked,
         locked_at: lockedAt,
         locked_by_name: lockedByName,
+        is_active: r.is_active !== undefined && r.is_active !== null ? Boolean(r.is_active) : undefined,
         created_by: r.created_by ?? null,
         created_at: r.created_at ?? undefined,
         exam_paper_url: r.exam_paper_url ?? null,
@@ -930,15 +931,16 @@ export const supabaseApi: Api = {
       class_id: classId,
       created_at: new Date().toISOString(),
       assessment_type: chosenType,
+      is_active: false,
       ...testData
     }
 
     let insertRes = await d.from('unit_tests').insert(insertPayload).select().single()
-    if (insertRes.error && (insertRes.error.code === '42703' || insertRes.error.message?.includes('assessment_type'))) {
+    if (insertRes.error && (insertRes.error.code === '42703' || insertRes.error.message?.includes('assessment_type') || insertRes.error.message?.includes('is_active'))) {
       const fallbackTitle = chosenType === 'exam' && !/(?:^|\s|\[)(?:exam|mock|terminal|checkpoint)(?:\]|\s|$)/i.test(testData.title)
         ? `[Exam] ${testData.title}`
         : testData.title
-      const { assessment_type: _, ...rest } = insertPayload
+      const { assessment_type: _, is_active: __, ...rest } = insertPayload
       insertRes = await d.from('unit_tests').insert({
         ...rest,
         title: fallbackTitle
@@ -1235,6 +1237,23 @@ export const supabaseApi: Api = {
       .from('scores')
       .upsert({ unit_test_id, student_id, score }, { onConflict: 'unit_test_id,student_id' })
     if (error) throw new Error(error.message)
+
+    // Automatically mark test as active upon entering first score
+    try {
+      if (score !== null && score !== undefined && !Number.isNaN(score)) {
+        await db().from('unit_tests').update({ is_active: true }).eq('id', unit_test_id)
+      } else {
+        const { count } = await db()
+          .from('scores')
+          .select('id', { count: 'exact', head: true })
+          .eq('unit_test_id', unit_test_id)
+          .not('score', 'is', null)
+        await db().from('unit_tests').update({ is_active: (count ?? 0) > 0 }).eq('id', unit_test_id)
+      }
+    } catch {
+      // Ignored if column is not yet present
+    }
+
     invalidateTeacherDashboardCache()
   },
 
@@ -1488,6 +1507,7 @@ export const supabaseApi: Api = {
             test_date: testDate,
             max_mark: defaultMaxMark,
             assessment_type: 'exam',
+            is_active: false,
             created_by: profile?.id || null,
             created_at: nowIso
           })
@@ -1506,9 +1526,9 @@ export const supabaseApi: Api = {
     for (let i = 0; i < testsToInsert.length; i += chunkSize) {
       const chunk = testsToInsert.slice(i, i + chunkSize)
       let insRes = await d.from('unit_tests').insert(chunk).select('id, class_id, subject_id')
-      if (insRes.error && (insRes.error.code === '42703' || insRes.error.message?.includes('assessment_type'))) {
-        // Fallback without assessment_type column
-        const fallbackChunk = chunk.map(({ assessment_type, ...rest }) => rest)
+      if (insRes.error && (insRes.error.code === '42703' || insRes.error.message?.includes('assessment_type') || insRes.error.message?.includes('is_active'))) {
+        // Fallback without assessment_type or is_active column
+        const fallbackChunk = chunk.map(({ assessment_type, is_active, ...rest }) => rest)
         insRes = await d.from('unit_tests').insert(fallbackChunk).select('id, class_id, subject_id')
       }
       if (insRes.error) {
@@ -1564,11 +1584,11 @@ export const supabaseApi: Api = {
     if (st?.class_id) {
       const res = await db()
         .from('unit_tests')
-        .select('id, title, test_date, created_at, max_mark, assessment_type, subject_id, subjects!inner(id, name)')
+        .select('id, title, test_date, created_at, max_mark, assessment_type, is_active, subject_id, subjects!inner(id, name)')
         .eq('class_id', st.class_id)
         .order('test_date', { ascending: false })
 
-      if (res.error && (res.error.code === '42703' || res.error.message?.includes('assessment_type'))) {
+      if (res.error && (res.error.code === '42703' || res.error.message?.includes('assessment_type') || res.error.message?.includes('is_active'))) {
         const fallback = await db()
           .from('unit_tests')
           .select('id, title, test_date, created_at, max_mark, subject_id, subjects!inner(id, name)')
@@ -1580,6 +1600,29 @@ export const supabaseApi: Api = {
         throw new Error(res.error.message)
       } else {
         classTests = res.data ?? []
+      }
+
+      // Only consider tests that are marked active (or have uploaded marks)
+      if (classTests.length > 0) {
+        const hasExplicitIsActive = classTests.every((t) => t.is_active !== undefined && t.is_active !== null)
+        if (hasExplicitIsActive) {
+          classTests = classTests.filter((t) => Boolean(t.is_active))
+        } else {
+          const testIds = classTests.map((t) => t.id)
+          const { data: activeScores } = await db()
+            .from('scores')
+            .select('unit_test_id, score')
+            .in('unit_test_id', testIds)
+            .not('score', 'is', null)
+
+          const administeredIds = new Set<string>()
+          for (const row of (activeScores ?? []) as any[]) {
+            if (row.unit_test_id && row.score !== null && row.score !== undefined && row.score !== '') {
+              administeredIds.add(row.unit_test_id)
+            }
+          }
+          classTests = classTests.filter((t) => t.is_active === true || (t.is_active === undefined && administeredIds.has(t.id)))
+        }
       }
     }
 
@@ -1609,7 +1652,7 @@ export const supabaseApi: Api = {
     for (const sc of (scoresData ?? []) as any[]) {
       const parsed = sc.score !== null && sc.score !== undefined && sc.score !== '' ? Number(sc.score) : null
       scoreMap.set(sc.unit_test_id, parsed !== null && !isNaN(parsed) ? parsed : null)
-      if (!classTests.some((t) => t.id === sc.unit_test_id)) {
+      if (parsed !== null && !isNaN(parsed) && !classTests.some((t) => t.id === sc.unit_test_id)) {
         extraTests.push(sc.unit_tests)
       }
     }
@@ -1905,8 +1948,8 @@ export const supabaseApi: Api = {
       this.listProfiles().catch(() => [] as Profile[]),
       db().from('class_subject_teachers').select('id, class_id, subject_id, teacher_id, profiles!class_subject_teachers_teacher_id_fkey(id, full_name)'),
       (async () => {
-        const res = await db().from('unit_tests').select('id, class_id, subject_id, created_by, title, test_date, max_mark, assessment_type, exam_paper_url, exam_paper_path, exam_paper_name, subjects(name), classes(name)')
-        if (res.error && (res.error.code === '42703' || res.error.message?.includes('assessment_type'))) {
+        const res = await db().from('unit_tests').select('id, class_id, subject_id, created_by, title, test_date, max_mark, assessment_type, is_active, exam_paper_url, exam_paper_path, exam_paper_name, subjects(name), classes(name)')
+        if (res.error && (res.error.code === '42703' || res.error.message?.includes('assessment_type') || res.error.message?.includes('is_active'))) {
           return db().from('unit_tests').select('id, class_id, subject_id, created_by, title, test_date, max_mark, exam_paper_url, exam_paper_path, exam_paper_name, subjects(name), classes(name)')
         }
         return res
@@ -1999,7 +2042,8 @@ export const supabaseApi: Api = {
         lowest_score: lowest,
         exam_paper_url: t.exam_paper_url ?? null,
         exam_paper_name: t.exam_paper_name ?? null,
-        assessment_type: deriveAssessmentType(t)
+        assessment_type: deriveAssessmentType(t),
+        is_active: t.is_active !== undefined && t.is_active !== null ? Boolean(t.is_active) : hasMarks
       }
     })
 
@@ -2121,6 +2165,8 @@ export const supabaseApi: Api = {
         return t.teacher_name === teacherName
       })
 
+      const unitTestsCount = teacherTests.filter((t) => (t.assessment_type || 'unit_test') === 'unit_test').length
+      const examsCount = teacherTests.filter((t) => t.assessment_type === 'exam' || t.assessment_type === 'midterm').length
       const testsCount = teacherTests.length
       const withMarks = teacherTests.filter((t) => t.has_marks_entered)
       const testsWithMarksCount = withMarks.length
@@ -2143,6 +2189,8 @@ export const supabaseApi: Api = {
         role: p.role,
         class_names: Array.from(classNamesSet).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })),
         subjects: Array.from(subjectsSet).sort(),
+        unit_tests_count: unitTestsCount,
+        exams_count: examsCount,
         tests_count: testsCount,
         tests_with_marks_count: testsWithMarksCount,
         tests_with_marks_pct: testsWithMarksPct,
@@ -2153,6 +2201,113 @@ export const supabaseApi: Api = {
     })
 
     teacher_summaries.sort((a, b) => a.teacher_name.localeCompare(b.teacher_name))
+
+    // Build teacher assignment summaries (per teacher per class-subject combination)
+    const assignmentSummariesMap = new Map<string, TeacherAssignmentTestSummary>()
+
+    // 1. Seed from actual class-subject-teacher assignments
+    for (const a of (assignmentsData ?? []) as any[]) {
+      if (!a.teacher_id || !a.class_id || !a.subject_id) continue
+      const teacherProfile = profiles.find((p) => p.id === a.teacher_id)
+      const teacherName = teacherProfile?.full_name || a.profiles?.full_name || 'Teacher'
+      const cName = classMap.get(a.class_id) || 'Class'
+      const sName = subjectMapById.get(a.subject_id) || 'Subject'
+      const key = `${a.teacher_id}_${a.class_id}_${a.subject_id}`
+
+      if (!assignmentSummariesMap.has(key)) {
+        assignmentSummariesMap.set(key, {
+          teacher_id: a.teacher_id,
+          teacher_name: teacherName,
+          role: teacherProfile?.role,
+          class_id: a.class_id,
+          class_name: cName,
+          subject_id: a.subject_id,
+          subject_name: sName,
+          unit_tests_count: 0,
+          exams_count: 0,
+          total_tests_count: 0,
+          tests_with_marks_count: 0,
+          tests_with_marks_pct: 0,
+          total_marks_entered: 0,
+          average_score_pct: null,
+          last_submission_date: null
+        })
+      }
+    }
+
+    // 2. Aggregate tests into combinations
+    for (const t of all_tests) {
+      const assignedTeacherId = assignmentIdMap.get(`${t.class_id}_${t.subject_id}`)
+      const teacherId = assignedTeacherId || t.teacher_id
+      if (!teacherId) continue
+
+      const key = `${teacherId}_${t.class_id}_${t.subject_id}`
+      let item = assignmentSummariesMap.get(key)
+      if (!item) {
+        const teacherProfile = profiles.find((p) => p.id === teacherId)
+        item = {
+          teacher_id: teacherId,
+          teacher_name: t.teacher_name || teacherProfile?.full_name || 'Teacher',
+          role: teacherProfile?.role,
+          class_id: t.class_id,
+          class_name: t.class_name,
+          subject_id: t.subject_id,
+          subject_name: t.subject_name,
+          unit_tests_count: 0,
+          exams_count: 0,
+          total_tests_count: 0,
+          tests_with_marks_count: 0,
+          tests_with_marks_pct: 0,
+          total_marks_entered: 0,
+          average_score_pct: null,
+          last_submission_date: null
+        }
+        assignmentSummariesMap.set(key, item)
+      }
+
+      const isExam = t.assessment_type === 'exam' || t.assessment_type === 'midterm'
+      if (isExam) {
+        item.exams_count += 1
+      } else {
+        item.unit_tests_count += 1
+      }
+      item.total_tests_count += 1
+
+      if (t.has_marks_entered) {
+        item.tests_with_marks_count += 1
+        item.total_marks_entered += t.marks_entered_count
+        if (!item.last_submission_date || (t.test_date && t.test_date > item.last_submission_date)) {
+          item.last_submission_date = t.test_date
+        }
+      }
+    }
+
+    // 3. Finalize percentages and averages for each assignment summary
+    const teacher_assignment_summaries: TeacherAssignmentTestSummary[] = Array.from(assignmentSummariesMap.values()).map((item) => {
+      const testsForThisCombo = all_tests.filter((t) => t.class_id === item.class_id && t.subject_id === item.subject_id)
+      const scoredTests = testsForThisCombo.filter((t) => t.has_marks_entered && t.average_pct !== null)
+      const avgPct = scoredTests.length > 0
+        ? Number((scoredTests.reduce((sum, t) => sum + t.average_pct!, 0) / scoredTests.length).toFixed(1))
+        : null
+      const completionPct = item.total_tests_count > 0
+        ? Number(((item.tests_with_marks_count / item.total_tests_count) * 100).toFixed(1))
+        : 0
+
+      return {
+        ...item,
+        tests_with_marks_pct: completionPct,
+        average_score_pct: avgPct
+      }
+    })
+
+    // Sort by Teacher Name, then Class Name, then Subject Name
+    teacher_assignment_summaries.sort((a, b) => {
+      const teacherComp = a.teacher_name.localeCompare(b.teacher_name, undefined, { sensitivity: 'base' })
+      if (teacherComp !== 0) return teacherComp
+      const classComp = a.class_name.localeCompare(b.class_name, undefined, { numeric: true, sensitivity: 'base' })
+      if (classComp !== 0) return classComp
+      return a.subject_name.localeCompare(b.subject_name, undefined, { sensitivity: 'base' })
+    })
 
     const testsWithAvgPct = tests_with_marks.filter((t) => t.average_pct !== null)
     const overall_average_pct = testsWithAvgPct.length > 0
@@ -2166,7 +2321,8 @@ export const supabaseApi: Api = {
       tests_with_marks,
       all_tests,
       subject_summaries,
-      teacher_summaries
+      teacher_summaries,
+      teacher_assignment_summaries
     }
   },
 
@@ -2184,11 +2340,11 @@ export const supabaseApi: Api = {
     let tests: any[] = []
     const tRes = await db()
       .from('unit_tests')
-      .select('id, title, test_date, created_at, max_mark, assessment_type, subject_id, subjects!inner(id, name)')
+      .select('id, title, test_date, created_at, max_mark, assessment_type, is_active, subject_id, subjects!inner(id, name)')
       .eq('class_id', classId)
       .order('test_date', { ascending: false })
 
-    if (tRes.error && (tRes.error.code === '42703' || tRes.error.message?.includes('assessment_type'))) {
+    if (tRes.error && (tRes.error.code === '42703' || tRes.error.message?.includes('assessment_type') || tRes.error.message?.includes('is_active'))) {
       const fallback = await db()
         .from('unit_tests')
         .select('id, title, test_date, created_at, max_mark, subject_id, subjects!inner(id, name)')
@@ -2222,13 +2378,28 @@ export const supabaseApi: Api = {
       scoresData = sRes.data ?? []
     }
 
+    // Filter tests to ONLY active tests (tests where students have marks uploaded)
+    const hasExplicitIsActive = (tests ?? []).length > 0 && (tests ?? []).every((t: any) => t.is_active !== undefined && t.is_active !== null)
+    if (hasExplicitIsActive) {
+      tests = (tests ?? []).filter((t: any) => Boolean(t.is_active))
+    } else {
+      const administeredTestIds = new Set<string>()
+      for (const sc of (scoresData ?? []) as any[]) {
+        const parsed = sc.score !== null && sc.score !== undefined && sc.score !== '' ? Number(sc.score) : null
+        if (parsed !== null && !isNaN(parsed)) {
+          administeredTestIds.add(sc.unit_test_id)
+        }
+      }
+      tests = (tests ?? []).filter((t: any) => t.is_active === true || (t.is_active === undefined && administeredTestIds.has(t.id)))
+    }
+
     const scoreMap = new Map<string, number | null>()
     const extraTestsByStudent = new Map<string, any[]>()
 
     for (const sc of (scoresData ?? []) as any[]) {
       const parsed = sc.score !== null && sc.score !== undefined && sc.score !== '' ? Number(sc.score) : null
       scoreMap.set(`${sc.student_id}_${sc.unit_test_id}`, parsed !== null && !isNaN(parsed) ? parsed : null)
-      if (!(tests ?? []).some((t: any) => t.id === sc.unit_test_id)) {
+      if (parsed !== null && !isNaN(parsed) && !(tests ?? []).some((t: any) => t.id === sc.unit_test_id)) {
         const list = extraTestsByStudent.get(sc.student_id) || []
         list.push(sc.unit_tests)
         extraTestsByStudent.set(sc.student_id, list)

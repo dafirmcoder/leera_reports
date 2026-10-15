@@ -87,7 +87,9 @@ export default function ReportSheet({ student, school, className, teacherName, r
                     <td className="c">{fmtDate(r.test_date)}</td>
                     <td className="c">{r.score !== null && r.score !== undefined ? r.score : '—'}</td>
                     <td className="c">{r.max_mark}</td>
-                    <td className="c">{r.score !== null && r.score !== undefined ? fmtPct((r.score / r.max_mark) * 100) : '—'}</td>
+                    <td className="c" style={{ color: (r.score !== null && r.score !== undefined && ((r.score / (r.max_mark || 1)) * 100) >= 65) ? '#15803d' : undefined, fontWeight: (r.score !== null && r.score !== undefined && ((r.score / (r.max_mark || 1)) * 100) >= 65) ? 600 : undefined }}>
+                      {r.score !== null && r.score !== undefined ? fmtPct((r.score / r.max_mark) * 100) : '—'}
+                    </td>
                   </tr>
                 ))}
                 {/* Subject Average row — always shown, even when there is only one test */}
@@ -95,7 +97,9 @@ export default function ReportSheet({ student, school, className, teacherName, r
                   <td colSpan={2}>Subject Average</td>
                   <td className="c">{s.totalScore}</td>
                   <td className="c">{s.totalMax}</td>
-                  <td className="c">{fmtPct(s.average)}</td>
+                  <td className="c" style={{ color: s.average >= 65 ? '#15803d' : undefined, fontWeight: 700 }}>
+                    {fmtPct(s.average)}
+                  </td>
                 </tr>
                 {idx < report.subjects.length - 1 && (
                   <tr className="spacer-row"><td colSpan={6} /></tr>
@@ -105,7 +109,9 @@ export default function ReportSheet({ student, school, className, teacherName, r
           })}
           {report.subjects.length > 0 && (
             <tr className="overall-row">
-              <td colSpan={6}>Overall Average: {fmtPct(report.overall)}</td>
+              <td colSpan={6} style={{ color: report.overall >= 65 ? '#15803d' : undefined }}>
+                Overall Average: {fmtPct(report.overall)}
+              </td>
             </tr>
           )}
         </tbody>

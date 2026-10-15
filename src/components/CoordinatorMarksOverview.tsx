@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { api } from '../lib/api'
 import { fmtDate } from '../lib/report'
 import type { ClassInfo, EndOfUnitTestOverview, Subject } from '../lib/types'
+import TeacherAssignmentTestSummaryTable from './TeacherAssignmentTestSummaryTable'
 
 interface CoordinatorMarksOverviewProps {
   classes: ClassInfo[]
@@ -137,7 +138,7 @@ export default function CoordinatorMarksOverview({
           <div className="stat-label">School-Wide Average</div>
           <div className="stat-value" style={{
             color: avgPct !== null && avgPct !== undefined
-              ? (avgPct >= 70 ? '#10b981' : avgPct >= 50 ? '#f59e0b' : '#ef4444')
+              ? (avgPct >= 65 ? '#10b981' : avgPct >= 50 ? '#f59e0b' : '#ef4444')
               : '#94a3b8'
           }}>
             {avgPct !== null && avgPct !== undefined ? `${avgPct}%` : '—'}
@@ -191,7 +192,7 @@ export default function CoordinatorMarksOverview({
                     <span style={{
                       fontWeight: 700,
                       color: sub.average_score_pct !== null
-                        ? (sub.average_score_pct >= 70 ? '#10b981' : sub.average_score_pct >= 50 ? '#d97706' : '#dc2626')
+                        ? (sub.average_score_pct >= 65 ? '#10b981' : sub.average_score_pct >= 50 ? '#d97706' : '#dc2626')
                         : '#94a3b8'
                     }}>
                       {sub.average_score_pct !== null ? `${sub.average_score_pct}%` : '—'}
@@ -205,6 +206,17 @@ export default function CoordinatorMarksOverview({
             ))}
           </div>
         </div>
+      )}
+
+      {/* Teacher Tests Count Summary (Class-Subject Combinations) */}
+      {data && data.teacher_assignment_summaries && data.teacher_assignment_summaries.length > 0 && (
+        <TeacherAssignmentTestSummaryTable
+          summaries={data.teacher_assignment_summaries}
+          classes={classes}
+          subjects={subjects}
+          title="👨‍🏫 Tests Count Summary per Teacher (Class-Subject Combinations)"
+          subtitle="Count of Unit Tests and School Exams set per teacher for each assigned class and subject combination."
+        />
       )}
 
       {/* Teachers Summary Table */}
@@ -273,7 +285,7 @@ export default function CoordinatorMarksOverview({
                         </td>
                         <td className="num">
                           {t.average_score_pct !== null ? (
-                            <span style={{ fontWeight: 700, color: t.average_score_pct >= 70 ? '#10b981' : t.average_score_pct >= 50 ? '#d97706' : '#dc2626' }}>
+                            <span style={{ fontWeight: 700, color: t.average_score_pct >= 65 ? '#10b981' : t.average_score_pct >= 50 ? '#d97706' : '#dc2626' }}>
                               {t.average_score_pct}%
                             </span>
                           ) : (
@@ -454,7 +466,7 @@ export default function CoordinatorMarksOverview({
                     </td>
                     <td className="num">
                       {t.average_pct !== null ? (
-                        <span style={{ fontWeight: 700, color: t.average_pct >= 70 ? '#10b981' : t.average_pct >= 50 ? '#d97706' : '#dc2626' }}>
+                        <span style={{ fontWeight: 700, color: t.average_pct >= 65 ? '#10b981' : t.average_pct >= 50 ? '#d97706' : '#dc2626' }}>
                           {t.average_pct}% <small className="muted">({t.average_score}/{t.max_mark})</small>
                         </span>
                       ) : (
