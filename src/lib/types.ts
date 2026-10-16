@@ -401,6 +401,54 @@ export interface ReportData {
   overall: number // percent
 }
 
+export type ExamGradeLetter = 'A*' | 'A' | 'B' | 'C' | 'D' | 'E' | 'U'
+
+export interface ExamGradeScaleItem {
+  grade: ExamGradeLetter
+  minScore: number
+  maxScore: number
+  rangeLabel: string
+  scaleNotation: string
+  remark: string
+  psychologyMeaning: string
+  textColor: string
+  bgColor: string
+  borderColor: string
+  textRgb: [number, number, number]
+  bgRgb: [number, number, number]
+  borderRgb: [number, number, number]
+}
+
+export interface ExamOption {
+  key: string
+  title: string
+  testDate: string
+  testIds: string[]
+  subjectsCount: number
+}
+
+export interface ExamSubjectRow {
+  subjectId?: string
+  subjectName: string
+  score: number | null // percentage 0 - 100
+  rawScore?: number | null
+  maxMark?: number | null
+  grade: ExamGradeLetter | null
+  remark: string | null
+  gradeInfo: ExamGradeScaleItem | null
+}
+
+export interface ExamReportData {
+  examTitle: string
+  examDate?: string
+  subjects: ExamSubjectRow[]
+  scoredCount: number
+  totalSubjects: number
+  overallAverage: number | null
+  overallGrade: ExamGradeScaleItem | null
+}
+
+
 export interface ClassAttendanceExportData {
   classInfo: ClassInfo
   students: Student[]

@@ -1,7 +1,7 @@
 import { jsPDF } from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import JSZip from 'jszip'
-import { buildReport, fmtDate, fmtPct, formatRollNo } from './report'
+import { buildExamReport, buildReport, EXAM_GRADING_SCALE, fmtDate, fmtPct, formatRollNo, getExamGradeInfo } from './report'
 import type { School, Student, StudentReportRow, UnitTest } from './types'
 
 // ---------------------------------------------------------------------------
@@ -64,12 +64,36 @@ export interface PdfContext {
   reportTitle?: string
 }
 
-export async function generateStudentPdf(ctx: PdfContext): Promise<jsPDF> {
-  const { student, school, className, teacherName, rows } = ctx
-  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' })
+export interface ExamPdfContext {
+  student: Student
+  school: School
+  className: string
+  teacherName: string
+  rows: StudentReportRow[]
+  learnerSubjects?: string[]
+  selectedExamTitle?: string
+  filterNotice?: string
+}
 
-  // ---- header ---------------------------------------------------------------
-  // Exact layout matching .report-sheet and .report-header in styles.css
+/**
+ * Shared Header & Student Info Block used by both End of Unit Test Reports
+ * and Independent School Exam Reports. Returns the Y coordinate where the table starts.
+ */
+async function drawReportHeader(
+  doc: jsPDF,
+  opts: {
+    student: Student
+    school: School
+    className: string
+    teacherName: string
+    titleBandText: string
+    filterNotice?: string
+    examName?: string
+    subjectsLabel?: string
+  }
+): Promise<number> {
+  const { student, school, className, teacherName, titleBandText, filterNotice, examName, subjectsLabel } = opts
+
   const schoolLogoW = 25.74
   const schoolLogoH = 22 // Height matches .logo-left { height: 22mm }
   const schoolLogoX = MARGIN
@@ -136,78 +160,138 @@ export async function generateStudentPdf(ctx: PdfContext): Promise<jsPDF> {
     headerBottom = Math.max(headerBottom, cambridgeLogoY + cambridgeLogoH)
   }
 
-  // Title band ("EXAM REPORT" vs "END OF UNIT TEST REPORT")
-  const isAllExam = rows.length > 0 && rows.every((r) => r.assessment_type === 'exam' || r.assessment_type === 'midterm')
-  const titleBandText = ctx.reportTitle || (isAllExam ? 'EXAM REPORT' : 'END OF UNIT TEST REPORT')
-
-  let y = headerBottom + 4
+  let y = headerBottom + 3.5
   const band2H = 7.5
   doc.setFillColor(31, 78, 95) // var(--teal) #1F4E5F
   doc.roundedRect(MARGIN, y, PAGE_W - 2 * MARGIN, band2H, 1.2, 1.2, 'F')
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(11)
   doc.setTextColor(255, 255, 255)
-  doc.text(titleBandText, PAGE_W / 2, y + band2H / 2 + 0.3, { align: 'center', baseline: 'middle' })
-  y += band2H + 4.5
+  doc.text(sanitizePdfText(titleBandText), PAGE_W / 2, y + band2H / 2 + 0.3, { align: 'center', baseline: 'middle' })
+  y += band2H + 3.5
 
-  // ---- info block ------------------------------------------------------------
+  // ---- Structured 2-Row x 4-Column Learner Details Grid (No Grid Lines) -----
   const printed = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })
-  const infoLines: Array<Array<{ text: string; type: 'lbl' | 'val' | 'sep' }>> = [
-    [
-      { text: 'Student: ', type: 'lbl' },
-      { text: student.full_name, type: 'val' }
-    ],
-    [
-      { text: 'Roll No.: ', type: 'lbl' },
-      { text: formatRollNo(student.roll_no || student.admission_no) || '—', type: 'val' },
-      { text: '   ·   ', type: 'sep' },
-      { text: 'Class: ', type: 'lbl' },
-      { text: className || '—', type: 'val' }
-    ],
-    [
-      { text: 'Semester: ', type: 'lbl' },
-      { text: school.semester || school.term || '—', type: 'val' },
-      { text: '   ·   ', type: 'sep' },
-      { text: 'Academic Year: ', type: 'lbl' },
-      { text: school.academic_year, type: 'val' }
-    ],
-    [
-      { text: 'Teacher: ', type: 'lbl' },
-      { text: teacherName || '—', type: 'val' },
-      { text: '   ·   ', type: 'sep' },
-      { text: 'Printed: ', type: 'lbl' },
-      { text: printed, type: 'val' },
-      ...(ctx.filterNotice ? [
-        { text: '   ·   ', type: 'sep' as const },
-        { text: 'Scope: ', type: 'lbl' as const },
-        { text: ctx.filterNotice, type: 'val' as const }
-      ] : [])
-    ]
+  const rollVal = formatRollNo(student.roll_no || student.admission_no) || '—'
+  const semVal = school.semester || school.term || '—'
+  const subjVal = subjectsLabel || 'All Class Subjects'
+
+  const colWidths = [68, 40, 36, 42] // sum = 186mm
+  const rowH = 9.5
+  const hasMetaStrip = Boolean(examName || filterNotice)
+  const metaStripH = hasMetaStrip ? 5.8 : 0
+  const totalCardH = rowH * 2 + metaStripH
+
+  const fitCellText = (txt: string, maxW: number, fontSizePt: number): string => {
+    const clean = sanitizePdfText(txt || '—')
+    doc.setFontSize(fontSizePt)
+    if (doc.getTextWidth(clean) <= maxW) return clean
+    let cut = clean
+    while (cut.length > 3 && doc.getTextWidth(`${cut}...`) > maxW) {
+      cut = cut.slice(0, -1)
+    }
+    return `${cut}...`
+  }
+
+  const row1Cells = [
+    { label: 'LEARNER NAME', value: student.full_name, isName: true },
+    { label: 'ROLL NUMBER', value: rollVal, isName: false },
+    { label: 'CLASS', value: className || '—', isName: false },
+    { label: 'ACADEMIC YEAR', value: school.academic_year || '—', isName: false }
   ]
 
-  doc.setFontSize(9.8)
-  for (const line of infoLines) {
-    let x = MARGIN
-    for (const seg of line) {
-      if (seg.type === 'lbl') {
-        doc.setFont('helvetica', 'bold')
-        doc.setTextColor(31, 78, 95) // var(--teal)
-      } else if (seg.type === 'sep') {
-        doc.setFont('helvetica', 'normal')
-        doc.setTextColor(195, 211, 220) // var(--line)
-      } else {
-        doc.setFont('helvetica', 'normal')
-        doc.setTextColor(28, 43, 51) // var(--text)
-      }
-      doc.text(seg.text, x, y)
-      x += doc.getTextWidth(seg.text)
-    }
-    y += 5.2
+  const row2Cells = [
+    { label: 'HOMEROOM TEACHER', value: teacherName || '—', isName: false },
+    { label: 'SUBJECTS', value: subjVal, isName: false },
+    { label: 'SEMESTER / TERM', value: semVal, isName: false },
+    { label: 'DATE PRINTED', value: printed, isName: false }
+  ]
+
+  const drawGridRow = (cells: typeof row1Cells, rowTopY: number) => {
+    let cx = MARGIN
+    cells.forEach((cell, idx) => {
+      const cw = colWidths[idx]
+      const padX = 1.0
+      // Uppercase micro-label
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(6.6)
+      doc.setTextColor(31, 78, 95) // var(--teal)
+      doc.text(cell.label, cx + padX, rowTopY + 3.2)
+
+      // Bold value
+      const valFontSize = cell.isName ? 9.6 : 9.1
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(valFontSize)
+      doc.setTextColor(15, 23, 42) // #0f172a
+      const fitted = fitCellText(cell.value, cw - padX * 2, valFontSize)
+      doc.text(fitted, cx + padX, rowTopY + 7.5)
+
+      cx += cw
+    })
   }
-  const startY = y + 2.5
+
+  drawGridRow(row1Cells, y)
+  drawGridRow(row2Cells, y + rowH)
+
+  if (hasMetaStrip) {
+    const stripY = y + rowH * 2
+    let mx = MARGIN + 1.0
+    const baselineY = stripY + 4.2
+    if (examName) {
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(7.2)
+      doc.setTextColor(31, 78, 95)
+      const lbl = 'EXAMINATION: '
+      doc.text(lbl, mx, baselineY)
+      mx += doc.getTextWidth(lbl)
+
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(8.4)
+      doc.setTextColor(15, 23, 42)
+      const val = sanitizePdfText(examName)
+      doc.text(val, mx, baselineY)
+      mx += doc.getTextWidth(val) + 8
+    }
+    if (filterNotice) {
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(7.2)
+      doc.setTextColor(31, 78, 95)
+      const lbl = 'SCOPE: '
+      doc.text(lbl, mx, baselineY)
+      mx += doc.getTextWidth(lbl)
+
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(8.2)
+      doc.setTextColor(15, 23, 42)
+      const val = sanitizePdfText(filterNotice)
+      doc.text(val, mx, baselineY)
+    }
+  }
+
+  return y + totalCardH + 3.5
+}
+
+export async function generateStudentPdf(ctx: PdfContext): Promise<jsPDF> {
+  const { student, school, className, teacherName, rows } = ctx
+  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' })
+
+  const isAllExam = rows.length > 0 && rows.every((r) => r.assessment_type === 'exam' || r.assessment_type === 'midterm')
+  const titleBandText = ctx.reportTitle || (isAllExam ? 'EXAM REPORT' : 'END OF UNIT TEST REPORT')
 
   // ---- table -----------------------------------------------------------------
   const report = buildReport(rows)
+  const subjectsLabel = `${report.subjects.length} Subject${report.subjects.length === 1 ? '' : 's'}`
+
+  const startY = await drawReportHeader(doc, {
+    student,
+    school,
+    className,
+    teacherName,
+    titleBandText,
+    filterNotice: ctx.filterNotice,
+    subjectsLabel
+  })
+
   const avgStyle = {
     fillColor: [221, 235, 241] as [number, number, number], // #ddebf1
     fontStyle: 'bold' as const,
@@ -392,6 +476,308 @@ function drawFooterAtY(doc: jsPDF, school: School, fy: number): void {
   doc.setFontSize(9.5)
   doc.text(school.footer_text || '', PAGE_W / 2, fy + fh / 2 + 0.3, { align: 'center', baseline: 'middle' })
 }
+
+// ---------------------------------------------------------------------------
+// Independent School Exam Report -> PDF
+// Imports the End of Unit Tests header and footer structure, renders all
+// subjects a learner is taking with Score, Grade, and Remarks columns styled
+// with Color Psychology, displays the Grading System Scale below the table,
+// and includes Academic Coordinator's Signature, Head of School's Signature,
+// and a Square Box Official Stamp placeholder.
+// ---------------------------------------------------------------------------
+
+export async function generateStudentExamPdf(ctx: ExamPdfContext): Promise<jsPDF> {
+  const { student, school, className, teacherName, rows, learnerSubjects = [], selectedExamTitle, filterNotice } = ctx
+  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' })
+
+  const examReport = buildExamReport({
+    rows,
+    learnerSubjects,
+    selectedExamTitle
+  })
+
+  const activeExamLabel =
+    selectedExamTitle && selectedExamTitle !== '__ALL_EXAMS__'
+      ? selectedExamTitle
+      : examReport.examTitle || 'School Examination'
+
+  const titleBandText =
+    selectedExamTitle && selectedExamTitle !== '__ALL_EXAMS__'
+      ? `SCHOOL EXAM REPORT — ${selectedExamTitle.toUpperCase()}`
+      : 'SCHOOL EXAM REPORT'
+
+  const subjectsLabel = `${examReport.subjects.length} Subject${examReport.subjects.length === 1 ? '' : 's'}`
+
+  const startY = await drawReportHeader(doc, {
+    student,
+    school,
+    className,
+    teacherName,
+    titleBandText,
+    examName: activeExamLabel,
+    filterNotice,
+    subjectsLabel
+  })
+
+  const body: any[] = []
+
+  if (examReport.subjects.length === 0) {
+    body.push([
+      {
+        content: 'No subjects or exam records found for this learner.',
+        colSpan: 4,
+        styles: { textColor: [107, 127, 138], halign: 'center', cellPadding: 6 }
+      }
+    ])
+  } else {
+    examReport.subjects.forEach((sub) => {
+      const gInfo = sub.gradeInfo
+      const hasScore = sub.score !== null && sub.score !== undefined
+
+      body.push([
+        {
+          content: sanitizePdfText(sub.subjectName),
+          styles: {
+            fillColor: [234, 243, 248] as [number, number, number],
+            textColor: [31, 78, 95] as [number, number, number],
+            fontStyle: 'bold',
+            halign: 'left'
+          }
+        },
+        {
+          content: hasScore ? fmtPct(sub.score!) : '—',
+          styles: {
+            halign: 'center',
+            fontStyle: hasScore ? 'bold' : 'normal',
+            textColor: gInfo ? gInfo.textRgb : ([100, 116, 139] as [number, number, number])
+          }
+        },
+        {
+          content: gInfo ? gInfo.grade : '—',
+          styles: {
+            halign: 'center',
+            fontStyle: 'bold',
+            fillColor: gInfo ? gInfo.bgRgb : ([248, 250, 252] as [number, number, number]),
+            textColor: gInfo ? gInfo.textRgb : ([148, 163, 184] as [number, number, number])
+          }
+        },
+        {
+          content: gInfo ? gInfo.remark : '—',
+          styles: {
+            halign: 'center',
+            fontStyle: 'bold',
+            fillColor: gInfo ? gInfo.bgRgb : ([248, 250, 252] as [number, number, number]),
+            textColor: gInfo ? gInfo.textRgb : ([148, 163, 184] as [number, number, number])
+          }
+        }
+      ])
+    })
+
+    const ovGrade = examReport.overallGrade
+    body.push([
+      {
+        content: `Overall Exam Average (${examReport.scoredCount} / ${examReport.totalSubjects} Subjects)`,
+        styles: {
+          fillColor: [221, 235, 241] as [number, number, number],
+          textColor: [31, 78, 95] as [number, number, number],
+          fontStyle: 'bold',
+          halign: 'left',
+          cellPadding: 2.6
+        }
+      },
+      {
+        content: examReport.overallAverage !== null ? fmtPct(examReport.overallAverage) : '—',
+        styles: {
+          fillColor: [221, 235, 241] as [number, number, number],
+          textColor: ovGrade ? ovGrade.textRgb : ([31, 78, 95] as [number, number, number]),
+          fontStyle: 'bold',
+          halign: 'center',
+          cellPadding: 2.6
+        }
+      },
+      {
+        content: ovGrade ? ovGrade.grade : '—',
+        styles: {
+          fillColor: ovGrade ? ovGrade.bgRgb : ([221, 235, 241] as [number, number, number]),
+          textColor: ovGrade ? ovGrade.textRgb : ([31, 78, 95] as [number, number, number]),
+          fontStyle: 'bold',
+          halign: 'center',
+          cellPadding: 2.6
+        }
+      },
+      {
+        content: ovGrade ? ovGrade.remark : '—',
+        styles: {
+          fillColor: ovGrade ? ovGrade.bgRgb : ([221, 235, 241] as [number, number, number]),
+          textColor: ovGrade ? ovGrade.textRgb : ([31, 78, 95] as [number, number, number]),
+          fontStyle: 'bold',
+          halign: 'center',
+          cellPadding: 2.6
+        }
+      }
+    ])
+  }
+
+  autoTable(doc, {
+    startY,
+    margin: { left: MARGIN, right: MARGIN, top: 18, bottom: 22 },
+    head: [['Subject', 'Score', 'Grade', 'Remarks']],
+    body,
+    theme: 'grid',
+    styles: {
+      font: 'helvetica',
+      fontSize: 9.2,
+      cellPadding: { top: 2.0, bottom: 2.0, left: 2.8, right: 2.8 },
+      textColor: [28, 43, 51],
+      lineColor: [212, 221, 227],
+      lineWidth: 0.22,
+      valign: 'middle'
+    },
+    headStyles: {
+      fillColor: [31, 78, 95],
+      textColor: 255,
+      fontStyle: 'bold',
+      fontSize: 9.5,
+      cellPadding: { top: 2.3, bottom: 2.3, left: 2.8, right: 2.8 }
+    },
+    columnStyles: {
+      0: { cellWidth: 74, halign: 'left' },
+      1: { cellWidth: 28, halign: 'center' },
+      2: { cellWidth: 26, halign: 'center' },
+      3: { cellWidth: 58, halign: 'center' }
+    },
+    didParseCell: (data) => {
+      if (data.section === 'head') {
+        data.cell.styles.halign = data.column.index === 0 ? 'left' : 'center'
+      }
+    }
+  })
+
+  const tableEndPage = doc.getNumberOfPages()
+  doc.setPage(tableEndPage)
+  let curY = ((doc as any).lastAutoTable?.finalY ?? startY + 40) + 4
+
+  // Ensure enough room for Grading Scale (21mm) + Signatures & Square Stamp (32mm) + Footer (10mm) = 63mm
+  const fh = 8.5
+  const fixedBottomY = PAGE_H - MARGIN - fh
+  if (curY + 56 > fixedBottomY) {
+    drawFooterAtY(doc, school, fixedBottomY)
+    doc.addPage()
+    curY = 14
+  }
+
+  // ---- Grading System Scale Box below the Scores Table ---------------------
+  const boxW = PAGE_W - 2 * MARGIN // 186mm
+  const scaleBoxH = 20.5
+  doc.setFillColor(248, 250, 252)
+  doc.setDrawColor(203, 213, 225)
+  doc.setLineWidth(0.25)
+  doc.roundedRect(MARGIN, curY, boxW, scaleBoxH, 1.5, 1.5, 'FD')
+
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(7.8)
+  doc.setTextColor(31, 78, 95)
+  doc.text('GRADING SYSTEM SCALE & PERFORMANCE DESCRIPTORS', PAGE_W / 2, curY + 3.8, {
+    align: 'center'
+  })
+
+  const innerPadX = 2
+  const gapX = 1.4
+  const cardCount = EXAM_GRADING_SCALE.length // 7
+  const cardW = (boxW - 2 * innerPadX - (cardCount - 1) * gapX) / cardCount
+  const cardH = 13.5
+  const cardY = curY + 5.5
+
+  EXAM_GRADING_SCALE.forEach((item, idx) => {
+    const cx = MARGIN + innerPadX + idx * (cardW + gapX)
+    const centerCardX = cx + cardW / 2
+
+    // Card background & border using Color Psychology
+    doc.setFillColor(item.bgRgb[0], item.bgRgb[1], item.bgRgb[2])
+    doc.setDrawColor(item.borderRgb[0], item.borderRgb[1], item.borderRgb[2])
+    doc.setLineWidth(0.25)
+    doc.roundedRect(cx, cardY, cardW, cardH, 1.0, 1.0, 'FD')
+
+    // Grade Letter
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(8.5)
+    doc.setTextColor(item.textRgb[0], item.textRgb[1], item.textRgb[2])
+    doc.text(item.grade, centerCardX, cardY + 3.6, { align: 'center' })
+
+    // Range (e.g. 90-100, 80-90)
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(6.4)
+    doc.text(item.rangeLabel, centerCardX, cardY + 6.9, { align: 'center' })
+
+    // Remark (split onto 2 lines if long like BASIC UNDERSTANDING / DEVELOPING UNDERSTANDING / NEEDS IMPROVEMENT)
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(5.4)
+    const words = item.remark.split(' ')
+    if (words.length > 1 && item.remark.length > 10) {
+      doc.text(words[0], centerCardX, cardY + 9.8, { align: 'center' })
+      doc.text(words.slice(1).join(' '), centerCardX, cardY + 12.1, { align: 'center' })
+    } else {
+      doc.text(item.remark, centerCardX, cardY + 10.8, { align: 'center' })
+    }
+  })
+
+  curY += scaleBoxH + 4.5
+
+  // ---- Signatures (Left Stacked) & Official Stamp Square Box (Right) -------
+  const sigLineW = 72
+  const sigLeftX = MARGIN + 2
+
+  // 1. Academic Coordinator's Signature (First on the Left)
+  const coordLineY = curY + 11
+  doc.setDrawColor(30, 41, 59)
+  doc.setLineWidth(0.35)
+  doc.line(sigLeftX, coordLineY, sigLeftX + sigLineW, coordLineY)
+
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(8.8)
+  doc.setTextColor(31, 78, 95)
+  doc.text("Academic Coordinator's Signature", sigLeftX, coordLineY + 4.2)
+
+  // 2. Head of School's Signature (Below Academic Coordinator on the Left)
+  const headLineY = coordLineY + 17
+  doc.setDrawColor(30, 41, 59)
+  doc.setLineWidth(0.35)
+  doc.line(sigLeftX, headLineY, sigLeftX + sigLineW, headLineY)
+
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(8.8)
+  doc.setTextColor(31, 78, 95)
+  doc.text("Head of School's Signature", sigLeftX, headLineY + 4.2)
+
+  // 3. Official Stamp Placeholder "Square Box" (On the Right)
+  const stampSize = 30 // 30mm x 30mm true square box
+  const stampX = PAGE_W - MARGIN - stampSize - 2
+  const stampY = curY + 2
+
+  doc.setFillColor(255, 255, 255)
+  doc.setDrawColor(71, 85, 105)
+  doc.setLineWidth(0.35)
+  doc.rect(stampX, stampY, stampSize, stampSize, 'FD')
+
+  // Subtle inner square border
+  doc.setDrawColor(148, 163, 184)
+  doc.setLineWidth(0.2)
+  doc.rect(stampX + 1.2, stampY + 1.2, stampSize - 2.4, stampSize - 2.4, 'S')
+
+  const stampCenterX = stampX + stampSize / 2
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(7.2)
+  doc.setTextColor(148, 163, 184)
+  doc.text('OFFICIAL', stampCenterX, stampY + stampSize / 2 - 1.2, { align: 'center' })
+  doc.text('STAMP', stampCenterX, stampY + stampSize / 2 + 2.2, { align: 'center' })
+
+  const endorsementBottomY = Math.max(headLineY + 7, stampY + stampSize + 4)
+  const footerY = Math.max(endorsementBottomY, fixedBottomY)
+  drawFooterAtY(doc, school, Math.min(footerY, fixedBottomY))
+
+  return doc
+}
+
 
 // ---------------------------------------------------------------------------
 // Subject Class Marksheet -> Landscape PDF
@@ -789,6 +1175,19 @@ export async function downloadStudentPdf(ctx: PdfContext): Promise<void> {
   triggerDownload(doc.output('blob'), reportFileName(ctx))
 }
 
+function examReportFileName(ctx: ExamPdfContext): string {
+  const examTag = ctx.selectedExamTitle && ctx.selectedExamTitle !== '__ALL_EXAMS__'
+    ? ` - ${ctx.selectedExamTitle}`
+    : ' - Exam Report'
+  return safeName(`${ctx.className}${examTag} - ${ctx.student.full_name} (${ctx.student.student_no})`) + '.pdf'
+}
+
+/** Download one student's Independent School Exam Report as a PDF. */
+export async function downloadStudentExamPdf(ctx: ExamPdfContext): Promise<void> {
+  const doc = await generateStudentExamPdf(ctx)
+  triggerDownload(doc.output('blob'), examReportFileName(ctx))
+}
+
 export function canSaveToFolder(): boolean {
   return typeof window !== 'undefined' && 'showDirectoryPicker' in window
 }
@@ -805,6 +1204,18 @@ export interface BulkOptions {
   teacherName: string
   filterNotice?: string
   reportTitle?: string
+  onProgress?: (done: number, total: number) => void
+}
+
+export interface BulkExamOptions {
+  students: Student[]
+  rowsByStudent: Record<string, StudentReportRow[]>
+  learnerSubjectsByStudent: Record<string, string[]>
+  selectedExamTitle?: string
+  school: School
+  className: string
+  teacherName: string
+  filterNotice?: string
   onProgress?: (done: number, total: number) => void
 }
 
@@ -855,3 +1266,59 @@ export async function saveClassReportsToFolder(opts: BulkOptions): Promise<void>
     opts.onProgress?.(i + 1, total)
   }
 }
+
+/** One zip file of individual per-student Independent School Exam Report PDFs. */
+export async function downloadClassExamReportsZip(opts: BulkExamOptions): Promise<void> {
+  const zip = new JSZip()
+  const total = opts.students.length
+  for (let i = 0; i < total; i++) {
+    const st = opts.students[i]
+    const ctx: ExamPdfContext = {
+      student: st,
+      school: opts.school,
+      className: opts.className,
+      teacherName: opts.teacherName,
+      filterNotice: opts.filterNotice,
+      selectedExamTitle: opts.selectedExamTitle,
+      learnerSubjects: opts.learnerSubjectsByStudent[st.id] ?? [],
+      rows: opts.rowsByStudent[st.id] ?? []
+    }
+    const doc = await generateStudentExamPdf(ctx)
+    zip.file(examReportFileName(ctx), doc.output('arraybuffer'))
+    opts.onProgress?.(i + 1, total)
+  }
+  const blob = await zip.generateAsync({ type: 'blob' })
+  const examSlug = opts.selectedExamTitle && opts.selectedExamTitle !== '__ALL_EXAMS__'
+    ? `_${opts.selectedExamTitle}`
+    : '_Exam_Reports'
+  triggerDownload(blob, safeName(`Leera_Exam_Reports_${opts.className}${examSlug}`) + '.zip')
+}
+
+/** Write the individual per-student Independent School Exam Report PDFs directly into a folder. */
+export async function saveClassExamReportsToFolder(opts: BulkExamOptions): Promise<void> {
+  const w = window as any
+  if (!w.showDirectoryPicker) throw new Error('This browser does not support saving to a folder.')
+  const dir = await w.showDirectoryPicker()
+  const total = opts.students.length
+  for (let i = 0; i < total; i++) {
+    const st = opts.students[i]
+    const ctx: ExamPdfContext = {
+      student: st,
+      school: opts.school,
+      className: opts.className,
+      teacherName: opts.teacherName,
+      filterNotice: opts.filterNotice,
+      selectedExamTitle: opts.selectedExamTitle,
+      learnerSubjects: opts.learnerSubjectsByStudent[st.id] ?? [],
+      rows: opts.rowsByStudent[st.id] ?? []
+    }
+    const doc = await generateStudentExamPdf(ctx)
+    const blob = doc.output('blob')
+    const handle = await dir.getFileHandle(examReportFileName(ctx), { create: true })
+    const writable = await handle.createWritable()
+    await writable.write(blob)
+    await writable.close()
+    opts.onProgress?.(i + 1, total)
+  }
+}
+

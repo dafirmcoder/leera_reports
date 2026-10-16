@@ -536,6 +536,73 @@ textarea.field,
 .report-info .lbl { font-weight: 700; color: var(--teal); }
 .report-info .sep { margin: 0 12px; color: var(--line); }
 
+.report-info-card {
+  margin-bottom: 12px;
+  border: none;
+  background: transparent;
+}
+
+.report-info-grid {
+  display: grid;
+  grid-template-columns: 1.55fr 0.95fr 0.85fr 0.95fr;
+  row-gap: 6px;
+  column-gap: 12px;
+}
+
+@media (max-width: 640px) {
+  .report-info-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.report-info-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 4px;
+  border: none;
+  background: transparent;
+}
+
+.report-info-label {
+  font-size: 9.5px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--teal);
+  line-height: 1.2;
+}
+
+.report-info-value {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #0f172a;
+  line-height: 1.3;
+  word-break: break-word;
+}
+
+.report-info-name {
+  font-size: 13px;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.report-info-meta-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  padding: 4px 4px 0;
+  background: transparent;
+  border-top: none;
+}
+
+.report-info-meta-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
 .report-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 .report-table th {
   background: var(--teal); color: #fff; padding: 7px 8px; text-align: left;
@@ -568,15 +635,248 @@ textarea.field,
   font-size: 12.5px;
 }
 
+/* ============================================================
+   INDEPENDENT SCHOOL EXAM REPORT SHEET
+   ============================================================ */
+.exam-report-sheet {
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+.exam-scores-table td {
+  padding: 6.5px 10px;
+}
+
+.exam-subject-cell {
+  background: #eaf3f8;
+  color: var(--teal);
+  font-weight: 700;
+  border-right: 2px solid #c3d3dc !important;
+}
+
+.exam-score-cell {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.exam-grade-cell,
+.exam-remark-cell {
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+.exam-grade-pill {
+  display: inline-block;
+  min-width: 34px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-weight: 800;
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.exam-remark-pill {
+  display: inline-block;
+  font-weight: 700;
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+}
+
+.exam-overall-row td {
+  background: #ddebf1;
+  font-weight: 800;
+  padding: 8px 10px;
+  border-top: 2px solid #94a3b8;
+}
+
+.exam-overall-label {
+  color: var(--teal);
+}
+
+.exam-overall-score {
+  font-size: 13.5px;
+}
+
+.exam-overall-grade {
+  font-size: 13px;
+}
+
+.exam-overall-remark {
+  font-size: 12px;
+  letter-spacing: 0.03em;
+}
+
+/* Grading System Scale below the Scores Table */
+.exam-grading-scale-box {
+  margin-top: 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: #f8fafc;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+.exam-grading-scale-title {
+  font-size: 10.5px;
+  font-weight: 800;
+  color: var(--teal);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+  text-align: center;
+}
+
+.exam-grading-scale-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 5px;
+}
+
+@media (max-width: 720px) {
+  .exam-grading-scale-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.exam-scale-card {
+  border: 1px solid;
+  border-radius: 5px;
+  padding: 5px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  align-items: center;
+  text-align: center;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+.exam-scale-top {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.exam-scale-grade-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 800;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid;
+  line-height: 1.25;
+}
+
+.exam-scale-range {
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.exam-scale-notation {
+  font-size: 8.5px;
+  opacity: 0.85;
+}
+
+.exam-scale-remark {
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  line-height: 1.15;
+}
+
+/* Signatures (Left Stacked) & Official Stamp Square Box (Right) */
+.exam-endorsement-section {
+  margin-top: 14px;
+  margin-bottom: 6px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 24px;
+  padding: 6px 8px 2px;
+}
+
+.exam-signatures-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 14px;
+  flex: 1;
+}
+
+.exam-signature-block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
+  width: 100%;
+  max-width: 72mm;
+}
+
+.exam-signature-space {
+  height: 11mm;
+  width: 100%;
+}
+
+.exam-signature-line {
+  width: 100%;
+  max-width: 72mm;
+  border-bottom: 1.5px solid #1e293b;
+  margin-bottom: 4px;
+}
+
+.exam-signature-title {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--teal);
+}
+
+.exam-stamp-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.exam-stamp-square-box {
+  width: 34mm;
+  height: 34mm;
+  border: 1.5px solid #475569;
+  outline: 1px dashed #94a3b8;
+  outline-offset: -4px;
+  background: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 6px;
+  box-sizing: border-box;
+}
+
+.exam-stamp-label {
+  font-size: 9.5px;
+  font-weight: 700;
+  color: #94a3b8;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  line-height: 1.3;
+}
+
 /* ---------- print ---------- */
 @media print {
   @page { size: A4 portrait; margin: 0; }
-  body { background: #fff; }
+  body { background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .no-print, .topbar, .bottomnav { display: none !important; }
   .content { padding: 0; max-width: none; }
   .report-sheet { width: 210mm; min-height: 296mm; box-shadow: none; margin: 0; padding: 10mm 12mm 8mm; }
-  .report-footer { margin-top: 14mm; }
+  .report-footer { margin-top: auto; }
+  .report-info-grid { grid-template-columns: 1.55fr 0.95fr 0.85fr 0.95fr !important; }
+  .exam-grading-scale-grid { grid-template-columns: repeat(7, 1fr) !important; }
 }
+
 
 /* ---------- topbar user chip / role tag ---------- */
 .user-chip {

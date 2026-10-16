@@ -2,6 +2,115 @@ import { Fragment } from 'react'
 import { buildReport, fmtDate, fmtPct, formatRollNo } from '../lib/report'
 import type { School, Student, StudentReportRow } from '../lib/types'
 
+export interface ReportHeaderProps {
+  school: School
+  student: Student
+  className: string
+  teacherName: string
+  titleText: string
+  printedDate: string
+  filterNotice?: string
+  examName?: string
+  subjectsLabel?: string
+}
+
+export function ReportHeader({
+  school,
+  student,
+  className,
+  teacherName,
+  titleText,
+  printedDate,
+  filterNotice,
+  examName,
+  subjectsLabel
+}: ReportHeaderProps) {
+  const rollDisplay = formatRollNo(student.roll_no || student.admission_no) || '—'
+  const semesterDisplay = school.semester || school.term || '—'
+
+  return (
+    <>
+      <div className="report-header">
+        {school.show_school_logo && <img src="/logos/school-logo.png" alt="" className="logo logo-left" />}
+        {school.show_cambridge_logo && <img src="/logos/cambridge-logo.png" alt="" className="logo logo-right" />}
+        <div className="report-title-block">
+          <h1>{school.name}</h1>
+          {school.motto && <div className="motto">{school.motto}</div>}
+        </div>
+      </div>
+
+      <div className="report-band">{titleText}</div>
+
+      <div className="report-info-card">
+        <div className="report-info-grid">
+          <div className="report-info-cell report-info-cell-wide">
+            <span className="report-info-label">Learner Name</span>
+            <span className="report-info-value report-info-name">{student.full_name}</span>
+          </div>
+          <div className="report-info-cell">
+            <span className="report-info-label">Roll Number</span>
+            <span className="report-info-value">{rollDisplay}</span>
+          </div>
+          <div className="report-info-cell">
+            <span className="report-info-label">Class</span>
+            <span className="report-info-value">{className || '—'}</span>
+          </div>
+          <div className="report-info-cell">
+            <span className="report-info-label">Academic Year</span>
+            <span className="report-info-value">{school.academic_year || '—'}</span>
+          </div>
+
+          <div className="report-info-cell report-info-cell-wide">
+            <span className="report-info-label">Homeroom Teacher</span>
+            <span className="report-info-value">{teacherName || '—'}</span>
+          </div>
+          <div className="report-info-cell">
+            <span className="report-info-label">Subjects</span>
+            <span className="report-info-value">{subjectsLabel || 'All Class Subjects'}</span>
+          </div>
+          <div className="report-info-cell">
+            <span className="report-info-label">Semester / Term</span>
+            <span className="report-info-value">{semesterDisplay}</span>
+          </div>
+          <div className="report-info-cell">
+            <span className="report-info-label">Date Printed</span>
+            <span className="report-info-value">{printedDate}</span>
+          </div>
+        </div>
+
+        {(examName || filterNotice) && (
+          <div className="report-info-meta-strip">
+            {examName && (
+              <div className="report-info-meta-item">
+                <span className="report-info-label">Examination:</span>
+                <span className="report-info-value">{examName}</span>
+              </div>
+            )}
+            {filterNotice && (
+              <div className="report-info-meta-item">
+                <span className="report-info-label">Scope:</span>
+                <span className="report-info-value">{filterNotice}</span>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </>
+  )
+}
+
+export interface ReportFooterProps {
+  school: School
+}
+
+export function ReportFooter({ school }: ReportFooterProps) {
+  return (
+    <div className="report-footer" style={{ background: school.footer_color }}>
+      {school.footer_text}
+    </div>
+  )
+}
+
 interface Props {
   student: Student
   school: School
@@ -17,44 +126,20 @@ export default function ReportSheet({ student, school, className, teacherName, r
   const printedDate = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })
   const isAllExam = rows.length > 0 && rows.every((r) => r.assessment_type === 'exam' || r.assessment_type === 'midterm')
   const titleText = reportTitle || (isAllExam ? 'EXAM REPORT' : 'END OF UNIT TEST REPORT')
+  const subjectsLabel = `${report.subjects.length} Subject${report.subjects.length === 1 ? '' : 's'}`
 
   return (
     <div className="report-sheet">
-      <div className="report-header">
-        {school.show_school_logo && <img src="/logos/school-logo.png" alt="" className="logo logo-left" />}
-        {school.show_cambridge_logo && <img src="/logos/cambridge-logo.png" alt="" className="logo logo-right" />}
-        <div className="report-title-block">
-          <h1>{school.name}</h1>
-          {school.motto && <div className="motto">{school.motto}</div>}
-        </div>
-      </div>
-
-      <div className="report-band">{titleText}</div>
-
-      <div className="report-info">
-        <div><span className="lbl">Student:</span> {student.full_name}</div>
-        <div>
-          <span className="lbl">Roll No.:</span> {formatRollNo(student.roll_no || student.admission_no) || '—'}
-          <span className="sep">·</span>
-          <span className="lbl">Class:</span> {className || '—'}
-        </div>
-        <div>
-          <span className="lbl">Semester:</span> {school.semester || school.term}
-          <span className="sep">·</span>
-          <span className="lbl">Academic Year:</span> {school.academic_year}
-        </div>
-        <div>
-          <span className="lbl">Teacher:</span> {teacherName || '—'}
-          <span className="sep">·</span>
-          <span className="lbl">Printed:</span> {printedDate}
-          {filterNotice && (
-            <>
-              <span className="sep">·</span>
-              <span className="lbl">Scope:</span> {filterNotice}
-            </>
-          )}
-        </div>
-      </div>
+      <ReportHeader
+        school={school}
+        student={student}
+        className={className}
+        teacherName={teacherName}
+        titleText={titleText}
+        printedDate={printedDate}
+        filterNotice={filterNotice}
+        subjectsLabel={subjectsLabel}
+      />
 
       <table className="report-table">
         <thead>
@@ -117,9 +202,8 @@ export default function ReportSheet({ student, school, className, teacherName, r
         </tbody>
       </table>
 
-      <div className="report-footer" style={{ background: school.footer_color }}>
-        {school.footer_text}
-      </div>
+      <ReportFooter school={school} />
     </div>
   )
 }
+

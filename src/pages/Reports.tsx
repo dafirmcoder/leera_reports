@@ -1,20 +1,31 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { api } from '../lib/api'
-import { DEFAULT_REPORT_START_DATE, filterReportRows, fmtDate, formatRollNo } from '../lib/report'
+import {
+  DEFAULT_REPORT_START_DATE,
+  EXAM_GRADING_SCALE,
+  extractExamOptions,
+  filterReportRows,
+  fmtDate,
+  formatRollNo,
+  resolveLearnerSubjects
+} from '../lib/report'
 import { useSchool } from '../context/SchoolContext'
 import { useAuth } from '../context/AuthContext'
 import { isCoordinatorOrLeadership } from '../lib/permissions'
 import ClassPicker from '../components/ClassPicker'
-import type { ClassMarksLock, ReportFilter, Student, StudentReportRow, UnitTest } from '../lib/types'
+import type { Assignment, ClassMarksLock, ReportFilter, Student, StudentReportRow, UnitTest } from '../lib/types'
 
 const canSaveToFolder = typeof window !== 'undefined' && 'showDirectoryPicker' in window
 
 export default function Reports() {
-  const { selectedClassId, classes, school } = useSchool()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const { selectedClassId, classes, school, subjects } = useSchool()
   const { profile } = useAuth()
   const [students, setStudents] = useState<Student[]>([])
   const [unitTests, setUnitTests] = useState<UnitTest[]>([])
+  const [assignments, setAssignments] = useState<Assignment[]>([])
+  const [allocations, setAllocations] = useState<Record<string, string[]>>({})
   const [lockInfo, setLockInfo] = useState<ClassMarksLock | null>(null)
   const [q, setQ] = useState('')
   const [busy, setBusy] = useState(false)
@@ -24,31 +35,79 @@ export default function Reports() {
   const isCoordinator = isCoordinatorOrLeadership(profile)
 
   // Report Test Filter State
-  // Default mode is 'since_date' starting on 2026-09-20 (or teacher selected start date)
-  const [filterMode, setFilterMode] = useState<'since_date' | 'all' | 'custom'>('since_date')
-  const [assessmentType, setAssessmentType] = useState<'all' | 'unit_test' | 'midterm' | 'exam'>('all')
-  const [startDate, setStartDate] = useState<string>(DEFAULT_REPORT_START_DATE)
-  const [selectedTestIds, setSelectedTestIds] = useState<string[]>([])
+  const [filterMode, setFilterMode] = useState<'since_date' | 'all' | 'custom'>(() => {
+    const m = searchParams.get('mode')
+    if (m === 'all' || m === 'custom' || m === 'since_date') return m
+    return 'since_date'
+  })
+  const [assessmentType, setAssessmentType] = useState<'all' | 'unit_test' | 'midterm' | 'exam'>(() => {
+    const t = searchParams.get('type')
+    if (t === 'unit_test' || t === 'midterm' || t === 'exam' || t === 'all') return t
+    return 'all'
+  })
+  const [selectedExamTitle, setSelectedExamTitle] = useState<string>(() => {
+    return searchParams.get('exam') || ''
+  })
+  const [startDate, setStartDate] = useState<string>(() => {
+    return searchParams.get('since') || DEFAULT_REPORT_START_DATE
+  })
+  const [selectedTestIds, setSelectedTestIds] = useState<string[]>(() => {
+    const raw = searchParams.get('tests')
+    return raw ? raw.split(',').filter(Boolean) : []
+  })
   const [showTestChecklist, setShowTestChecklist] = useState(false)
 
   useEffect(() => {
     if (!selectedClassId) {
       setStudents([])
       setUnitTests([])
+      setAssignments([])
+      setAllocations({})
       setLockInfo(null)
       return
     }
     api.listStudents(selectedClassId).then(setStudents).catch((e) => setError(e.message))
     api.listUnitTests(selectedClassId).then(setUnitTests).catch(() => setUnitTests([]))
+    api.listAssignments(selectedClassId).then(setAssignments).catch(() => setAssignments([]))
+    api.getStudentSubjectAllocations(selectedClassId).then(setAllocations).catch(() => setAllocations({}))
     api.getClassMarksLock(selectedClassId).then(setLockInfo).catch(() => setLockInfo(null))
   }, [selectedClassId])
 
   const cls = classes.find((c) => c.id === selectedClassId)
   const filteredStudents = students.filter((s) => s.full_name.toLowerCase().includes(q.toLowerCase()))
 
+  // Distinct school exams available for the Exam Report dropdown
+  const examOptions = useMemo(() => extractExamOptions(unitTests), [unitTests])
+
+  const isExamReportMode = assessmentType === 'exam' || assessmentType === 'midterm'
+
+  // Auto-select latest school exam when switching to exam mode or when unitTests load
+  useEffect(() => {
+    if (examOptions.length > 0) {
+      const exists =
+        selectedExamTitle === '__ALL_EXAMS__' ||
+        examOptions.some((o) => o.title.toLowerCase() === selectedExamTitle.toLowerCase())
+      if (!selectedExamTitle || !exists) {
+        setSelectedExamTitle(examOptions[0].title)
+      }
+    }
+  }, [examOptions, selectedExamTitle])
+
+  const effectiveExamTitle = useMemo(() => {
+    if (selectedExamTitle) return selectedExamTitle
+    return examOptions[0]?.title || ''
+  }, [selectedExamTitle, examOptions])
+
   // Compute tests matching active filter
   const matchingTests = useMemo(() => {
     let list = unitTests
+    if (isExamReportMode) {
+      list = list.filter((t) => (t.assessment_type || 'unit_test') === 'exam' || t.assessment_type === 'midterm')
+      if (effectiveExamTitle && effectiveExamTitle !== '__ALL_EXAMS__') {
+        list = list.filter((t) => t.title.trim().toLowerCase() === effectiveExamTitle.trim().toLowerCase())
+      }
+      return list
+    }
     if (assessmentType !== 'all') {
       list = list.filter((t) => (t.assessment_type || 'unit_test') === assessmentType)
     }
@@ -63,7 +122,7 @@ export default function Reports() {
       return list.filter((t) => selectedTestIds.includes(t.id))
     }
     return list
-  }, [unitTests, assessmentType, filterMode, startDate, selectedTestIds])
+  }, [unitTests, isExamReportMode, effectiveExamTitle, assessmentType, filterMode, startDate, selectedTestIds])
 
   // Group unit tests by subject for checklist view
   const testsBySubject = useMemo(() => {
@@ -85,7 +144,13 @@ export default function Reports() {
   }), [filterMode, startDate, selectedTestIds, assessmentType])
 
   const filterNotice = useMemo(() => {
-    const typeLabel = assessmentType === 'exam' || assessmentType === 'midterm' ? 'School exams' : assessmentType === 'unit_test' ? 'Unit tests' : ''
+    if (isExamReportMode) {
+      if (effectiveExamTitle && effectiveExamTitle !== '__ALL_EXAMS__') {
+        return undefined
+      }
+      return 'All School Examinations'
+    }
+    const typeLabel = assessmentType === 'unit_test' ? 'Unit tests' : ''
     if (filterMode === 'since_date') {
       return `${typeLabel ? typeLabel + ' ' : ''}created on or after ${fmtDate(startDate)}`
     }
@@ -93,7 +158,7 @@ export default function Reports() {
       return `${selectedTestIds.length} selected tests${typeLabel ? ` (${typeLabel})` : ''}`
     }
     return typeLabel || undefined
-  }, [filterMode, startDate, selectedTestIds, assessmentType])
+  }, [isExamReportMode, effectiveExamTitle, filterMode, startDate, selectedTestIds, assessmentType])
 
   const runBulk = async (mode: 'zip' | 'folder') => {
     if (!selectedClassId || !school) return
@@ -103,37 +168,75 @@ export default function Reports() {
     try {
       const rawRowsByStudent: Record<string, StudentReportRow[]> = await api.getClassReportRows(selectedClassId)
 
-      // Filter rows for each student and recalculate averages dynamically
-      const rowsByStudent: Record<string, StudentReportRow[]> = {}
-      for (const [stId, rows] of Object.entries(rawRowsByStudent)) {
-        rowsByStudent[stId] = filterReportRows(rows, currentFilter)
-      }
+      if (isExamReportMode) {
+        // Build Independent School Exam Reports for all students in the class
+        const learnerSubjectsByStudent: Record<string, string[]> = {}
+        const examRowsByStudent: Record<string, StudentReportRow[]> = {}
 
-      const reportTitle = assessmentType === 'exam' || assessmentType === 'midterm'
-        ? 'EXAM REPORT'
-        : assessmentType === 'unit_test'
-        ? 'END OF UNIT TEST REPORT'
-        : undefined
+        for (const st of students) {
+          const stRows = rawRowsByStudent[st.id] ?? []
+          examRowsByStudent[st.id] = stRows
+          learnerSubjectsByStudent[st.id] = resolveLearnerSubjects({
+            studentId: st.id,
+            className: cls?.name,
+            allSubjects: subjects,
+            assignments,
+            allocations,
+            unitTests,
+            studentRows: stRows
+          })
+        }
 
-      const opts = {
-        students,
-        rowsByStudent,
-        school,
-        className: cls?.name ?? 'Class',
-        teacherName: cls?.homeroom_teacher_name ?? '',
-        filterNotice,
-        reportTitle,
-        onProgress: (done: number, total: number) => setProgress(`Building report ${done}/${total}…`)
-      }
+        const examBulkOpts = {
+          students,
+          rowsByStudent: examRowsByStudent,
+          learnerSubjectsByStudent,
+          selectedExamTitle: effectiveExamTitle || undefined,
+          school,
+          className: cls?.name ?? 'Class',
+          teacherName: cls?.homeroom_teacher_name ?? '',
+          filterNotice,
+          onProgress: (done: number, total: number) => setProgress(`Building exam report ${done}/${total}…`)
+        }
 
-      if (mode === 'zip') {
-        setProgress(`Packing ${students.length} PDFs…`)
-        const { downloadClassReportsZip } = await import('../lib/pdf')
-        await downloadClassReportsZip(opts)
+        if (mode === 'zip') {
+          setProgress(`Packing ${students.length} Exam Report PDFs…`)
+          const { downloadClassExamReportsZip } = await import('../lib/pdf')
+          await downloadClassExamReportsZip(examBulkOpts)
+        } else {
+          setProgress(`Saving ${students.length} Exam Report PDFs to your folder…`)
+          const { saveClassExamReportsToFolder } = await import('../lib/pdf')
+          await saveClassExamReportsToFolder(examBulkOpts)
+        }
       } else {
-        setProgress(`Saving ${students.length} PDFs to your folder…`)
-        const { saveClassReportsToFolder } = await import('../lib/pdf')
-        await saveClassReportsToFolder(opts)
+        // Filter rows for each student and recalculate averages dynamically for End of Unit Test Reports
+        const rowsByStudent: Record<string, StudentReportRow[]> = {}
+        for (const [stId, rows] of Object.entries(rawRowsByStudent)) {
+          rowsByStudent[stId] = filterReportRows(rows, currentFilter)
+        }
+
+        const reportTitle = assessmentType === 'unit_test' ? 'END OF UNIT TEST REPORT' : undefined
+
+        const opts = {
+          students,
+          rowsByStudent,
+          school,
+          className: cls?.name ?? 'Class',
+          teacherName: cls?.homeroom_teacher_name ?? '',
+          filterNotice,
+          reportTitle,
+          onProgress: (done: number, total: number) => setProgress(`Building report ${done}/${total}…`)
+        }
+
+        if (mode === 'zip') {
+          setProgress(`Packing ${students.length} PDFs…`)
+          const { downloadClassReportsZip } = await import('../lib/pdf')
+          await downloadClassReportsZip(opts)
+        } else {
+          setProgress(`Saving ${students.length} PDFs to your folder…`)
+          const { saveClassReportsToFolder } = await import('../lib/pdf')
+          await saveClassReportsToFolder(opts)
+        }
       }
 
       // Automatically lock marks once reports have been downloaded
@@ -188,8 +291,21 @@ export default function Reports() {
     if (assessmentType !== 'all') {
       params.set('type', assessmentType)
     }
+    if (isExamReportMode && effectiveExamTitle) {
+      params.set('exam', effectiveExamTitle)
+    }
     return params.toString()
-  }, [filterMode, startDate, selectedTestIds, assessmentType])
+  }, [filterMode, startDate, selectedTestIds, assessmentType, isExamReportMode, effectiveExamTitle])
+
+  // Keep URL search params synchronized when switching report type or exam
+  useEffect(() => {
+    const next = new URLSearchParams()
+    next.set('mode', filterMode)
+    if (startDate) next.set('since', startDate)
+    if (assessmentType !== 'all') next.set('type', assessmentType)
+    if (isExamReportMode && effectiveExamTitle) next.set('exam', effectiveExamTitle)
+    setSearchParams(next, { replace: true })
+  }, [filterMode, startDate, assessmentType, isExamReportMode, effectiveExamTitle, setSearchParams])
 
   return (
     <div className="page stack" style={{ gap: '20px' }}>
@@ -197,7 +313,7 @@ export default function Reports() {
         <div>
           <h2 style={{ margin: 0 }}>Reports{cls ? ` — ${cls.name}` : ''}</h2>
           <p className="muted" style={{ margin: '4px 0 0' }}>
-            Preview a single report, or download every student's report as individual PDFs.
+            Preview a single report, or download every student&apos;s End of Unit Test or School Exam report as individual PDFs.
           </p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
@@ -304,7 +420,7 @@ export default function Reports() {
         </div>
       )}
 
-      {/* Test Filter Panel: allows homeroom teachers to select which tests are included */}
+      {/* Report Mode & Filter Panel */}
       {selectedClassId && (
         <div
           className="card"
@@ -315,75 +431,43 @@ export default function Reports() {
             padding: '16px 20px',
             display: 'flex',
             flexDirection: 'column',
-            gap: '12px'
+            gap: '14px'
           }}
         >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span style={{ fontSize: '18px' }}>🎯</span>
-              <strong style={{ fontSize: '14px', color: '#0f172a' }}>Report Scope & Test Filter</strong>
+              <span style={{ fontSize: '18px' }}>{isExamReportMode ? '🎓' : '🎯'}</span>
+              <strong style={{ fontSize: '14.5px', color: '#0f172a' }}>
+                {isExamReportMode
+                  ? 'Independent School Exam Report Configuration'
+                  : 'Report Scope & Test Filter'}
+              </strong>
             </div>
             <span
               style={{
                 fontSize: '11px',
                 fontWeight: 700,
-                color: matchingTests.length > 0 ? '#047857' : '#b45309',
-                background: matchingTests.length > 0 ? '#dcfce7' : '#fef3c7',
+                color: isExamReportMode
+                  ? (examOptions.length > 0 ? '#047857' : '#b45309')
+                  : (matchingTests.length > 0 ? '#047857' : '#b45309'),
+                background: isExamReportMode
+                  ? (examOptions.length > 0 ? '#dcfce7' : '#fef3c7')
+                  : (matchingTests.length > 0 ? '#dcfce7' : '#fef3c7'),
                 padding: '3px 10px',
                 borderRadius: '20px'
               }}
             >
-              {matchingTests.length} of {unitTests.length} tests included in report
+              {isExamReportMode
+                ? (examOptions.length > 0
+                    ? `${examOptions.length} school exam${examOptions.length === 1 ? '' : 's'} available`
+                    : 'No school exams created yet')
+                : `${matchingTests.length} of ${unitTests.length} tests included in report`}
             </span>
           </div>
 
-          <p className="muted" style={{ fontSize: '12.5px', margin: 0 }}>
-            Past test results sent before 20/Sep/2026 can be excluded so results are not repeated.
-            <strong> Subject and overall averages are dynamically calculated strictly for the shown tests.</strong>
-          </p>
-
-          {/* Assessment Type Filter Toggle */}
+          {/* Assessment / Report Type Toggle */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '12px', fontWeight: 700, color: '#334155' }}>Assessment Type:</span>
-            <div
-              className="btn-group"
-              style={{
-                display: 'inline-flex',
-                background: '#ffffff',
-                padding: '2px',
-                borderRadius: '8px',
-                border: '1px solid #cbd5e1'
-              }}
-            >
-              <button
-                type="button"
-                className={`btn btn-sm ${assessmentType === 'all' ? 'btn-primary' : 'btn-ghost'}`}
-                style={{ fontSize: '11.5px', padding: '3px 10px', borderRadius: '6px', fontWeight: 600 }}
-                onClick={() => setAssessmentType('all')}
-              >
-                All Assessments
-              </button>
-              <button
-                type="button"
-                className={`btn btn-sm ${assessmentType === 'unit_test' ? 'btn-primary' : 'btn-ghost'}`}
-                style={{ fontSize: '11.5px', padding: '3px 10px', borderRadius: '6px', fontWeight: 600 }}
-                onClick={() => setAssessmentType('unit_test')}
-              >
-                📘 End of Unit Tests Only
-              </button>
-              <button
-                type="button"
-                className={`btn btn-sm ${assessmentType === 'exam' ? 'btn-primary' : 'btn-ghost'}`}
-                style={{ fontSize: '11.5px', padding: '3px 10px', borderRadius: '6px', fontWeight: 600 }}
-                onClick={() => setAssessmentType('exam')}
-              >
-                📝 School Exams Only
-              </button>
-            </div>
-          </div>
-
-          {/* Filter Mode Buttons and Start Date Picker */}
-          <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+            <span style={{ fontSize: '12.5px', fontWeight: 700, color: '#334155' }}>Report Type:</span>
             <div
               className="btn-group"
               style={{
@@ -391,213 +475,350 @@ export default function Reports() {
                 background: '#ffffff',
                 padding: '3px',
                 borderRadius: '8px',
-                border: '1px solid #cbd5e1'
+                border: '1px solid #cbd5e1',
+                flexWrap: 'wrap'
               }}
             >
               <button
                 type="button"
-                className={`btn btn-sm ${filterMode === 'since_date' ? 'btn-primary' : 'btn-ghost'}`}
+                className={`btn btn-sm ${assessmentType === 'all' ? 'btn-primary' : 'btn-ghost'}`}
                 style={{ fontSize: '12px', padding: '4px 12px', borderRadius: '6px', fontWeight: 600 }}
-                onClick={() => setFilterMode('since_date')}
+                onClick={() => setAssessmentType('all')}
               >
-                ✨ New Tests Only
+                All Assessments
               </button>
               <button
                 type="button"
-                className={`btn btn-sm ${filterMode === 'all' ? 'btn-primary' : 'btn-ghost'}`}
+                className={`btn btn-sm ${assessmentType === 'unit_test' ? 'btn-primary' : 'btn-ghost'}`}
                 style={{ fontSize: '12px', padding: '4px 12px', borderRadius: '6px', fontWeight: 600 }}
-                onClick={() => setFilterMode('all')}
+                onClick={() => setAssessmentType('unit_test')}
               >
-                📚 All Tests (Cumulative)
+                📘 End of Unit Test Report
               </button>
               <button
                 type="button"
-                className={`btn btn-sm ${filterMode === 'custom' ? 'btn-primary' : 'btn-ghost'}`}
+                className={`btn btn-sm ${isExamReportMode ? 'btn-primary' : 'btn-ghost'}`}
                 style={{ fontSize: '12px', padding: '4px 12px', borderRadius: '6px', fontWeight: 600 }}
-                onClick={() => {
-                  setFilterMode('custom')
-                  if (selectedTestIds.length === 0) selectOnlyNewTests()
-                  setShowTestChecklist(true)
-                }}
+                onClick={() => setAssessmentType('exam')}
               >
-                ☑️ Pick Specific Tests
+                🎓 School Exam Report (Independent)
               </button>
             </div>
-
-            {/* Date Picker for "New Tests Only" start date */}
-            {filterMode === 'since_date' && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                <label style={{ fontSize: '12.5px', fontWeight: 600, color: '#334155', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <span>Created on or after:</span>
-                  <input
-                    type="date"
-                    value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
-                    style={{
-                      padding: '4px 10px',
-                      borderRadius: '6px',
-                      border: '1px solid #94a3b8',
-                      fontSize: '12px',
-                      fontWeight: 600,
-                      background: '#fff'
-                    }}
-                  />
-                </label>
-
-                {startDate !== DEFAULT_REPORT_START_DATE && (
-                  <button
-                    type="button"
-                    className="btn btn-ghost btn-sm"
-                    style={{ fontSize: '11px', padding: '3px 8px' }}
-                    onClick={() => setStartDate(DEFAULT_REPORT_START_DATE)}
-                  >
-                    Reset to 20/09/2026
-                  </button>
-                )}
-              </div>
-            )}
-
-            {/* Toggle Specific Tests Checklist */}
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm"
-              style={{ fontSize: '11.5px', padding: '4px 8px', marginLeft: 'auto' }}
-              onClick={() => setShowTestChecklist((prev) => !prev)}
-            >
-              {showTestChecklist ? '▲ Hide Test Breakdown' : '▼ View Selected Tests'}
-            </button>
           </div>
 
-          {/* Expandable Test Checklist */}
-          {showTestChecklist && (
+          {isExamReportMode ? (
+            /* ---- Independent School Exam Report Configuration Panel ---- */
             <div
               style={{
                 background: '#ffffff',
-                border: '1px solid #e2e8f0',
-                borderRadius: '8px',
-                padding: '12px',
-                marginTop: '4px',
-                maxHeight: '320px',
-                overflowY: 'auto'
+                border: '1px solid #cbd5e1',
+                borderRadius: '10px',
+                padding: '14px 16px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '12px'
               }}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                <span style={{ fontSize: '12px', fontWeight: 700, color: '#1e293b' }}>
-                  Select Individual Tests for Report:
-                </span>
-                <div style={{ display: 'flex', gap: '6px' }}>
-                  <button
-                    type="button"
-                    className="btn btn-ghost btn-sm"
-                    style={{ fontSize: '11px', padding: '2px 8px' }}
-                    onClick={() => {
-                      setFilterMode('custom')
-                      selectAllTests()
-                    }}
-                  >
-                    Select All
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-ghost btn-sm"
-                    style={{ fontSize: '11px', padding: '2px 8px' }}
-                    onClick={() => {
-                      setFilterMode('custom')
-                      selectOnlyNewTests()
-                    }}
-                  >
-                    Only Since {fmtDate(startDate)}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-ghost btn-sm"
-                    style={{ fontSize: '11px', padding: '2px 8px' }}
-                    onClick={() => {
-                      setFilterMode('custom')
-                      selectNoneTests()
-                    }}
-                  >
-                    Clear All
-                  </button>
-                </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                <label
+                  htmlFor="exam-report-selector"
+                  style={{
+                    fontSize: '13px',
+                    fontWeight: 700,
+                    color: '#0f172a',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px'
+                  }}
+                >
+                  <span>📝 Select Exam for Report Generation:</span>
+                </label>
+
+                <select
+                  id="exam-report-selector"
+                  value={effectiveExamTitle}
+                  onChange={(e) => setSelectedExamTitle(e.target.value)}
+                  style={{
+                    minWidth: '280px',
+                    maxWidth: '100%',
+                    padding: '8px 36px 8px 12px',
+                    fontSize: '13.5px',
+                    fontWeight: 700,
+                    borderRadius: '8px',
+                    border: '1.5px solid #1f8a5f',
+                    backgroundColor: '#ffffff',
+                    color: '#0f172a'
+                  }}
+                >
+                  {examOptions.length === 0 && (
+                    <option value="">— No School Exams Created for {cls?.name || 'Class'} Yet —</option>
+                  )}
+                  {examOptions.map((opt) => (
+                    <option key={opt.key} value={opt.title}>
+                      {opt.title} ({opt.testDate ? fmtDate(opt.testDate) : 'No date'} · {opt.subjectsCount} subjects)
+                    </option>
+                  ))}
+                  {examOptions.length > 1 && (
+                    <option value="__ALL_EXAMS__">All School Exams (Combined Average)</option>
+                  )}
+                </select>
               </div>
 
-              {testsBySubject.length === 0 ? (
-                <p className="muted" style={{ fontSize: '12px', margin: '8px 0' }}>
-                  No unit tests recorded for this class yet.
-                </p>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  {testsBySubject.map(([subjectName, tests]) => (
-                    <div key={subjectName} style={{ borderBottom: '1px solid #f1f5f9', paddingBottom: '8px' }}>
-                      <div style={{ fontSize: '12px', fontWeight: 800, color: 'var(--brand)', marginBottom: '4px' }}>
-                        {subjectName} ({tests.length} tests)
-                      </div>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '6px' }}>
-                        {tests.map((t) => {
-                          const isNew = (t.created_at ? t.created_at.slice(0, 10) : t.test_date) >= startDate
-                          const isChecked = filterMode === 'all'
-                            ? true
-                            : filterMode === 'since_date'
-                            ? isNew
-                            : selectedTestIds.includes(t.id)
+              <p className="muted" style={{ fontSize: '12px', margin: 0 }}>
+                Generates the <strong>Independent School Exam Report</strong> importing the End of Unit Tests header &amp; footer structure.
+                Lists <strong>all subjects each learner is taking</strong> with <strong>Score</strong>, <strong>Grade</strong>, and <strong>Remarks</strong> columns styled with Color Psychology, the Grading System Scale below the table, and official signature &amp; square stamp sections.
+              </p>
 
-                          return (
-                            <label
-                              key={t.id}
-                              style={{
-                                display: 'flex',
-                                alignItems: 'flex-start',
-                                gap: '8px',
-                                fontSize: '11.5px',
-                                padding: '4px 6px',
-                                borderRadius: '4px',
-                                background: isChecked ? '#f0fdf4' : '#fff',
-                                border: '1px solid',
-                                borderColor: isChecked ? '#bbf7d0' : '#e2e8f0',
-                                cursor: 'pointer'
-                              }}
-                            >
-                              <input
-                                type="checkbox"
-                                checked={isChecked}
-                                onChange={() => {
-                                  setFilterMode('custom')
-                                  if (filterMode !== 'custom') {
-                                    const base = filterMode === 'all'
-                                      ? unitTests.map((x) => x.id)
-                                      : unitTests.filter((x) => (x.created_at ? x.created_at.slice(0, 10) : x.test_date) >= startDate).map((x) => x.id)
-                                    const next = isChecked ? base.filter((x) => x !== t.id) : [...base, t.id]
-                                    setSelectedTestIds(next)
-                                  } else {
-                                    toggleTestId(t.id)
-                                  }
-                                }}
-                                style={{ marginTop: '2px' }}
-                              />
-                              <div style={{ flex: 1 }}>
-                                <div style={{ fontWeight: 600, color: '#1e293b' }}>
-                                  {t.title}
-                                  {isNew && (
-                                    <span style={{ fontSize: '9px', fontWeight: 700, color: '#047857', background: '#dcfce7', padding: '1px 5px', borderRadius: '4px', marginLeft: '5px' }}>
-                                      NEW
-                                    </span>
-                                  )}
-                                </div>
-                                <div className="muted" style={{ fontSize: '10.5px' }}>
-                                  Date: {fmtDate(t.test_date)} · Max: {t.max_mark}
-                                  {t.created_at && ` · Created: ${fmtDate(t.created_at.slice(0, 10))}`}
-                                </div>
-                              </div>
-                            </label>
-                          )
-                        })}
-                      </div>
+              {/* Color Psychology Grading Scale Quick Reference */}
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', paddingTop: '2px' }}>
+                {EXAM_GRADING_SCALE.map((g) => (
+                  <span
+                    key={g.grade}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '5px',
+                      fontSize: '11px',
+                      fontWeight: 700,
+                      padding: '3px 9px',
+                      borderRadius: '999px',
+                      backgroundColor: g.bgColor,
+                      color: g.textColor,
+                      border: `1px solid ${g.borderColor}`
+                    }}
+                  >
+                    <strong>{g.scaleNotation} = {g.grade}</strong>
+                    <span>({g.remark})</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          ) : (
+            /* ---- End of Unit Test Filter Controls ---- */
+            <>
+              <p className="muted" style={{ fontSize: '12.5px', margin: 0 }}>
+                Past test results sent before 20/Sep/2026 can be excluded so results are not repeated.
+                <strong> Subject and overall averages are dynamically calculated strictly for the shown tests.</strong>
+              </p>
+
+              {/* Filter Mode Buttons and Start Date Picker */}
+              <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                <div
+                  className="btn-group"
+                  style={{
+                    display: 'inline-flex',
+                    background: '#ffffff',
+                    padding: '3px',
+                    borderRadius: '8px',
+                    border: '1px solid #cbd5e1'
+                  }}
+                >
+                  <button
+                    type="button"
+                    className={`btn btn-sm ${filterMode === 'since_date' ? 'btn-primary' : 'btn-ghost'}`}
+                    style={{ fontSize: '12px', padding: '4px 12px', borderRadius: '6px', fontWeight: 600 }}
+                    onClick={() => setFilterMode('since_date')}
+                  >
+                    ✨ New Tests Only
+                  </button>
+                  <button
+                    type="button"
+                    className={`btn btn-sm ${filterMode === 'all' ? 'btn-primary' : 'btn-ghost'}`}
+                    style={{ fontSize: '12px', padding: '4px 12px', borderRadius: '6px', fontWeight: 600 }}
+                    onClick={() => setFilterMode('all')}
+                  >
+                    📚 All Tests (Cumulative)
+                  </button>
+                  <button
+                    type="button"
+                    className={`btn btn-sm ${filterMode === 'custom' ? 'btn-primary' : 'btn-ghost'}`}
+                    style={{ fontSize: '12px', padding: '4px 12px', borderRadius: '6px', fontWeight: 600 }}
+                    onClick={() => {
+                      setFilterMode('custom')
+                      if (selectedTestIds.length === 0) selectOnlyNewTests()
+                      setShowTestChecklist(true)
+                    }}
+                  >
+                    ☑️ Pick Specific Tests
+                  </button>
+                </div>
+
+                {/* Date Picker for "New Tests Only" start date */}
+                {filterMode === 'since_date' && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                    <label style={{ fontSize: '12.5px', fontWeight: 600, color: '#334155', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <span>Created on or after:</span>
+                      <input
+                        type="date"
+                        value={startDate}
+                        onChange={(e) => setStartDate(e.target.value)}
+                        style={{
+                          padding: '4px 10px',
+                          borderRadius: '6px',
+                          border: '1px solid #94a3b8',
+                          fontSize: '12px',
+                          fontWeight: 600,
+                          background: '#fff'
+                        }}
+                      />
+                    </label>
+
+                    {startDate !== DEFAULT_REPORT_START_DATE && (
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        style={{ fontSize: '11px', padding: '3px 8px' }}
+                        onClick={() => setStartDate(DEFAULT_REPORT_START_DATE)}
+                      >
+                        Reset to 20/09/2026
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {/* Toggle Specific Tests Checklist */}
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  style={{ fontSize: '11.5px', padding: '4px 8px', marginLeft: 'auto' }}
+                  onClick={() => setShowTestChecklist((prev) => !prev)}
+                >
+                  {showTestChecklist ? '▲ Hide Test Breakdown' : '▼ View Selected Tests'}
+                </button>
+              </div>
+
+              {/* Expandable Test Checklist */}
+              {showTestChecklist && (
+                <div
+                  style={{
+                    background: '#ffffff',
+                    border: '1px solid #e2e8f0',
+                    borderRadius: '8px',
+                    padding: '12px',
+                    marginTop: '4px',
+                    maxHeight: '320px',
+                    overflowY: 'auto'
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                    <span style={{ fontSize: '12px', fontWeight: 700, color: '#1e293b' }}>
+                      Select Individual Tests for Report:
+                    </span>
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        style={{ fontSize: '11px', padding: '2px 8px' }}
+                        onClick={() => {
+                          setFilterMode('custom')
+                          selectAllTests()
+                        }}
+                      >
+                        Select All
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        style={{ fontSize: '11px', padding: '2px 8px' }}
+                        onClick={() => {
+                          setFilterMode('custom')
+                          selectOnlyNewTests()
+                        }}
+                      >
+                        Only Since {fmtDate(startDate)}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        style={{ fontSize: '11px', padding: '2px 8px' }}
+                        onClick={() => {
+                          setFilterMode('custom')
+                          selectNoneTests()
+                        }}
+                      >
+                        Clear All
+                      </button>
                     </div>
-                  ))}
+                  </div>
+
+                  {testsBySubject.length === 0 ? (
+                    <p className="muted" style={{ fontSize: '12px', margin: '8px 0' }}>
+                      No unit tests recorded for this class yet.
+                    </p>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                      {testsBySubject.map(([subjectName, tests]) => (
+                        <div key={subjectName} style={{ borderBottom: '1px solid #f1f5f9', paddingBottom: '8px' }}>
+                          <div style={{ fontSize: '12px', fontWeight: 800, color: 'var(--brand)', marginBottom: '4px' }}>
+                            {subjectName} ({tests.length} tests)
+                          </div>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '6px' }}>
+                            {tests.map((t) => {
+                              const isNew = (t.created_at ? t.created_at.slice(0, 10) : t.test_date) >= startDate
+                              const isChecked = filterMode === 'all'
+                                ? true
+                                : filterMode === 'since_date'
+                                ? isNew
+                                : selectedTestIds.includes(t.id)
+
+                              return (
+                                <label
+                                  key={t.id}
+                                  style={{
+                                    display: 'flex',
+                                    alignItems: 'flex-start',
+                                    gap: '8px',
+                                    fontSize: '11.5px',
+                                    padding: '4px 6px',
+                                    borderRadius: '4px',
+                                    background: isChecked ? '#f0fdf4' : '#fff',
+                                    border: '1px solid',
+                                    borderColor: isChecked ? '#bbf7d0' : '#e2e8f0',
+                                    cursor: 'pointer'
+                                  }}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={isChecked}
+                                    onChange={() => {
+                                      setFilterMode('custom')
+                                      if (filterMode !== 'custom') {
+                                        const base = filterMode === 'all'
+                                          ? unitTests.map((x) => x.id)
+                                          : unitTests.filter((x) => (x.created_at ? x.created_at.slice(0, 10) : x.test_date) >= startDate).map((x) => x.id)
+                                        const next = isChecked ? base.filter((x) => x !== t.id) : [...base, t.id]
+                                        setSelectedTestIds(next)
+                                      } else {
+                                        toggleTestId(t.id)
+                                      }
+                                    }}
+                                    style={{ marginTop: '2px' }}
+                                  />
+                                  <div style={{ flex: 1 }}>
+                                    <div style={{ fontWeight: 600, color: '#1e293b' }}>
+                                      {t.title}
+                                      {isNew && (
+                                        <span style={{ fontSize: '9px', fontWeight: 700, color: '#047857', background: '#dcfce7', padding: '1px 5px', borderRadius: '4px', marginLeft: '5px' }}>
+                                          NEW
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="muted" style={{ fontSize: '10.5px' }}>
+                                      Date: {fmtDate(t.test_date)} · Max: {t.max_mark}
+                                      {t.created_at && ` · Created: ${fmtDate(t.created_at.slice(0, 10))}`}
+                                    </div>
+                                  </div>
+                                </label>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
-            </div>
+            </>
           )}
         </div>
       )}
@@ -615,18 +836,26 @@ export default function Reports() {
           <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
             <button
               className="btn btn-primary"
-              disabled={busy || matchingTests.length === 0}
+              disabled={busy || (!isExamReportMode && matchingTests.length === 0)}
               onClick={() => runBulk('zip')}
-              title={`Download ${students.length} reports containing only the ${matchingTests.length} selected tests`}
+              title={
+                isExamReportMode
+                  ? `Download ${students.length} Independent School Exam Reports (${effectiveExamTitle || 'School Exam'})`
+                  : `Download ${students.length} reports containing only the ${matchingTests.length} selected tests`
+              }
             >
-              ⬇ Download all (ZIP)
+              ⬇ {isExamReportMode ? 'Download Exam Reports (ZIP)' : 'Download all (ZIP)'}
             </button>
             {canSaveToFolder && (
               <button
                 className="btn"
-                disabled={busy || matchingTests.length === 0}
+                disabled={busy || (!isExamReportMode && matchingTests.length === 0)}
                 onClick={() => runBulk('folder')}
-                title={`Save ${students.length} PDFs into folder containing only the ${matchingTests.length} selected tests`}
+                title={
+                  isExamReportMode
+                    ? `Save ${students.length} Independent School Exam Report PDFs into folder`
+                    : `Save ${students.length} PDFs into folder containing only the ${matchingTests.length} selected tests`
+                }
               >
                 📁 Save to folder
               </button>
@@ -653,10 +882,13 @@ export default function Reports() {
                 {(s.roll_no || s.admission_no) ? ` · Roll ${formatRollNo(s.roll_no || s.admission_no)}` : ''}
               </span>
             </div>
-            <span className="btn btn-small">Open report →</span>
+            <span className="btn btn-small">
+              {isExamReportMode ? 'Open Exam Report →' : 'Open report →'}
+            </span>
           </Link>
         ))}
       </div>
     </div>
   )
 }
+

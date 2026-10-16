@@ -1,6 +1,453 @@
-import type { ReportData, ReportFilter, ReportSubject, StudentReportRow } from './types'
+import type {
+  Assignment,
+  ExamGradeScaleItem,
+  ExamOption,
+  ExamReportData,
+  ExamSubjectRow,
+  ReportData,
+  ReportFilter,
+  ReportSubject,
+  StudentReportRow,
+  Subject,
+  UnitTest
+} from './types'
 
 export const DEFAULT_REPORT_START_DATE = '2026-09-20'
+
+/**
+ * School Exam Grading Scale with Color Psychology applied to Grades and Comments/Remarks:
+ * 90-100 = A* (OUTSTANDING)
+ * 80-89  = A  (EXCELLENT)
+ * 70-79  = B  (VERY GOOD)
+ * 60-69  = C  (GOOD)
+ * 50-59  = D  (BASIC UNDERSTANDING)
+ * 40-49  = E  (DEVELOPING UNDERSTANDING)
+ * 0-39   = U  (NEEDS IMPROVEMENT)
+ */
+export const EXAM_GRADING_SCALE: ExamGradeScaleItem[] = [
+  {
+    grade: 'A*',
+    minScore: 90,
+    maxScore: 100,
+    rangeLabel: '90-100',
+    scaleNotation: '90-100',
+    remark: 'OUTSTANDING',
+    psychologyMeaning: 'Mastery, prestige & peak confidence',
+    textColor: '#065f46',
+    bgColor: '#d1fae5',
+    borderColor: '#6ee7b7',
+    textRgb: [6, 95, 70],
+    bgRgb: [209, 250, 229],
+    borderRgb: [110, 231, 183]
+  },
+  {
+    grade: 'A',
+    minScore: 80,
+    maxScore: 89.99,
+    rangeLabel: '80-89',
+    scaleNotation: '80-89',
+    remark: 'EXCELLENT',
+    psychologyMeaning: 'High achievement, growth & harmony',
+    textColor: '#15803d',
+    bgColor: '#dcfce7',
+    borderColor: '#86efac',
+    textRgb: [21, 128, 61],
+    bgRgb: [220, 252, 231],
+    borderRgb: [134, 239, 172]
+  },
+  {
+    grade: 'B',
+    minScore: 70,
+    maxScore: 79.99,
+    rangeLabel: '70-79',
+    scaleNotation: '70-79',
+    remark: 'VERY GOOD',
+    psychologyMeaning: 'Strong competence, clarity & momentum',
+    textColor: '#0f766e',
+    bgColor: '#ccfbf1',
+    borderColor: '#5eead4',
+    textRgb: [15, 118, 110],
+    bgRgb: [204, 251, 241],
+    borderRgb: [94, 234, 212]
+  },
+  {
+    grade: 'C',
+    minScore: 60,
+    maxScore: 69.99,
+    rangeLabel: '60-69',
+    scaleNotation: '60-69',
+    remark: 'GOOD',
+    psychologyMeaning: 'Steady progress, trust & reliability',
+    textColor: '#1d4ed8',
+    bgColor: '#dbeafe',
+    borderColor: '#93c5fd',
+    textRgb: [29, 78, 216],
+    bgRgb: [219, 234, 254],
+    borderRgb: [147, 197, 253]
+  },
+  {
+    grade: 'D',
+    minScore: 50,
+    maxScore: 59.99,
+    rangeLabel: '50-59',
+    scaleNotation: '50-59',
+    remark: 'BASIC UNDERSTANDING',
+    psychologyMeaning: 'Foundational awareness & encouragement',
+    textColor: '#b45309',
+    bgColor: '#fef3c7',
+    borderColor: '#fcd34d',
+    textRgb: [180, 83, 9],
+    bgRgb: [254, 243, 199],
+    borderRgb: [252, 211, 77]
+  },
+  {
+    grade: 'E',
+    minScore: 40,
+    maxScore: 49.99,
+    rangeLabel: '40-49',
+    scaleNotation: '40-49',
+    remark: 'DEVELOPING UNDERSTANDING',
+    psychologyMeaning: 'Constructive focus & active development',
+    textColor: '#c2410c',
+    bgColor: '#ffedd5',
+    borderColor: '#fdba74',
+    textRgb: [194, 65, 12],
+    bgRgb: [255, 237, 213],
+    borderRgb: [253, 186, 116]
+  },
+  {
+    grade: 'U',
+    minScore: 0,
+    maxScore: 39.99,
+    rangeLabel: '0-39',
+    scaleNotation: '0-39',
+    remark: 'NEEDS IMPROVEMENT',
+    psychologyMeaning: 'Urgent attention & supportive intervention',
+    textColor: '#b91c1c',
+    bgColor: '#fee2e2',
+    borderColor: '#fca5a5',
+    textRgb: [185, 28, 28],
+    bgRgb: [254, 226, 226],
+    borderRgb: [252, 165, 165]
+  }
+]
+
+/**
+ * Resolves a percentage score (including decimals such as 89.4%, 89.8%, 79.5%)
+ * to its corresponding ExamGradeScaleItem without gaps between integer bands.
+ * Normalizes to 1 decimal place (matching fmtPct display precision) so that
+ * floating-point inaccuracies (e.g. 79.99999999999999 -> 80.0) or values that
+ * display as 90.0% are never misgraded.
+ */
+export function getExamGradeInfo(scorePct: number | null | undefined): ExamGradeScaleItem | null {
+  if (scorePct === null || scorePct === undefined) return null
+  const num = Number(scorePct)
+  if (!Number.isFinite(num)) return null
+
+  // Clamp to valid percentage range [0, 100] and round to 1 decimal place to match fmtPct()
+  const clamped = Math.min(100, Math.max(0, num))
+  const val = Number(clamped.toFixed(1))
+
+  // Contiguous lower-bound checks ensure decimal percentages (e.g. 89.1 - 89.9, 79.5, 39.8)
+  // never fall into a gap between integer labels (80-89 and 90-100, etc.)
+  if (val >= 90) return EXAM_GRADING_SCALE[0] // 90.0 - 100.0 -> A* (OUTSTANDING)
+  if (val >= 80) return EXAM_GRADING_SCALE[1] // 80.0 - 89.9  -> A  (EXCELLENT)
+  if (val >= 70) return EXAM_GRADING_SCALE[2] // 70.0 - 79.9  -> B  (VERY GOOD)
+  if (val >= 60) return EXAM_GRADING_SCALE[3] // 60.0 - 69.9  -> C  (GOOD)
+  if (val >= 50) return EXAM_GRADING_SCALE[4] // 50.0 - 59.9  -> D  (BASIC UNDERSTANDING)
+  if (val >= 40) return EXAM_GRADING_SCALE[5] // 40.0 - 49.9  -> E  (DEVELOPING UNDERSTANDING)
+  return EXAM_GRADING_SCALE[6]                // 0.0  - 39.9  -> U  (NEEDS IMPROVEMENT)
+}
+
+/**
+ * Extracts distinct school exams from unit tests in a class for the exam selector dropdown.
+ */
+export function extractExamOptions(unitTests: UnitTest[]): ExamOption[] {
+  const examTests = unitTests.filter(
+    (t) => t.assessment_type === 'exam' || t.assessment_type === 'midterm'
+  )
+  const sourceList = examTests.length > 0 ? examTests : []
+  const map = new Map<string, { title: string; testDate: string; testIds: string[]; subjectSet: Set<string> }>()
+
+  for (const t of sourceList) {
+    const cleanTitle = (t.title || 'School Examination').trim()
+    const key = cleanTitle.toLowerCase()
+    let entry = map.get(key)
+    if (!entry) {
+      entry = {
+        title: cleanTitle,
+        testDate: t.test_date || '',
+        testIds: [],
+        subjectSet: new Set<string>()
+      }
+      map.set(key, entry)
+    }
+    entry.testIds.push(t.id)
+    if (t.subject_name) entry.subjectSet.add(t.subject_name.toLowerCase())
+    if (t.test_date && (!entry.testDate || t.test_date > entry.testDate)) {
+      entry.testDate = t.test_date
+    }
+  }
+
+  return Array.from(map.entries())
+    .map(([key, v]) => ({
+      key,
+      title: v.title,
+      testDate: v.testDate,
+      testIds: v.testIds,
+      subjectsCount: v.subjectSet.size
+    }))
+    .sort((a, b) => {
+      if (a.testDate && b.testDate && a.testDate !== b.testDate) {
+        return b.testDate.localeCompare(a.testDate)
+      }
+      return a.title.localeCompare(b.title)
+    })
+}
+
+/**
+ * Resolves all subjects that a specific learner is taking in their class.
+ */
+export function resolveLearnerSubjects(params: {
+  studentId: string
+  className?: string | null
+  allSubjects?: Subject[]
+  assignments?: Assignment[]
+  allocations?: Record<string, string[]>
+  unitTests?: UnitTest[]
+  studentRows?: StudentReportRow[]
+}): string[] {
+  const {
+    studentId,
+    className,
+    allSubjects = [],
+    assignments = [],
+    allocations = {},
+    unitTests = [],
+    studentRows = []
+  } = params
+
+  // Build subject ID -> name map and sort_order map
+  const idToName = new Map<string, string>()
+  const sortOrderByName = new Map<string, number>()
+
+  allSubjects.forEach((s, idx) => {
+    idToName.set(s.id, s.name)
+    sortOrderByName.set(s.name.trim().toLowerCase(), s.sort_order ?? idx)
+  })
+  assignments.forEach((a) => {
+    if (a.subject_id && a.subject_name && !idToName.has(a.subject_id)) {
+      idToName.set(a.subject_id, a.subject_name)
+    }
+  })
+  unitTests.forEach((t) => {
+    if (t.subject_id && t.subject_name && !idToName.has(t.subject_id)) {
+      idToName.set(t.subject_id, t.subject_name)
+    }
+  })
+
+  const chosenMap = new Map<string, string>() // lowercase -> display name
+  const addSubjectName = (name?: string | null) => {
+    if (!name) return
+    const trimmed = name.trim()
+    if (!trimmed || trimmed === '—' || trimmed.toLowerCase().includes('unknown')) return
+    const key = trimmed.toLowerCase()
+    if (!chosenMap.has(key)) {
+      chosenMap.set(key, trimmed)
+    }
+  }
+
+  const hasAllocationsConfigured = Object.values(allocations).some(
+    (arr) => Array.isArray(arr) && arr.length > 0
+  )
+  const studentAllocIds = allocations[studentId]
+
+  if (hasAllocationsConfigured && Array.isArray(studentAllocIds) && studentAllocIds.length > 0) {
+    // Student has explicit subject allocations
+    studentAllocIds.forEach((subId) => {
+      addSubjectName(idToName.get(subId))
+    })
+  } else if (!isYear10OrAbove(className) || !hasAllocationsConfigured) {
+    // Standard class subject set: prefer subjects assigned to teachers for this class
+    if (assignments.length > 0) {
+      assignments.forEach((a) => addSubjectName(a.subject_name))
+    } else if (unitTests.length > 0) {
+      unitTests.forEach((t) => addSubjectName(t.subject_name))
+    } else if (allSubjects.length > 0) {
+      allSubjects.forEach((s) => addSubjectName(s.name))
+    }
+  }
+
+  // Always ensure any subject where the student already has a recorded score in studentRows is included
+  studentRows.forEach((r) => {
+    if (r.score !== null && r.score !== undefined) {
+      addSubjectName(r.subject)
+    }
+  })
+
+  // Fallback if still empty: use any subjects from studentRows, assignments, or allSubjects
+  if (chosenMap.size === 0) {
+    studentRows.forEach((r) => addSubjectName(r.subject))
+    assignments.forEach((a) => addSubjectName(a.subject_name))
+    allSubjects.forEach((s) => addSubjectName(s.name))
+  }
+
+  return Array.from(chosenMap.values()).sort((a, b) => {
+    const orderA = sortOrderByName.get(a.toLowerCase()) ?? 999
+    const orderB = sortOrderByName.get(b.toLowerCase()) ?? 999
+    if (orderA !== orderB) return orderA - orderB
+    return a.localeCompare(b, undefined, { sensitivity: 'base' })
+  })
+}
+
+/**
+ * Builds the Independent School Exam Report data for a single learner.
+ * Includes all subjects the learner is taking, their exam score (%), letter grade,
+ * psychological remark, and overall exam summary.
+ */
+export function buildExamReport(params: {
+  rows: StudentReportRow[]
+  learnerSubjects?: string[]
+  selectedExamTitle?: string
+}): ExamReportData {
+  const { rows, learnerSubjects = [], selectedExamTitle } = params
+
+  // Filter rows to school exams (or if selectedExamTitle is specified, match that exam title)
+  const normalizedTarget = selectedExamTitle && selectedExamTitle !== '__ALL_EXAMS__'
+    ? selectedExamTitle.trim().toLowerCase()
+    : ''
+
+  let matchingRows = rows.filter((r) => {
+    const isExamType = r.assessment_type === 'exam' || r.assessment_type === 'midterm'
+    if (normalizedTarget) {
+      return (r.title || '').trim().toLowerCase() === normalizedTarget
+    }
+    return isExamType
+  })
+
+  // Fallback if rows weren't tagged with assessment_type but match the title or all rows are passed
+  if (matchingRows.length === 0 && !normalizedTarget && rows.length > 0) {
+    matchingRows = rows
+  }
+
+  // Group matching exam rows by subject
+  const bySubject = new Map<
+    string,
+    {
+      displayName: string
+      pctSum: number
+      scoredCount: number
+      rawSum: number
+      maxSum: number
+      latestDate: string
+    }
+  >()
+
+  let latestExamDate = ''
+  let inferredTitle = selectedExamTitle && selectedExamTitle !== '__ALL_EXAMS__' ? selectedExamTitle : ''
+
+  for (const r of matchingRows) {
+    const subName = (r.subject || '').trim()
+    if (!subName || subName === '—') continue
+    const key = subName.toLowerCase()
+    let entry = bySubject.get(key)
+    if (!entry) {
+      entry = {
+        displayName: subName,
+        pctSum: 0,
+        scoredCount: 0,
+        rawSum: 0,
+        maxSum: 0,
+        latestDate: r.test_date || ''
+      }
+      bySubject.set(key, entry)
+    }
+    if (!inferredTitle && r.title) {
+      inferredTitle = r.title
+    }
+    if (r.test_date && (!latestExamDate || r.test_date > latestExamDate)) {
+      latestExamDate = r.test_date
+    }
+    if (r.score !== null && r.score !== undefined) {
+      const maxM = Number(r.max_mark) > 0 ? Number(r.max_mark) : 100
+      const sc = Number(r.score)
+      const pctVal = (sc / maxM) * 100
+      entry.pctSum += pctVal
+      entry.scoredCount += 1
+      entry.rawSum += sc
+      entry.maxSum += maxM
+    }
+  }
+
+  // Merge learnerSubjects with any subjects present in bySubject
+  const orderedSubjects: string[] = []
+  const seenKeys = new Set<string>()
+
+  for (const sName of learnerSubjects) {
+    const trimmed = (sName || '').trim()
+    if (!trimmed) continue
+    const k = trimmed.toLowerCase()
+    if (!seenKeys.has(k)) {
+      seenKeys.add(k)
+      orderedSubjects.push(bySubject.get(k)?.displayName || trimmed)
+    }
+  }
+
+  for (const [k, v] of bySubject.entries()) {
+    if (!seenKeys.has(k)) {
+      seenKeys.add(k)
+      orderedSubjects.push(v.displayName)
+    }
+  }
+
+  const subjectRows: ExamSubjectRow[] = orderedSubjects.map((subName) => {
+    const k = subName.toLowerCase()
+    const entry = bySubject.get(k)
+    if (entry && entry.scoredCount > 0) {
+      const avgPct = Number((entry.pctSum / entry.scoredCount).toFixed(1))
+      const gradeInfo = getExamGradeInfo(avgPct)
+      return {
+        subjectName: subName,
+        score: avgPct,
+        rawScore: entry.rawSum,
+        maxMark: entry.maxSum,
+        grade: gradeInfo?.grade ?? null,
+        remark: gradeInfo?.remark ?? null,
+        gradeInfo
+      }
+    }
+    return {
+      subjectName: subName,
+      score: null,
+      rawScore: null,
+      maxMark: null,
+      grade: null,
+      remark: null,
+      gradeInfo: null
+    }
+  })
+
+  const scoredRows = subjectRows.filter((r) => r.score !== null && r.score !== undefined)
+  const overallAverage =
+    scoredRows.length > 0
+      ? Number(
+          (
+            scoredRows.reduce((acc, r) => acc + (r.score ?? 0), 0) / scoredRows.length
+          ).toFixed(1)
+        )
+      : null
+  const overallGrade = getExamGradeInfo(overallAverage)
+
+  return {
+    examTitle: inferredTitle || 'School Examination',
+    examDate: latestExamDate || undefined,
+    subjects: subjectRows,
+    scoredCount: scoredRows.length,
+    totalSubjects: subjectRows.length,
+    overallAverage,
+    overallGrade
+  }
+}
 
 function pct(score: number, max: number): number {
   if (max <= 0) return 0
@@ -201,6 +648,7 @@ export function fmtPct(value: number): string {
   return `${value.toFixed(1)}%`
 }
 
+
 export function fmtDate(iso: string): string {
   if (!iso) return ''
   const [y, m, d] = iso.slice(0, 10).split('-')
@@ -324,4 +772,3 @@ export function formatRollNo(val: string | number | null | undefined): string {
 }
 
 export const formatAdmissionNo = formatRollNo
-
