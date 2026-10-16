@@ -5,7 +5,12 @@ import { api } from '../lib/api'
 import { can } from '../lib/permissions'
 import { parseSyllabusPdf, type ExtractedSyllabus } from '../lib/syllabusPdfParser'
 import { parseWorkPlanPdf, type WorkPlanParseProgress } from '../lib/workplan'
-import { parseTeacherTimetablePdf } from '../lib/timetablePdfParser'
+import {
+  isPrimaryClassName,
+  isYear5Or6ClassName,
+  mergeTimetableSlotsIntoOneBlock,
+  parseTeacherTimetablePdf
+} from '../lib/timetablePdfParser'
 import { generateLessonPlanPdf, generateWorkPlanPdf } from '../lib/planningPdf'
 import {
   isLessonTimeInPast,
@@ -548,6 +553,19 @@ export default function Planning() {
   const [parsedTimetablePreview, setParsedTimetablePreview] = useState<TeacherScheduleSlot[]>([])
   const [timetableEffectiveDate, setTimetableEffectiveDate] = useState<string>(() => formatDateISO(new Date()))
   const [timetableFileName, setTimetableFileName] = useState<string>('Weekly Timetable.pdf')
+  const [parsedTimetableMeta, setParsedTimetableMeta] = useState<{
+    pagesExtracted: number
+    totalPages: number
+    isCombinedBlock: boolean
+    primarySlotsCount: number
+    secondarySlotsCount: number
+  }>({
+    pagesExtracted: 1,
+    totalPages: 1,
+    isCombinedBlock: false,
+    primarySlotsCount: 0,
+    secondarySlotsCount: 0
+  })
 
   // Curriculum & PDF Ingestion State
   const [schemes, setSchemes] = useState<CurriculumScheme[]>([])
@@ -734,6 +752,27 @@ export default function Planning() {
         teacherAssignments.some((a) => a.class_id === c.id) ||
         (homeroomClass && homeroomClass.id === c.id)
       )
+
+  // Check if the teacher has Year 5 and/or Year 6 subject assignments (allowing 2-page Primary + Secondary timetable PDF upload into one block)
+  const hasYear5Or6Assignment = useMemo(() => {
+    const assignedClassIds = new Set(teacherAssignments.map((a) => a.class_id))
+    if (homeroomClass) assignedClassIds.add(homeroomClass.id)
+    for (const cid of assignedClassIds) {
+      const cls = classes.find((c) => c.id === cid)
+      const yr = getYearLevelFromClassName(cls?.name)
+      if (yr === 'Year 5' || yr === 'Year 6' || isYear5Or6ClassName(cls?.name)) {
+        return true
+      }
+    }
+    for (const a of teacherAssignments) {
+      const className = (a as any).class_name
+      const yr = getYearLevelFromClassName(className)
+      if (yr === 'Year 5' || yr === 'Year 6' || isYear5Or6ClassName(className)) {
+        return true
+      }
+    }
+    return false
+  }, [teacherAssignments, homeroomClass, classes])
 
   // Subjects that the current user is allowed to plan for in a given class
   const getAllowedSubjectsForClass = (classId: string) => {
@@ -1330,6 +1369,50 @@ export default function Planning() {
     }
   }
 
+  const handleMoveWorkPlanObjective = async (fromWeekIdx: number, objIdx: number, toWeekIdx: number) => {
+    if (!selectedWorkPlan || !selectedWorkPlan.weeks) return
+    if (fromWeekIdx === toWeekIdx || toWeekIdx < 0 || toWeekIdx >= selectedWorkPlan.weeks.length) return
+
+    const updatedWeeks = selectedWorkPlan.weeks.map((w) => ({
+      ...w,
+      objectives: [...(w.objectives || [])]
+    }))
+
+    const sourceWeek = updatedWeeks[fromWeekIdx]
+    const targetWeek = updatedWeeks[toWeekIdx]
+    if (!sourceWeek || !targetWeek || !sourceWeek.objectives || !sourceWeek.objectives[objIdx]) return
+
+    const [movedObj] = sourceWeek.objectives.splice(objIdx, 1)
+    const updatedMovedObj = {
+      ...movedObj,
+      work_plan_week_id: targetWeek.id
+    }
+
+    targetWeek.objectives = [...(targetWeek.objectives || []), updatedMovedObj]
+    if (!targetWeek.is_instructional) {
+      targetWeek.is_instructional = true
+    }
+
+    const updatedPlan: WorkPlan = {
+      ...selectedWorkPlan,
+      weeks: updatedWeeks
+    }
+    setSelectedWorkPlan(updatedPlan)
+    setWorkPlans((prev) => prev.map((wp) => (wp.id === updatedPlan.id ? updatedPlan : wp)))
+
+    try {
+      await api.saveWorkPlanWeeks(updatedPlan.id, updatedWeeks)
+      setSuccess(
+        `Moved objective ${movedObj.code_snapshot} from Week ${sourceWeek.sequence} to Week ${targetWeek.sequence}.`
+      )
+    } catch (err: any) {
+      console.warn('Auto-save after moving objective failed:', err)
+      setSuccess(
+        `Moved objective ${movedObj.code_snapshot} to Week ${targetWeek.sequence}. Click "Save Draft" to persist.`
+      )
+    }
+  }
+
   const toggleParsedObjectiveCoverage = (weekIdx: number, objIdx: number) => {
     if (!parsedWorkPlan) return
     const updatedWeeks = [...parsedWorkPlan.weeks]
@@ -1341,6 +1424,27 @@ export default function Planning() {
     targetWeek.objectives = updatedObjs
     targetWeek.is_commed = updatedObjs.length > 0 && updatedObjs.every((o) => o.is_met)
     updatedWeeks[weekIdx] = targetWeek
+    setParsedWorkPlan({ ...parsedWorkPlan, weeks: updatedWeeks })
+  }
+
+  const moveParsedWorkPlanObjective = (fromWeekIdx: number, objIdx: number, toWeekIdx: number) => {
+    if (!parsedWorkPlan || fromWeekIdx === toWeekIdx) return
+    const updatedWeeks = parsedWorkPlan.weeks.map((w) => ({
+      ...w,
+      objectives: [...(w.objectives || [])]
+    }))
+    const sourceWeek = updatedWeeks[fromWeekIdx]
+    const targetWeek = updatedWeeks[toWeekIdx]
+    if (!sourceWeek || !targetWeek || !sourceWeek.objectives || !sourceWeek.objectives[objIdx]) return
+
+    const [movedObj] = sourceWeek.objectives.splice(objIdx, 1)
+    targetWeek.objectives = [...(targetWeek.objectives || []), movedObj]
+    if (!targetWeek.is_instructional) {
+      targetWeek.is_instructional = true
+    }
+    targetWeek.is_commed = targetWeek.objectives.length > 0 && targetWeek.objectives.every((o) => o.is_met)
+    sourceWeek.is_commed = sourceWeek.objectives.length > 0 && sourceWeek.objectives.every((o) => o.is_met)
+
     setParsedWorkPlan({ ...parsedWorkPlan, weeks: updatedWeeks })
   }
 
@@ -1898,24 +2002,116 @@ export default function Planning() {
   // -------------------------------------------------------------------------
 
   const handleTimetableFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
+    const rawFiles = Array.from(e.target.files || [])
+    if (rawFiles.length === 0) return
+
+    const canCombineTwoPages = hasYear5Or6Assignment || isLeadership
+    const filesToParse = canCombineTwoPages ? rawFiles.slice(0, 2) : [rawFiles[0]]
 
     setParsingTimetable(true)
     setError(null)
-    setTimetableFileName(file.name || 'Weekly Timetable.pdf')
+    setTimetableFileName(
+      filesToParse.length > 1
+        ? `${filesToParse[0].name} + ${filesToParse[1].name}`
+        : filesToParse[0].name || 'Weekly Timetable.pdf'
+    )
     setTimetableEffectiveDate(formatDateISO(new Date()))
     try {
-      const parsed = await parseTeacherTimetablePdf(file, classes, subjects, profile?.full_name)
+      const parsed = await parseTeacherTimetablePdf(
+        filesToParse,
+        classes,
+        subjects,
+        profile?.full_name,
+        {
+          allowTwoPageCombine: canCombineTwoPages,
+          teacherAssignments: teacherAssignments.map((a) => ({
+            class_id: a.class_id,
+            subject_id: a.subject_id,
+            class_name: classes.find((c) => c.id === a.class_id)?.name,
+            subject_name: subjects.find((s) => s.id === a.subject_id)?.name
+          }))
+        }
+      )
       setParsedTimetablePreview(parsed.slots as any)
+      setParsedTimetableMeta({
+        pagesExtracted: parsed.pagesExtracted ?? 1,
+        totalPages: parsed.totalPages ?? 1,
+        isCombinedBlock: Boolean(parsed.isCombinedBlock),
+        primarySlotsCount: parsed.primarySlotsCount ?? 0,
+        secondarySlotsCount: parsed.secondarySlotsCount ?? parsed.slots.length
+      })
       setShowUploadTimetableModal(true)
       if (parsed.warnings.length > 0) {
         setError(parsed.warnings.join('; '))
+      } else if (parsed.isCombinedBlock) {
+        setSuccess(
+          `Extracted ${parsed.pagesExtracted || 2} pages (Primary & Secondary) and generated one unified block timetable (${parsed.primarySlotsCount || 0} Primary + ${parsed.secondarySlotsCount || 0} Secondary periods).`
+        )
       }
     } catch (err: any) {
       setError(err?.message || 'Could not parse timetable PDF.')
     } finally {
       setParsingTimetable(false)
+      e.target.value = ''
+    }
+  }
+
+  const handleMergeSecondTimetablePdf = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const secondFile = e.target.files?.[0]
+    if (!secondFile) return
+
+    setParsingTimetable(true)
+    setError(null)
+    try {
+      const parsedSecond = await parseTeacherTimetablePdf(
+        secondFile,
+        classes,
+        subjects,
+        profile?.full_name,
+        {
+          allowTwoPageCombine: true,
+          teacherAssignments: teacherAssignments.map((a) => ({
+            class_id: a.class_id,
+            subject_id: a.subject_id,
+            class_name: classes.find((c) => c.id === a.class_id)?.name,
+            subject_name: subjects.find((s) => s.id === a.subject_id)?.name
+          }))
+        }
+      )
+
+      const mergedSlots = mergeTimetableSlotsIntoOneBlock(
+        [parsedTimetablePreview, parsedSecond.slots],
+        classes,
+        subjects,
+        teacherAssignments.map((a) => ({
+          class_id: a.class_id,
+          subject_id: a.subject_id,
+          class_name: classes.find((c) => c.id === a.class_id)?.name,
+          subject_name: subjects.find((s) => s.id === a.subject_id)?.name
+        })),
+        true
+      )
+
+      const primaryCount = mergedSlots.filter((s) => isPrimaryClassName(s.class_name)).length
+      const secondaryCount = mergedSlots.length - primaryCount
+
+      setParsedTimetablePreview(mergedSlots as any)
+      setTimetableFileName((prev) => (prev.includes('+') ? prev : `${prev} + ${secondFile.name}`))
+      setParsedTimetableMeta((prev) => ({
+        pagesExtracted: Math.min(2, (prev.pagesExtracted || 1) + (parsedSecond.pagesExtracted || 1)),
+        totalPages: (prev.totalPages || 1) + (parsedSecond.totalPages || 1),
+        isCombinedBlock: true,
+        primarySlotsCount: primaryCount,
+        secondarySlotsCount: secondaryCount
+      }))
+      setSuccess(
+        `Merged 2nd timetable page (${secondFile.name}) into one unified block timetable (${primaryCount} Primary + ${secondaryCount} Secondary periods).`
+      )
+    } catch (err: any) {
+      setError(err?.message || 'Could not merge second timetable PDF.')
+    } finally {
+      setParsingTimetable(false)
+      e.target.value = ''
     }
   }
 
@@ -2367,8 +2563,26 @@ export default function Planning() {
                             <div style={{ fontWeight: 800, color: subjectClr, fontSize: 13 }}>
                               {s.subject_name}
                             </div>
-                            <div style={{ color: classClr, fontWeight: 700, fontSize: 12 }}>
-                              {s.class_name}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+                              <span style={{ color: classClr, fontWeight: 700, fontSize: 12 }}>
+                                {s.class_name}
+                              </span>
+                              {hasYear5Or6Assignment && (
+                                <span
+                                  style={{
+                                    fontSize: 9,
+                                    fontWeight: 700,
+                                    padding: '1px 5px',
+                                    borderRadius: 3,
+                                    textTransform: 'uppercase',
+                                    background: isPrimaryClassName(s.class_name) ? '#fef3c7' : '#e0e7ff',
+                                    color: isPrimaryClassName(s.class_name) ? '#92400e' : '#3730a3',
+                                    border: `1px solid ${isPrimaryClassName(s.class_name) ? '#fde68a' : '#c7d2fe'}`
+                                  }}
+                                >
+                                  {isPrimaryClassName(s.class_name) ? 'Primary' : 'Secondary'}
+                                </span>
+                              )}
                             </div>
 
                             {/* Time & Room */}
@@ -2496,9 +2710,29 @@ export default function Planning() {
           )}
 
           {isTeacher && (
-            <label className="btn btn-secondary btn-small" style={{ cursor: 'pointer', margin: 0 }}>
-              <span>{parsingTimetable ? '⏳ Parsing...' : '📅 Upload Timetable PDF'}</span>
-              <input type="file" accept=".pdf,application/pdf" style={{ display: 'none' }} onChange={handleTimetableFileUpload} />
+            <label
+              className="btn btn-secondary btn-small"
+              style={{ cursor: 'pointer', margin: 0 }}
+              title={
+                hasYear5Or6Assignment
+                  ? 'Upload a 2-page PDF (or select 2 PDF files) to merge Primary (Year 5/6) & Secondary into one unified block timetable'
+                  : 'Upload your weekly timetable PDF'
+              }
+            >
+              <span>
+                {parsingTimetable
+                  ? '⏳ Parsing...'
+                  : hasYear5Or6Assignment
+                  ? '📅 Upload Timetable PDF (1–2 Pages)'
+                  : '📅 Upload Timetable PDF'}
+              </span>
+              <input
+                type="file"
+                accept=".pdf,application/pdf"
+                multiple={hasYear5Or6Assignment || isLeadership}
+                style={{ display: 'none' }}
+                onChange={handleTimetableFileUpload}
+              />
             </label>
           )}
 
@@ -2825,7 +3059,7 @@ export default function Planning() {
                       <th style={{ padding: '8px 10px', width: 80 }}>Week</th>
                       <th style={{ padding: '8px 10px', width: 120 }}>Timeline / Dates</th>
                       <th style={{ padding: '8px 10px' }}>Topic / Challenge & Unit</th>
-                      <th style={{ padding: '8px 10px', width: 240 }}>Learning Objectives</th>
+                      <th style={{ padding: '8px 10px', width: 310 }}>Learning Objectives</th>
                       <th style={{ padding: '8px 10px', width: 160 }}>Remarks & Lessons</th>
                     </tr>
                   </thead>
@@ -2920,17 +3154,16 @@ export default function Planning() {
                                       fontSize: 11,
                                       background: obj.is_met ? '#f0fdf4' : '#fffbeb',
                                       border: obj.is_met ? '1px solid #bbf7d0' : '1px solid #fde68a',
-                                      padding: '4px 6px',
-                                      borderRadius: 4,
+                                      padding: '6px 8px',
+                                      borderRadius: 6,
                                       display: 'flex',
-                                      justifyContent: 'space-between',
-                                      alignItems: 'center',
-                                      gap: 6
+                                      flexDirection: 'column',
+                                      gap: 4
                                     }}
                                   >
-                                    <div style={{ flex: 1 }}>
-                                      <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 2 }}>
-                                        <strong>{obj.code_snapshot}</strong>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                      <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                                        <strong style={{ color: '#0f172a' }}>{obj.code_snapshot}</strong>
                                         <button
                                           type="button"
                                           style={{
@@ -2957,23 +3190,63 @@ export default function Planning() {
                                           {obj.is_met ? '✓ Covered' : '⏳ Not Covered'}
                                         </button>
                                       </div>
-                                      <div style={{ color: '#475569', fontSize: 10.5 }}>
-                                        {obj.text_snapshot.substring(0, 50)}...
+
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                        {(selectedWorkPlan.weeks || []).length > 1 && (
+                                          <select
+                                            value=""
+                                            title="Move this objective to another week"
+                                            style={{
+                                              fontSize: 10,
+                                              fontWeight: 600,
+                                              padding: '1px 4px',
+                                              borderRadius: 4,
+                                              border: '1px solid #cbd5e1',
+                                              background: '#ffffff',
+                                              color: '#0b4f8a',
+                                              cursor: 'pointer',
+                                              maxWidth: 112
+                                            }}
+                                            onChange={(e) => {
+                                              const targetIdx = parseInt(e.target.value, 10)
+                                              if (!isNaN(targetIdx) && targetIdx !== wIdx) {
+                                                handleMoveWorkPlanObjective(wIdx, oIdx, targetIdx)
+                                              }
+                                            }}
+                                          >
+                                            <option value="" disabled>
+                                              ⇄ Move to…
+                                            </option>
+                                            {(selectedWorkPlan.weeks || []).map((targetWk, tIdx) => {
+                                              if (tIdx === wIdx) return null
+                                              const topicHint = targetWk.topic_title || targetWk.challenge_title || targetWk.event_label || targetWk.week_label || ''
+                                              const shortHint = topicHint.length > 18 ? `${topicHint.substring(0, 18)}…` : topicHint
+                                              return (
+                                                <option key={targetWk.id || tIdx} value={tIdx}>
+                                                  Week {targetWk.sequence}{shortHint ? ` (${shortHint})` : ''}
+                                                </option>
+                                              )
+                                            })}
+                                          </select>
+                                        )}
+                                        <button
+                                          type="button"
+                                          className="btn btn-ghost btn-small"
+                                          style={{ padding: '0 3px', color: '#dc2626', fontSize: 11 }}
+                                          title="Delete objective from week"
+                                          onClick={() => {
+                                            const updated = [...(selectedWorkPlan.weeks || [])]
+                                            updated[wIdx].objectives?.splice(oIdx, 1)
+                                            setSelectedWorkPlan({ ...selectedWorkPlan, weeks: updated })
+                                          }}
+                                        >
+                                          ✕
+                                        </button>
                                       </div>
                                     </div>
-                                    <button
-                                      type="button"
-                                      className="btn btn-ghost btn-small"
-                                      style={{ padding: 0, color: '#dc2626' }}
-                                      title="Delete objective from week"
-                                      onClick={() => {
-                                        const updated = [...(selectedWorkPlan.weeks || [])]
-                                        updated[wIdx].objectives?.splice(oIdx, 1)
-                                        setSelectedWorkPlan({ ...selectedWorkPlan, weeks: updated })
-                                      }}
-                                    >
-                                      ✕
-                                    </button>
+                                    <div style={{ color: '#475569', fontSize: 10.5, lineHeight: 1.35 }} title={obj.text_snapshot}>
+                                      {obj.text_snapshot.length > 75 ? `${obj.text_snapshot.substring(0, 75)}...` : obj.text_snapshot}
+                                    </div>
                                   </div>
                                 ))}
                               </div>
@@ -4002,11 +4275,55 @@ export default function Planning() {
                 Your active schedule slots used to automatically set up prospective lesson plans.
               </p>
             </div>
-            <label className="btn btn-primary btn-small" style={{ cursor: 'pointer', margin: 0 }}>
-              <span>{parsingTimetable ? '⏳ Processing...' : '📄 Upload Timetable PDF'}</span>
-              <input type="file" accept=".pdf,application/pdf" style={{ display: 'none' }} onChange={handleTimetableFileUpload} />
+            <label
+              className="btn btn-primary btn-small"
+              style={{ cursor: 'pointer', margin: 0 }}
+              title={
+                hasYear5Or6Assignment
+                  ? 'Upload a 2-page PDF (or select 2 PDF files) to extract Primary (Year 5/6) & Secondary into one unified block timetable'
+                  : 'Upload your weekly timetable PDF'
+              }
+            >
+              <span>
+                {parsingTimetable
+                  ? '⏳ Processing...'
+                  : hasYear5Or6Assignment
+                  ? '📄 Upload Timetable PDF (1–2 Pages)'
+                  : '📄 Upload Timetable PDF'}
+              </span>
+              <input
+                type="file"
+                accept=".pdf,application/pdf"
+                multiple={hasYear5Or6Assignment || isLeadership}
+                style={{ display: 'none' }}
+                onChange={handleTimetableFileUpload}
+              />
             </label>
           </div>
+
+          {hasYear5Or6Assignment && (
+            <div
+              style={{
+                background: '#f0fdf4',
+                border: '1px solid #bbf7d0',
+                borderRadius: 8,
+                padding: '10px 14px',
+                marginBottom: 16,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                flexWrap: 'wrap',
+                gap: 8,
+                fontSize: 12.5,
+                color: '#166534'
+              }}
+            >
+              <div>
+                <strong>🔗 Primary (Year 5 / Year 6) + Secondary One-Block Timetable Enabled:</strong>{' '}
+                Since your subject assignments include Year 5 / Year 6, you can upload a <strong>2-page PDF</strong> (or select 2 separate PDF files) containing your Primary and Secondary timetables. Both pages will be extracted and merged chronologically into a single unified block timetable.
+              </div>
+            </div>
+          )}
 
           {renderWeeklyLessonGrid('timetable')}
         </div>
@@ -4889,31 +5206,68 @@ export default function Planning() {
                                       display: 'flex',
                                       justifyContent: 'space-between',
                                       alignItems: 'center',
-                                      gap: 8
+                                      gap: 8,
+                                      flexWrap: 'wrap'
                                     }}
                                   >
-                                    <div style={{ flex: 1 }}>
+                                    <div style={{ flex: 1, minWidth: 160 }}>
                                       <strong style={{ color: '#0f172a' }}>{obj.code}:</strong>{' '}
                                       <span style={{ color: '#334155' }}>{obj.text}</span>
                                     </div>
-                                    <button
-                                      type="button"
-                                      style={{
-                                        border: 'none',
-                                        borderRadius: 4,
-                                        padding: '2px 8px',
-                                        fontSize: 10,
-                                        fontWeight: 800,
-                                        cursor: 'pointer',
-                                        background: obj.is_met ? '#166534' : '#b45309',
-                                        color: '#ffffff',
-                                        whiteSpace: 'nowrap'
-                                      }}
-                                      title="Click to toggle: Covered vs Not Covered"
-                                      onClick={() => toggleParsedObjectiveCoverage(wIdx, oIdx)}
-                                    >
-                                      {obj.is_met ? '✓ Covered' : '⏳ Not Covered'}
-                                    </button>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                      {parsedWorkPlan.weeks.length > 1 && (
+                                        <select
+                                          value=""
+                                          title="Move this objective to another week"
+                                          style={{
+                                            fontSize: 10,
+                                            fontWeight: 600,
+                                            padding: '2px 4px',
+                                            borderRadius: 4,
+                                            border: '1px solid #cbd5e1',
+                                            background: '#ffffff',
+                                            color: '#0b4f8a',
+                                            cursor: 'pointer'
+                                          }}
+                                          onChange={(e) => {
+                                            const targetIdx = parseInt(e.target.value, 10)
+                                            if (!isNaN(targetIdx) && targetIdx !== wIdx) {
+                                              moveParsedWorkPlanObjective(wIdx, oIdx, targetIdx)
+                                            }
+                                          }}
+                                        >
+                                          <option value="" disabled>
+                                            ⇄ Move to…
+                                          </option>
+                                          {parsedWorkPlan.weeks.map((targetWk, tIdx) => {
+                                            if (tIdx === wIdx) return null
+                                            return (
+                                              <option key={targetWk.sequence || tIdx} value={tIdx}>
+                                                {targetWk.week_label || `Week ${targetWk.sequence}`}
+                                              </option>
+                                            )
+                                          })}
+                                        </select>
+                                      )}
+                                      <button
+                                        type="button"
+                                        style={{
+                                          border: 'none',
+                                          borderRadius: 4,
+                                          padding: '2px 8px',
+                                          fontSize: 10,
+                                          fontWeight: 800,
+                                          cursor: 'pointer',
+                                          background: obj.is_met ? '#166534' : '#b45309',
+                                          color: '#ffffff',
+                                          whiteSpace: 'nowrap'
+                                        }}
+                                        title="Click to toggle: Covered vs Not Covered"
+                                        onClick={() => toggleParsedObjectiveCoverage(wIdx, oIdx)}
+                                      >
+                                        {obj.is_met ? '✓ Covered' : '⏳ Not Covered'}
+                                      </button>
+                                    </div>
                                   </div>
                                 ))}
                               </div>
@@ -5745,16 +6099,112 @@ export default function Planning() {
       {/* ===================================================================== */}
       {showUploadTimetableModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 16 }}>
-          <div className="card" style={{ width: '100%', maxWidth: 860, padding: 24, maxHeight: '90vh', overflowY: 'auto' }}>
+          <div className="card" style={{ width: '100%', maxWidth: 880, padding: 24, maxHeight: '90vh', overflowY: 'auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
               <div>
-                <h3 style={{ margin: 0, fontSize: 17 }}>Confirm Timetable Periods ({parsedTimetablePreview.length} Detected)</h3>
+                <h3 style={{ margin: 0, fontSize: 17 }}>
+                  Confirm One-Block Timetable Periods ({parsedTimetablePreview.length} Detected)
+                </h3>
                 <p style={{ margin: '4px 0 0', fontSize: 13, color: '#64748b' }}>
                   Review and verify the detected subjects, classes, and timings below. You can adjust any assignment before saving.
                 </p>
               </div>
               <button className="btn btn-ghost btn-small" onClick={() => setShowUploadTimetableModal(false)}>✕</button>
             </div>
+
+            {/* One-Block Timetable Summary Banner for Year 5 / Year 6 + Secondary */}
+            {(hasYear5Or6Assignment || parsedTimetableMeta?.isCombinedBlock) && (
+              <div
+                style={{
+                  background: '#f0fdf4',
+                  border: '1px solid #86efac',
+                  borderRadius: 8,
+                  padding: '12px 16px',
+                  marginBottom: 12,
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  gap: 12
+                }}
+              >
+                <div style={{ flex: '1 1 360px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 800, color: '#166534', fontSize: 13 }}>
+                    <span>🔗</span>
+                    <span>Unified One-Block Timetable (Primary Year 5/6 + Secondary)</span>
+                    {parsedTimetableMeta && (
+                      <span
+                        style={{
+                          fontSize: 11,
+                          fontWeight: 700,
+                          background: '#dcfce7',
+                          color: '#15803d',
+                          padding: '2px 8px',
+                          borderRadius: 999,
+                          border: '1px solid #86efac'
+                        }}
+                      >
+                        {parsedTimetableMeta.pagesExtracted} {parsedTimetableMeta.pagesExtracted === 1 ? 'Page' : 'Pages'} Extracted
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 12, color: '#15803d', marginTop: 4 }}>
+                    Primary (Year 5 / Year 6) and Secondary periods are chronologically merged into one continuous daily schedule block.
+                  </div>
+                  <div style={{ display: 'flex', gap: 10, marginTop: 6, flexWrap: 'wrap' }}>
+                    <span
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 700,
+                        padding: '2px 8px',
+                        borderRadius: 4,
+                        background: '#fef3c7',
+                        color: '#92400e',
+                        border: '1px solid #fde68a'
+                      }}
+                    >
+                      Primary (Year 5/6): {parsedTimetablePreview.filter((s) => isPrimaryClassName(s.class_name)).length} periods
+                    </span>
+                    <span
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 700,
+                        padding: '2px 8px',
+                        borderRadius: 4,
+                        background: '#e0e7ff',
+                        color: '#3730a3',
+                        border: '1px solid #c7d2fe'
+                      }}
+                    >
+                      Secondary: {parsedTimetablePreview.filter((s) => !isPrimaryClassName(s.class_name)).length} periods
+                    </span>
+                  </div>
+                </div>
+
+                {(hasYear5Or6Assignment || isLeadership) && (
+                  <label
+                    className="btn btn-secondary btn-small"
+                    style={{
+                      cursor: 'pointer',
+                      margin: 0,
+                      background: '#ffffff',
+                      borderColor: '#16a34a',
+                      color: '#15803d',
+                      fontWeight: 700
+                    }}
+                    title="If your Primary (Year 5/6) and Secondary timetables are in two separate PDF files, click here to upload the 2nd PDF and merge it into this block"
+                  >
+                    <span>{parsingTimetable ? '⏳ Merging...' : '+ Upload & Merge 2nd Page PDF'}</span>
+                    <input
+                      type="file"
+                      accept=".pdf,application/pdf"
+                      style={{ display: 'none' }}
+                      onChange={handleMergeSecondTimetablePdf}
+                    />
+                  </label>
+                )}
+              </div>
+            )}
 
             {/* Effective Start Date Banner & Control */}
             <div
@@ -5808,90 +6258,111 @@ export default function Planning() {
                   </tr>
                 </thead>
                 <tbody>
-                  {parsedTimetablePreview.map((slot, idx) => (
-                    <tr key={idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                      <td style={{ padding: 6, verticalAlign: 'middle' }}>
-                        <strong style={{ color: '#0f172a' }}>{DAYS_NAMES[slot.day_of_week]}</strong>
-                        <div style={{ fontSize: 11, color: '#64748b' }}>Period {slot.period_number}</div>
-                      </td>
-                      <td style={{ padding: 6, verticalAlign: 'middle', whiteSpace: 'nowrap' }}>
-                        <span style={{ fontWeight: 600, color: '#0b4f8a' }}>{slot.start_time} – {slot.end_time}</span>
-                      </td>
-                      <td style={{ padding: 6, verticalAlign: 'middle' }}>
-                        <select
-                          className="field select"
-                          style={{ width: '100%', fontSize: 12, padding: '4px 8px' }}
-                          value={slot.subject_id || ''}
-                          onChange={(e) => {
-                            const newSubId = e.target.value
-                            const subObj = subjects.find((s) => s.id === newSubId)
-                            const updated = [...parsedTimetablePreview]
-                            updated[idx] = {
-                              ...updated[idx],
-                              subject_id: newSubId || null,
-                              subject_name: subObj ? subObj.name : slot.subject_name
-                            }
-                            setParsedTimetablePreview(updated)
-                          }}
-                        >
-                          <option value="">{slot.subject_name || '— Select Subject —'}</option>
-                          {subjects.map((s) => (
-                            <option key={s.id} value={s.id}>{s.name}</option>
-                          ))}
-                        </select>
-                      </td>
-                      <td style={{ padding: 6, verticalAlign: 'middle' }}>
-                        <select
-                          className="field select"
-                          style={{ width: '100%', fontSize: 12, padding: '4px 8px' }}
-                          value={slot.class_id || ''}
-                          onChange={(e) => {
-                            const newClassId = e.target.value
-                            const clsObj = classes.find((c) => c.id === newClassId)
-                            const updated = [...parsedTimetablePreview]
-                            updated[idx] = {
-                              ...updated[idx],
-                              class_id: newClassId || null,
-                              class_name: clsObj ? clsObj.name : slot.class_name
-                            }
-                            setParsedTimetablePreview(updated)
-                          }}
-                        >
-                          <option value="">{slot.class_name || '— Select Class —'}</option>
-                          {classes.map((c) => (
-                            <option key={c.id} value={c.id}>{c.name}</option>
-                          ))}
-                        </select>
-                      </td>
-                      <td style={{ padding: 6, verticalAlign: 'middle' }}>
-                        <input
-                          type="text"
-                          className="field"
-                          style={{ width: '100%', fontSize: 12, padding: '4px 6px' }}
-                          value={slot.room || ''}
-                          placeholder="e.g. Lab 1"
-                          onChange={(e) => {
-                            const updated = [...parsedTimetablePreview]
-                            updated[idx] = { ...updated[idx], room: e.target.value }
-                            setParsedTimetablePreview(updated)
-                          }}
-                        />
-                      </td>
-                      <td style={{ padding: 6, textAlign: 'center', verticalAlign: 'middle' }}>
-                        <button
-                          type="button"
-                          className="btn btn-ghost btn-small"
-                          style={{ padding: '2px 6px', color: '#ef4444' }}
-                          title="Remove slot"
-                          onClick={() => {
-                            setParsedTimetablePreview((prev) => prev.filter((_, i) => i !== idx))
-                          }}
-                        >
-                          ✕
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {parsedTimetablePreview.map((slot, idx) => {
+                    const isPrimarySlot = isPrimaryClassName(slot.class_name)
+                    return (
+                      <tr key={idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                        <td style={{ padding: 6, verticalAlign: 'middle' }}>
+                          <strong style={{ color: '#0f172a' }}>{DAYS_NAMES[slot.day_of_week]}</strong>
+                          <div style={{ fontSize: 11, color: '#64748b' }}>Period {slot.period_number}</div>
+                        </td>
+                        <td style={{ padding: 6, verticalAlign: 'middle', whiteSpace: 'nowrap' }}>
+                          <span style={{ fontWeight: 600, color: '#0b4f8a' }}>{slot.start_time} – {slot.end_time}</span>
+                        </td>
+                        <td style={{ padding: 6, verticalAlign: 'middle' }}>
+                          <select
+                            className="field select"
+                            style={{ width: '100%', fontSize: 12, padding: '4px 8px' }}
+                            value={slot.subject_id || ''}
+                            onChange={(e) => {
+                              const newSubId = e.target.value
+                              const subObj = subjects.find((s) => s.id === newSubId)
+                              const updated = [...parsedTimetablePreview]
+                              updated[idx] = {
+                                ...updated[idx],
+                                subject_id: newSubId || null,
+                                subject_name: subObj ? subObj.name : slot.subject_name
+                              }
+                              setParsedTimetablePreview(updated)
+                            }}
+                          >
+                            <option value="">{slot.subject_name || '— Select Subject —'}</option>
+                            {subjects.map((s) => (
+                              <option key={s.id} value={s.id}>{s.name}</option>
+                            ))}
+                          </select>
+                        </td>
+                        <td style={{ padding: 6, verticalAlign: 'middle' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <select
+                              className="field select"
+                              style={{ flex: 1, fontSize: 12, padding: '4px 8px' }}
+                              value={slot.class_id || ''}
+                              onChange={(e) => {
+                                const newClassId = e.target.value
+                                const clsObj = classes.find((c) => c.id === newClassId)
+                                const updated = [...parsedTimetablePreview]
+                                updated[idx] = {
+                                  ...updated[idx],
+                                  class_id: newClassId || null,
+                                  class_name: clsObj ? clsObj.name : slot.class_name
+                                }
+                                setParsedTimetablePreview(updated)
+                              }}
+                            >
+                              <option value="">{slot.class_name || '— Select Class —'}</option>
+                              {classes.map((c) => (
+                                <option key={c.id} value={c.id}>{c.name}</option>
+                              ))}
+                            </select>
+                            {(hasYear5Or6Assignment || parsedTimetableMeta?.isCombinedBlock) && (
+                              <span
+                                style={{
+                                  fontSize: 9.5,
+                                  fontWeight: 700,
+                                  padding: '2px 5px',
+                                  borderRadius: 4,
+                                  whiteSpace: 'nowrap',
+                                  background: isPrimarySlot ? '#fef3c7' : '#e0e7ff',
+                                  color: isPrimarySlot ? '#92400e' : '#3730a3',
+                                  border: `1px solid ${isPrimarySlot ? '#fde68a' : '#c7d2fe'}`
+                                }}
+                              >
+                                {isPrimarySlot ? 'Primary' : 'Secondary'}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td style={{ padding: 6, verticalAlign: 'middle' }}>
+                          <input
+                            type="text"
+                            className="field"
+                            style={{ width: '100%', fontSize: 12, padding: '4px 6px' }}
+                            value={slot.room || ''}
+                            placeholder="e.g. Lab 1"
+                            onChange={(e) => {
+                              const updated = [...parsedTimetablePreview]
+                              updated[idx] = { ...updated[idx], room: e.target.value }
+                              setParsedTimetablePreview(updated)
+                            }}
+                          />
+                        </td>
+                        <td style={{ padding: 6, textAlign: 'center', verticalAlign: 'middle' }}>
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-small"
+                            style={{ padding: '2px 6px', color: '#ef4444' }}
+                            title="Remove slot"
+                            onClick={() => {
+                              setParsedTimetablePreview((prev) => prev.filter((_, i) => i !== idx))
+                            }}
+                          >
+                            ✕
+                          </button>
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
@@ -5927,7 +6398,7 @@ export default function Planning() {
                   onClick={handleConfirmTimetableSlots}
                   disabled={parsedTimetablePreview.length === 0}
                 >
-                  ✓ Confirm & Save Timetable ({parsedTimetablePreview.length} Lessons)
+                  ✓ Confirm & Save One-Block Timetable ({parsedTimetablePreview.length} Lessons)
                 </button>
               </div>
             </div>
